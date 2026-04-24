@@ -1,0 +1,131 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="base">
+      <UniqueIdentifier>{9F2117CE-6601-4CD1-AE67-8782896A8EA3}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="hook">
+      <UniqueIdentifier>{1EE24DCD-957A-4949-A22B-FF574A8D00F2}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="hook\hook_api">
+      <UniqueIdentifier>{487D91D8-8300-4FEF-9D00-34D360D61016}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="io">
+      <UniqueIdentifier>{4A4A6A95-E036-4A63-80F2-5A86A8137DE4}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="external">
+      <UniqueIdentifier>{3B9B3ED4-09D6-4763-9D98-60E4F0A2DF06}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="base\Mem.h">
+      <Filter>base</Filter>
+    </ClInclude>
+    <ClInclude Include="base\Str.h">
+      <Filter>base</Filter>
+    </ClInclude>
+    <ClInclude Include="hook\Hook.h">
+      <Filter>hook</Filter>
+    </ClInclude>
+    <ClInclude Include="hook\Hook_API.h">
+      <Filter>hook</Filter>
+    </ClInclude>
+    <ClInclude Include="hook\Hook_API_DEF.h">
+      <Filter>hook</Filter>
+    </ClInclude>
+    <ClInclude Include="hook\LocaleEmulatorSupport.h">
+      <Filter>hook</Filter>
+    </ClInclude>
+    <ClInclude Include="io\CustomPakVFS.h">
+      <Filter>io</Filter>
+    </ClInclude>
+    <ClInclude Include="io\File.h">
+      <Filter>io</Filter>
+    </ClInclude>
+    <ClInclude Include="io\File_Enum.h">
+      <Filter>io</Filter>
+    </ClInclude>
+    <ClInclude Include="io\File_Stream.hpp">
+      <Filter>io</Filter>
+    </ClInclude>
+    <ClInclude Include="io\INI.h">
+      <Filter>io</Filter>
+    </ClInclude>
+    <ClInclude Include="io\INI_Value.h">
+      <Filter>io</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\third\lzma\7zTypes.h">
+      <Filter>external</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\third\lzma\Compiler.h">
+      <Filter>external</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\third\lzma\LzmaDec.h">
+      <Filter>external</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\third\lzma\Precomp.h">
+      <Filter>external</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\third\zstd\zstd.h">
+      <Filter>external</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="base\Mem.cpp">
+      <Filter>base</Filter>
+    </ClCompile>
+    <ClCompile Include="base\Str.cpp">
+      <Filter>base</Filter>
+    </ClCompile>
+    <ClCompile Include="hook\Hook.cpp">
+      <Filter>hook</Filter>
+    </ClCompile>
+    <ClCompile Include="hook\Hook_API.cpp">
+      <Filter>hook</Filter>
+    </ClCompile>
+    <ClCompile Include="hook\LocaleEmulatorSupport.cpp">
+      <Filter>hook</Filter>
+    </ClCompile>
+    <ClCompile Include="io\CustomPakVFS.cpp">
+      <Filter>io</Filter>
+    </ClCompile>
+    <ClCompile Include="io\File.cpp">
+      <Filter>io</Filter>
+    </ClCompile>
+    <ClCompile Include="io\File_Enum.cpp">
+      <Filter>io</Filter>
+    </ClCompile>
+    <ClCompile Include="io\INI.cpp">
+      <Filter>io</Filter>
+    </ClCompile>
+    <ClCompile Include="io\INI_Value.cpp">
+      <Filter>io</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\third\lzma\LzmaDec.c">
+      <Filter>external</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\third\miniz\miniz.c">
+      <Filter>external</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\third\zstd\zstddeclib.c">
+      <Filter>external</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="hook\hook_api\font_hooks.inl">
+      <Filter>hook\hook_api</Filter>
+    </None>
+    <None Include="hook\hook_api\text_hooks.inl">
+      <Filter>hook\hook_api</Filter>
+    </None>
+    <None Include="hook\hook_api\window_hooks.inl">
+      <Filter>hook\hook_api</Filter>
+    </None>
+    <None Include="hook\hook_api\file_hooks.inl">
+      <Filter>hook\hook_api</Filter>
+    </None>
+    <None Include="hook\hook_api\codepage_hooks.inl">
+      <Filter>hook\hook_api</Filter>
+    </None>
+  </ItemGroup>
+</Project>
