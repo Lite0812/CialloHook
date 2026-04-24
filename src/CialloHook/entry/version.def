@@ -1,0 +1,20 @@
+LIBRARY "CialloHook.dll"
+EXPORTS
+	DetourFinishHelperProcess @1 NONAME
+	GetFileVersionInfoA=FakeGetFileVersionInfoA
+	GetFileVersionInfoByHandle=FakeGetFileVersionInfoByHandle
+	GetFileVersionInfoExA=FakeGetFileVersionInfoExA
+	GetFileVersionInfoExW=FakeGetFileVersionInfoExW
+	GetFileVersionInfoSizeA=FakeGetFileVersionInfoSizeA
+	GetFileVersionInfoSizeExA=FakeGetFileVersionInfoSizeExA
+	GetFileVersionInfoSizeExW=FakeGetFileVersionInfoSizeExW
+	GetFileVersionInfoSizeW=FakeGetFileVersionInfoSizeW
+	GetFileVersionInfoW=FakeGetFileVersionInfoW
+	VerFindFileA=FakeVerFindFileA
+	VerFindFileW=FakeVerFindFileW
+	VerInstallFileA=FakeVerInstallFileA
+	VerInstallFileW=FakeVerInstallFileW
+	VerLanguageNameA=FakeVerLanguageNameA
+	VerLanguageNameW=FakeVerLanguageNameW
+	VerQueryValueA=FakeVerQueryValueA
+	VerQueryValueW=FakeVerQueryValueW
