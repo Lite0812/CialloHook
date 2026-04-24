@@ -449,3 +449,19 @@ build_x64.bat
 out/bin/x86/Release/
 out/bin/x64/Release/
 ```
+
+## 参考项目与感谢
+
+本项目的实现和整理过程中，参考或使用了下列项目 / 组件：
+
+- `Detours`：用于部分 API Hook、注入与调用链改写相关能力
+- `Locale Emulator`：用于转区相关能力，以及发布包中的 `LoaderDll.dll` / `LocaleEmulator.dll`
+- `krkrplugin`：用于部分 kirikiri 相关兼容、补丁流处理和桥接实现
+- `miniz`：用于部分压缩 / 解压支持
+- `zstd`：用于 `CialloPAK` / 自定义封包链路中的高压缩比支持
+- `LZMA SDK`：用于 `LZMA` 相关压缩 / 解压支持
+- `Nepgear-main`：为部分 Hook 思路、补丁组织方式和兼容处理提供了参考
+- `CELICA_HOOK-master`：为部分字体 / 文本 Hook 与实战补丁方案提供了参考
+- `GalPatch-main`：为补丁封装、分发形式和工程整理方式提供了参考
+
+
