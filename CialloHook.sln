@@ -1,0 +1,60 @@
+
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.6.33815.320
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "CialloHook", "src\CialloHook\CialloHook.vcxproj", "{B491F55B-B9D3-490A-A97A-A3A46133D5D8}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "RuntimeCore", "src\RuntimeCore\RuntimeCore.vcxproj", "{458B082F-937B-4CAB-9405-68B4DF3AF90F}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "lib", "lib", "{8153D887-00D8-490D-B3E6-94CE2CCF9A04}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{CBB2CB18-B6E7-4962-9E66-7C52F251BCF9}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "CialloLauncher", "src\CialloLauncher\CialloLauncher.vcxproj", "{5635E334-E7ED-420A-9C54-6EB0895C69B1}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x64 = Debug|x64
+		Debug|x86 = Debug|x86
+		Release|x64 = Release|x64
+		Release|x86 = Release|x86
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{B491F55B-B9D3-490A-A97A-A3A46133D5D8}.Debug|x64.ActiveCfg = Debug|x64
+		{B491F55B-B9D3-490A-A97A-A3A46133D5D8}.Debug|x64.Build.0 = Debug|x64
+		{B491F55B-B9D3-490A-A97A-A3A46133D5D8}.Debug|x86.ActiveCfg = Debug|Win32
+		{B491F55B-B9D3-490A-A97A-A3A46133D5D8}.Debug|x86.Build.0 = Debug|Win32
+		{B491F55B-B9D3-490A-A97A-A3A46133D5D8}.Release|x64.ActiveCfg = Release|x64
+		{B491F55B-B9D3-490A-A97A-A3A46133D5D8}.Release|x64.Build.0 = Release|x64
+		{B491F55B-B9D3-490A-A97A-A3A46133D5D8}.Release|x86.ActiveCfg = Release|Win32
+		{B491F55B-B9D3-490A-A97A-A3A46133D5D8}.Release|x86.Build.0 = Release|Win32
+		{458B082F-937B-4CAB-9405-68B4DF3AF90F}.Debug|x64.ActiveCfg = Debug|x64
+		{458B082F-937B-4CAB-9405-68B4DF3AF90F}.Debug|x64.Build.0 = Debug|x64
+		{458B082F-937B-4CAB-9405-68B4DF3AF90F}.Debug|x86.ActiveCfg = Debug|Win32
+		{458B082F-937B-4CAB-9405-68B4DF3AF90F}.Debug|x86.Build.0 = Debug|Win32
+		{458B082F-937B-4CAB-9405-68B4DF3AF90F}.Release|x64.ActiveCfg = Release|x64
+		{458B082F-937B-4CAB-9405-68B4DF3AF90F}.Release|x64.Build.0 = Release|x64
+		{458B082F-937B-4CAB-9405-68B4DF3AF90F}.Release|x86.ActiveCfg = Release|Win32
+		{458B082F-937B-4CAB-9405-68B4DF3AF90F}.Release|x86.Build.0 = Release|Win32
+		{5635E334-E7ED-420A-9C54-6EB0895C69B1}.Debug|x64.ActiveCfg = Debug|x64
+		{5635E334-E7ED-420A-9C54-6EB0895C69B1}.Debug|x64.Build.0 = Debug|x64
+		{5635E334-E7ED-420A-9C54-6EB0895C69B1}.Debug|x86.ActiveCfg = Debug|Win32
+		{5635E334-E7ED-420A-9C54-6EB0895C69B1}.Debug|x86.Build.0 = Debug|Win32
+		{5635E334-E7ED-420A-9C54-6EB0895C69B1}.Release|x64.ActiveCfg = Release|x64
+		{5635E334-E7ED-420A-9C54-6EB0895C69B1}.Release|x64.Build.0 = Release|x64
+		{5635E334-E7ED-420A-9C54-6EB0895C69B1}.Release|x86.ActiveCfg = Release|Win32
+		{5635E334-E7ED-420A-9C54-6EB0895C69B1}.Release|x86.Build.0 = Release|Win32
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{B491F55B-B9D3-490A-A97A-A3A46133D5D8} = {CBB2CB18-B6E7-4962-9E66-7C52F251BCF9}
+		{458B082F-937B-4CAB-9405-68B4DF3AF90F} = {CBB2CB18-B6E7-4962-9E66-7C52F251BCF9}
+		{5635E334-E7ED-420A-9C54-6EB0895C69B1} = {CBB2CB18-B6E7-4962-9E66-7C52F251BCF9}
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {2BDDD363-9CBE-41F7-A086-800320D0BB93}
+	EndGlobalSection
+EndGlobal
