@@ -18,6 +18,7 @@
 		static pShowWindow rawShowWindow = ShowWindow;
 		static pShowWindowAsync rawShowWindowAsync = ShowWindowAsync;
 		static pSetWindowPos rawSetWindowPos = SetWindowPos;
+		static pSetWindowTextW rawSetWindowTextW = SetWindowTextW;
 		static CRITICAL_SECTION sg_startupWindowGateLock;
 		static INIT_ONCE sg_startupWindowGateLockInitOnce = INIT_ONCE_STATIC_INIT;
 		static std::vector<HWND> sg_startupDeferredWindows;
@@ -360,34 +361,61 @@
 			return wsTitle;
 		}
 
-		static std::string ProcessWindowTitleA(const char* title)
+		static bool TryBuildWindowTitleReplacementFromA(const char* title, std::wstring& replaced)
 		{
-			if (!title) return "";
-			if (sg_skipWindowTitleReplace) return title;
+			replaced.clear();
+			if (!title) return false;
+			if (sg_skipWindowTitleReplace) return false;
 			
 			int len = MultiByteToWideChar(sg_windowTitleReadCodePage, 0, title, -1, NULL, 0);
 			if (len <= 0)
 			{
 				LogWindowTitleVerboseDecodeFailureA(title);
-				return title;
+				return false;
 			}
 			
 			std::wstring wTitle(len - 1, L'\0');
 			MultiByteToWideChar(sg_windowTitleReadCodePage, 0, title, -1, &wTitle[0], len);
 			
-			std::wstring replaced = ProcessWindowTitleW(wTitle.c_str());
-			
-			if (replaced.empty() || replaced == wTitle)
+			replaced = ProcessWindowTitleW(wTitle.c_str());
+			return !replaced.empty() && replaced != wTitle;
+		}
+
+		static BOOL ApplyWindowTitleUnicode(HWND hWnd, const std::wstring& title)
+		{
+			if (!hWnd || title.empty())
 			{
-				return title;
+				return FALSE;
 			}
-			
-			int lenA = WideCharToMultiByte(sg_windowTitleWriteCodePage, 0, replaced.c_str(), -1, NULL, 0, NULL, NULL);
-			if (lenA <= 0) return title;
-			
-			std::string result(lenA - 1, '\0');
-			WideCharToMultiByte(sg_windowTitleWriteCodePage, 0, replaced.c_str(), -1, &result[0], lenA, NULL, NULL);
-			return result;
+
+			BOOL setRet = FALSE;
+			if (IsWindowUnicode(hWnd))
+			{
+				setRet = rawSetWindowTextW(hWnd, title.c_str());
+			}
+			else
+			{
+				setRet = static_cast<BOOL>(DefWindowProcW(hWnd, WM_SETTEXT, 0, (LPARAM)title.c_str()));
+			}
+			rawSetWindowPos(hWnd, nullptr, 0, 0, 0, 0,
+				SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED | SWP_NOACTIVATE);
+			return setRet;
+		}
+
+		static int QueryWindowTitleUnicode(HWND hWnd, wchar_t* title, int titleCapacity)
+		{
+			if (!hWnd || !title || titleCapacity <= 0)
+			{
+				return 0;
+			}
+
+			title[0] = L'\0';
+			if (IsWindowUnicode(hWnd))
+			{
+				return GetWindowTextW(hWnd, title, titleCapacity);
+			}
+
+			return static_cast<int>(DefWindowProcW(hWnd, WM_GETTEXT, (WPARAM)titleCapacity, (LPARAM)title));
 		}
 		static bool TryApplyWindowTitle(HWND hWnd);
 
@@ -402,24 +430,21 @@
 			bool deferWindow = IsStartupWindowGateActive() && !IsStartupWindowGateBypassThread()
 				&& hWndParent == nullptr && (dwStyle & WS_CHILD) == 0 && (dwStyle & WS_VISIBLE) != 0;
 			DWORD createStyle = deferWindow ? (dwStyle & ~WS_VISIBLE) : dwStyle;
+			std::wstring newTitleW;
+			bool hasUnicodeReplacement = false;
 			if (lpWindowName && !sg_vecWindowTitleRules.empty())
 			{
-				std::string newTitle = ProcessWindowTitleA(lpWindowName);
-				if (newTitle != lpWindowName)
-				{
-					hWnd = rawCreateWindowExA(dwExStyle, lpClassName, newTitle.c_str(), createStyle, X, Y, nWidth, nHeight, hWndParent, hMenu, hInstance, lpParam);
-					if (deferWindow)
-					{
-						RememberStartupDeferredWindow(hWnd);
-					}
-					TryApplyWindowTitle(hWnd);
-					return hWnd;
-				}
+				hasUnicodeReplacement = TryBuildWindowTitleReplacementFromA(lpWindowName, newTitleW);
 			}
 			hWnd = rawCreateWindowExA(dwExStyle, lpClassName, lpWindowName, createStyle, X, Y, nWidth, nHeight, hWndParent, hMenu, hInstance, lpParam);
 			if (deferWindow)
 			{
 				RememberStartupDeferredWindow(hWnd);
+			}
+			if (hasUnicodeReplacement)
+			{
+				ApplyWindowTitleUnicode(hWnd, newTitleW);
+				return hWnd;
 			}
 			TryApplyWindowTitle(hWnd);
 			return hWnd;
@@ -540,10 +565,10 @@
 		{
 			if (lpString && !sg_vecWindowTitleRules.empty())
 			{
-				std::string newTitle = ProcessWindowTitleA(lpString);
-				if (newTitle != lpString)
+				std::wstring newTitleW;
+				if (TryBuildWindowTitleReplacementFromA(lpString, newTitleW))
 				{
-					return rawSetWindowTextA(hWnd, newTitle.c_str());
+					return ApplyWindowTitleUnicode(hWnd, newTitleW);
 				}
 			}
 			return rawSetWindowTextA(hWnd, lpString);
@@ -558,7 +583,6 @@
 		//*********END Hook SetWindowTextA*********
 
 		//*********Hook SetWindowTextW*********
-		static pSetWindowTextW rawSetWindowTextW = SetWindowTextW;
 		static int sg_windowTitleMode = 2;
 		static HANDLE sg_windowTitleEventThread = nullptr;
 		static HWINEVENTHOOK sg_windowTitleCreateHook = nullptr;
@@ -601,7 +625,7 @@
 			}
 
 			wchar_t title[1024] = {};
-			int titleLen = GetWindowTextW(hWnd, title, (int)(sizeof(title) / sizeof(title[0])));
+			int titleLen = QueryWindowTitleUnicode(hWnd, title, (int)(sizeof(title) / sizeof(title[0])));
 			if (titleLen <= 0)
 			{
 				return false;
@@ -613,9 +637,7 @@
 				return false;
 			}
 
-			BOOL setRet = rawSetWindowTextW(hWnd, replaced.c_str());
-			rawSetWindowPos(hWnd, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED | SWP_NOACTIVATE);
-			return setRet != FALSE;
+			return ApplyWindowTitleUnicode(hWnd, replaced) != FALSE;
 		}
 
 		static BOOL CALLBACK EnumWindowTitleProc(HWND hWnd, LPARAM lParam)
@@ -705,7 +727,7 @@
 				std::wstring newTitle = ProcessWindowTitleW(lpString);
 				if (newTitle != lpString)
 				{
-					return rawSetWindowTextW(hWnd, newTitle.c_str());
+					return ApplyWindowTitleUnicode(hWnd, newTitle);
 				}
 			}
 			return rawSetWindowTextW(hWnd, lpString);
@@ -774,5 +796,7 @@
 			return ok;
 		}
 		//*********END Window Title Replace*********
+
+
 
 

@@ -662,6 +662,15 @@ namespace CialloHook
 				}
 			}
 			if (settings.windowTitle.rules.empty()
+				&& context.ini.Has(L"WindowTitle", L"Title"))
+			{
+				std::wstring title = DecodeEscapedControlChars((std::wstring)context.ini[L"WindowTitle"][L"Title"]);
+				if (!title.empty())
+				{
+					settings.windowTitle.rules.emplace_back(L"*", title);
+				}
+			}
+			if (settings.windowTitle.rules.empty()
 				&& context.ini.Has(L"Window", L"Title"))
 			{
 				std::wstring title = DecodeEscapedControlChars((std::wstring)context.ini[L"Window"][L"Title"]);
