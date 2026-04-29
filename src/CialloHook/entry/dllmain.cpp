@@ -1,8 +1,10 @@
 #include <Windows.h>
 #include <DbgHelp.h>
+#include <TlHelp32.h>
 #include <cstdio>
 #include <cstdarg>
 #include <string>
+#include <vector>
 
 #include "../../RuntimeCore/hook/Hook_API.h"
 #include "Proxy.h"
@@ -284,16 +286,106 @@ static bool IsWinmmProxyModule(HMODULE module)
 	return lstrcmpiW(fileName, L"winmm.dll") == 0;
 }
 
-static DWORD WINAPI HookInitThread(LPVOID context)
+class StartupConsentThreadSuspender
 {
-	HookInitContext* initContext = reinterpret_cast<HookInitContext*>(context);
-	if (initContext == nullptr)
+public:
+	void SuspendOtherProcessThreads()
 	{
-		BootstrapLog(L"HookInitThread: context is null");
-		return 0;
+		if (!suspendedThreads_.empty())
+		{
+			return;
+		}
+
+		const DWORD currentProcessId = GetCurrentProcessId();
+		const DWORD currentThreadId = GetCurrentThreadId();
+		HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+		if (snapshot == INVALID_HANDLE_VALUE)
+		{
+			BootstrapLog(L"StartupConsentThreadSuspender: CreateToolhelp32Snapshot failed (GetLastError=%lu)", GetLastError());
+			return;
+		}
+
+		THREADENTRY32 entry = {};
+		entry.dwSize = sizeof(entry);
+		if (!Thread32First(snapshot, &entry))
+		{
+			BootstrapLog(L"StartupConsentThreadSuspender: Thread32First failed (GetLastError=%lu)", GetLastError());
+			CloseHandle(snapshot);
+			return;
+		}
+
+		do
+		{
+			if (entry.th32OwnerProcessID != currentProcessId || entry.th32ThreadID == currentThreadId)
+			{
+				continue;
+			}
+
+			HANDLE threadHandle = OpenThread(THREAD_SUSPEND_RESUME | THREAD_QUERY_LIMITED_INFORMATION, FALSE, entry.th32ThreadID);
+			if (!threadHandle)
+			{
+				continue;
+			}
+
+			if (SuspendThread(threadHandle) == static_cast<DWORD>(-1))
+			{
+				CloseHandle(threadHandle);
+				continue;
+			}
+
+			suspendedThreads_.push_back(threadHandle);
+		} while (Thread32Next(snapshot, &entry));
+
+		CloseHandle(snapshot);
+		BootstrapLog(L"StartupConsentThreadSuspender: suspended %zu thread(s)", suspendedThreads_.size());
 	}
 
-	BootstrapLog(L"HookInitThread start: module=%p delayMs=%lu", initContext->module, initContext->delayMs);
+	void ResumeAll()
+	{
+		for (HANDLE threadHandle : suspendedThreads_)
+		{
+			if (threadHandle)
+			{
+				ResumeThread(threadHandle);
+				CloseHandle(threadHandle);
+			}
+		}
+
+		if (!suspendedThreads_.empty())
+		{
+			BootstrapLog(L"StartupConsentThreadSuspender: resumed %zu thread(s)", suspendedThreads_.size());
+		}
+		suspendedThreads_.clear();
+	}
+
+	~StartupConsentThreadSuspender()
+	{
+		ResumeAll();
+	}
+
+private:
+	std::vector<HANDLE> suspendedThreads_;
+};
+
+static void RunHookInitialization(HookInitContext* initContext)
+{
+	StartupConsentThreadSuspender threadSuspender;
+	const bool shouldSuspendForStartupMessage =
+		CialloHook::HookManager::ShouldSuspendProcessForStartupMessage(initContext->module);
+	BootstrapLog(L"HookInitThread: startup message suspension=%d", shouldSuspendForStartupMessage ? 1 : 0);
+	if (shouldSuspendForStartupMessage)
+	{
+		threadSuspender.SuspendOtherProcessThreads();
+		const bool continueInitialization =
+			CialloHook::HookManager::TryHandleStartupMessageBeforeInitialization(initContext->module);
+		threadSuspender.ResumeAll();
+		if (!continueInitialization)
+		{
+			BootstrapLog(L"HookInitThread: initialization aborted before full hook setup");
+			return;
+		}
+	}
+
 	if (initContext->waitForGuiReady)
 	{
 		DWORD waitedMs = 0;
@@ -317,10 +409,24 @@ static DWORD WINAPI HookInitThread(LPVOID context)
 		Sleep(initContext->delayMs);
 	}
 
+	CialloHook::HookManager::Initialize(initContext->module);
+	BootstrapLog(L"HookInitThread: HookManager::Initialize completed");
+}
+
+static DWORD WINAPI HookInitThread(LPVOID context)
+{
+	HookInitContext* initContext = reinterpret_cast<HookInitContext*>(context);
+	if (initContext == nullptr)
+	{
+		BootstrapLog(L"HookInitThread: context is null");
+		return 0;
+	}
+
+	BootstrapLog(L"HookInitThread start: module=%p delayMs=%lu", initContext->module, initContext->delayMs);
+
 	__try
 	{
-		CialloHook::HookManager::Initialize(initContext->module);
-		BootstrapLog(L"HookInitThread: HookManager::Initialize completed");
+		RunHookInitialization(initContext);
 	}
 	__except (HandleSehException(GetExceptionInformation(), L"HookManager::Initialize"))
 	{

@@ -22,6 +22,7 @@ namespace CialloHook
 	{
 		const wchar_t* kLocaleEmulatorStagedFilesEnvVar = L"CIALLOHOOK_LE_STAGED_FILES";
 		std::vector<std::wstring> sg_localeEmulatorStagedCleanupPaths;
+		volatile LONG sg_startupMessageHandledEarly = 0;
 	}
 
 	#pragma pack(push, 1)
@@ -844,6 +845,61 @@ static bool BuildEnvironmentBlockWithPath(const std::wstring& pathValue, std::ve
 		}
 	}
 
+	bool HookManager::ShouldSuspendProcessForStartupMessage(HMODULE dllModule)
+	{
+		try
+		{
+			std::wstring dllNameNoExt = GetModuleNameNoExtension(dllModule);
+			std::wstring iniPath = ResolveIniPath(dllModule, dllNameNoExt);
+
+			AppSettings settings;
+			std::string errorMessage;
+			if (!ConfigManager::Load(iniPath, settings, errorMessage, nullptr))
+			{
+				return false;
+			}
+
+			return settings.startupMessage.enable;
+		}
+		catch (...)
+		{
+			return false;
+		}
+	}
+
+	bool HookManager::TryHandleStartupMessageBeforeInitialization(HMODULE dllModule)
+	{
+		try
+		{
+			std::wstring dllNameNoExt = GetModuleNameNoExtension(dllModule);
+			std::wstring iniPath = ResolveIniPath(dllModule, dllNameNoExt);
+
+			AppSettings settings;
+			std::string errorMessage;
+			if (!ConfigManager::Load(iniPath, settings, errorMessage, nullptr))
+			{
+				return true;
+			}
+			if (!settings.startupMessage.enable)
+			{
+				return true;
+			}
+
+			if (!ShowStartupMessage(settings.startupMessage))
+			{
+				ExitProcess(0);
+				return false;
+			}
+
+			InterlockedExchange(&sg_startupMessageHandledEarly, 1);
+			return true;
+		}
+		catch (...)
+		{
+			return true;
+		}
+	}
+
 	void HookManager::RegisterLocaleEmulatorStagedFilesFromEnvironment()
 	{
 		bool exists = false;
@@ -879,6 +935,7 @@ static bool BuildEnvironmentBlockWithPath(const std::wstring& pathValue, std::ve
 	void HookManager::Initialize(HMODULE dllModule)
 	{
 		std::wstring dllNameNoExt = GetModuleNameNoExtension(dllModule);
+		const bool startupMessageHandledEarly = InterlockedExchange(&sg_startupMessageHandledEarly, 0) != 0;
 		try
 		{
 			std::wstring modulePath = GetModulePath(dllModule);
@@ -936,13 +993,20 @@ static bool BuildEnvironmentBlockWithPath(const std::wstring& pathValue, std::ve
 				return;
 			}
 
-			HookModules::ApplyPreStartupHooks(settings);
-			if (!ShowStartupMessage(settings.startupMessage))
+			if (!startupMessageHandledEarly)
 			{
-				ReleaseStartupWindowGate();
-				LogMessage(LogLevel::Info, L"StartupMessage: user declined patch notice, exit process");
-				ExitProcess(0);
-				return;
+				HookModules::ApplyPreStartupHooks(settings);
+				if (!ShowStartupMessage(settings.startupMessage))
+				{
+					ReleaseStartupWindowGate();
+					LogMessage(LogLevel::Info, L"StartupMessage: user declined patch notice, exit process");
+					ExitProcess(0);
+					return;
+				}
+			}
+			else if (settings.startupMessage.enable)
+			{
+				LogMessage(LogLevel::Info, L"StartupMessage: early consent already granted, skip duplicate dialog");
 			}
 			HookModules::ApplyPostStartupHooks(settings);
 			if (settings.startupMessage.enable)
