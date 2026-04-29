@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="config">
+      <UniqueIdentifier>{79D3FA2A-2FD5-4D44-9471-AE6D89BEE958}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="core">
+      <UniqueIdentifier>{6FB4D3E0-8F53-4A38-A9D0-4FB95D663A7A}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="hooks">
+      <UniqueIdentifier>{5FB9C90B-5F3F-42D9-B86A-F4DCE54C2032}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="entry">
+      <UniqueIdentifier>{E7866E44-9A80-4CFD-8A1A-D1A4A8D3C05A}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="config\config_manager.cpp">
+      <Filter>config</Filter>
+    </ClCompile>
+    <ClCompile Include="core\hook_manager.cpp">
+      <Filter>core</Filter>
+    </ClCompile>
+    <ClCompile Include="entry\dllmain.cpp">
+      <Filter>entry</Filter>
+    </ClCompile>
+    <ClCompile Include="hooks\hook_modules.cpp">
+      <Filter>hooks</Filter>
+    </ClCompile>
+    <ClCompile Include="entry\Proxy.cpp">
+      <Filter>entry</Filter>
+    </ClCompile>
+    <ClCompile Include="entry\WinMMExports.cpp">
+      <Filter>entry</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="config\config_manager.h">
+      <Filter>config</Filter>
+    </ClInclude>
+    <ClInclude Include="config\settings.h">
+      <Filter>config</Filter>
+    </ClInclude>
+    <ClInclude Include="core\hook_manager.h">
+      <Filter>core</Filter>
+    </ClInclude>
+    <ClInclude Include="hooks\hook_modules.h">
+      <Filter>hooks</Filter>
+    </ClInclude>
+    <ClInclude Include="entry\Proxy.h">
+      <Filter>entry</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="config\CialloHook.ini">
+      <Filter>config</Filter>
+    </None>
+    <None Include="config\CialloHook_Example.ini">
+      <Filter>config</Filter>
+    </None>
+    <None Include="entry\version.def">
+      <Filter>entry</Filter>
+    </None>
+  </ItemGroup>
+</Project>
