@@ -418,8 +418,8 @@
 			rawReadFile_KeyExtract = ReadFile;
 
 			bool hasFailed = false;
-			hasFailed |= DetourAttachFunc(&rawCreateFileW_KeyExtract, newCreateFileW_KeyExtract);
-			hasFailed |= DetourAttachFunc(&rawReadFile_KeyExtract, newReadFile_KeyExtract);
+			hasFailed |= !TryDetourAttach(&rawCreateFileW_KeyExtract, newCreateFileW_KeyExtract);
+			hasFailed |= !TryDetourAttach(&rawReadFile_KeyExtract, newReadFile_KeyExtract);
 
 			sg_siglusKeyExtractEnabled = !hasFailed;
 			LogMessage(sg_siglusKeyExtractEnabled ? LogLevel::Info : LogLevel::Warn,

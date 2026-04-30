@@ -1654,26 +1654,26 @@
 		bool HookRegistryAPIs()
 		{
 			bool hasFailed = false;
-			hasFailed |= DetourAttachFunc(&rawRegOpenKeyExW, newRegOpenKeyExW);
-			hasFailed |= DetourAttachFunc(&rawRegOpenKeyExA, newRegOpenKeyExA);
-			hasFailed |= DetourAttachFunc(&rawRegOpenKeyW, newRegOpenKeyW);
-			hasFailed |= DetourAttachFunc(&rawRegOpenKeyA, newRegOpenKeyA);
-			hasFailed |= DetourAttachFunc(&rawRegCreateKeyExW, newRegCreateKeyExW);
-			hasFailed |= DetourAttachFunc(&rawRegCreateKeyExA, newRegCreateKeyExA);
-			hasFailed |= DetourAttachFunc(&rawRegCreateKeyW, newRegCreateKeyW);
-			hasFailed |= DetourAttachFunc(&rawRegCreateKeyA, newRegCreateKeyA);
-			hasFailed |= DetourAttachFunc(&rawRegCloseKey, newRegCloseKey);
-			hasFailed |= DetourAttachFunc(&rawRegQueryValueExW, newRegQueryValueExW);
-			hasFailed |= DetourAttachFunc(&rawRegQueryValueExA, newRegQueryValueExA);
-			hasFailed |= DetourAttachFunc(&rawRegGetValueW, newRegGetValueW);
-			hasFailed |= DetourAttachFunc(&rawRegGetValueA, newRegGetValueA);
-			hasFailed |= DetourAttachFunc(&rawRegSetValueExW, newRegSetValueExW);
-			hasFailed |= DetourAttachFunc(&rawRegSetValueExA, newRegSetValueExA);
-			hasFailed |= DetourAttachFunc(&rawRegEnumKeyExW, newRegEnumKeyExW);
-			hasFailed |= DetourAttachFunc(&rawRegEnumKeyExA, newRegEnumKeyExA);
-			hasFailed |= DetourAttachFunc(&rawRegEnumValueW, newRegEnumValueW);
-			hasFailed |= DetourAttachFunc(&rawRegEnumValueA, newRegEnumValueA);
-			hasFailed |= DetourAttachFunc(&rawRegQueryInfoKeyW, newRegQueryInfoKeyW);
-			hasFailed |= DetourAttachFunc(&rawRegQueryInfoKeyA, newRegQueryInfoKeyA);
+			hasFailed |= !TryDetourAttach(&rawRegOpenKeyExW, newRegOpenKeyExW);
+			hasFailed |= !TryDetourAttach(&rawRegOpenKeyExA, newRegOpenKeyExA);
+			hasFailed |= !TryDetourAttach(&rawRegOpenKeyW, newRegOpenKeyW);
+			hasFailed |= !TryDetourAttach(&rawRegOpenKeyA, newRegOpenKeyA);
+			hasFailed |= !TryDetourAttach(&rawRegCreateKeyExW, newRegCreateKeyExW);
+			hasFailed |= !TryDetourAttach(&rawRegCreateKeyExA, newRegCreateKeyExA);
+			hasFailed |= !TryDetourAttach(&rawRegCreateKeyW, newRegCreateKeyW);
+			hasFailed |= !TryDetourAttach(&rawRegCreateKeyA, newRegCreateKeyA);
+			hasFailed |= !TryDetourAttach(&rawRegCloseKey, newRegCloseKey);
+			hasFailed |= !TryDetourAttach(&rawRegQueryValueExW, newRegQueryValueExW);
+			hasFailed |= !TryDetourAttach(&rawRegQueryValueExA, newRegQueryValueExA);
+			hasFailed |= !TryDetourAttach(&rawRegGetValueW, newRegGetValueW);
+			hasFailed |= !TryDetourAttach(&rawRegGetValueA, newRegGetValueA);
+			hasFailed |= !TryDetourAttach(&rawRegSetValueExW, newRegSetValueExW);
+			hasFailed |= !TryDetourAttach(&rawRegSetValueExA, newRegSetValueExA);
+			hasFailed |= !TryDetourAttach(&rawRegEnumKeyExW, newRegEnumKeyExW);
+			hasFailed |= !TryDetourAttach(&rawRegEnumKeyExA, newRegEnumKeyExA);
+			hasFailed |= !TryDetourAttach(&rawRegEnumValueW, newRegEnumValueW);
+			hasFailed |= !TryDetourAttach(&rawRegEnumValueA, newRegEnumValueA);
+			hasFailed |= !TryDetourAttach(&rawRegQueryInfoKeyW, newRegQueryInfoKeyW);
+			hasFailed |= !TryDetourAttach(&rawRegQueryInfoKeyA, newRegQueryInfoKeyA);
 			return !hasFailed;
 		}

@@ -216,7 +216,7 @@ namespace CialloLauncher
 				return extractedDll;
 			}
 		}
-		return FileExists(canonicalDll) ? canonicalDll : L"";
+		return L"";
 	}
 
 	std::wstring ResolveDefaultHookDllPath(const std::wstring& exeDir, bool customPakEnable, bool& fromCustomPak)

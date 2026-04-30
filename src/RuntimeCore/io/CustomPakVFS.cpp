@@ -732,7 +732,7 @@ namespace Rut
 			};
 
 			static CRITICAL_SECTION sg_lock;
-			static bool sg_lockInitialized = false;
+			static INIT_ONCE sg_lockInitOnce = INIT_ONCE_STATIC_INIT;
 			static bool sg_enabled = false;
 			static bool sg_enableLog = false;
 			static std::wstring sg_gameDir;
@@ -787,13 +787,18 @@ namespace Rut
 				LogMessage(LogLevel::Warn, L"[CustomPAK] %s", buffer);
 			}
 
+			static BOOL CALLBACK InitLockOnce(PINIT_ONCE initOnce, PVOID parameter, PVOID* context)
+			{
+				UNREFERENCED_PARAMETER(initOnce);
+				UNREFERENCED_PARAMETER(parameter);
+				UNREFERENCED_PARAMETER(context);
+				InitializeCriticalSection(&sg_lock);
+				return TRUE;
+			}
+
 			static void EnsureLock()
 			{
-				if (!sg_lockInitialized)
-				{
-					InitializeCriticalSection(&sg_lock);
-					sg_lockInitialized = true;
-				}
+				InitOnceExecuteOnce(&sg_lockInitOnce, InitLockOnce, nullptr, nullptr);
 			}
 
 			static std::wstring HashHex(const std::array<uint8_t, 16>& hash)

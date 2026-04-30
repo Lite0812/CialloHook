@@ -1,4 +1,5 @@
 #include "config_manager.h"
+#include "config_source.h"
 
 #include "../../RuntimeCore/io/INI.h"
 #include "../../RuntimeCore/base/Str.h"
@@ -412,11 +413,49 @@ namespace CialloHook
 		return Rut::StrX::WStrToStr(text, 65001);
 	}
 
+	static ConfigSourceSelection GetEffectiveConfigSourceSelection()
+	{
+		return GetConfigSourceSelection();
+	}
+
+	static std::wstring ResolveEffectiveIniPath(const std::wstring& iniPath)
+	{
+		const ConfigSourceSelection selection = GetEffectiveConfigSourceSelection();
+		if (selection.iniPathOverride && selection.iniPathOverride[0] != L'\0')
+		{
+			return selection.iniPathOverride;
+		}
+		return iniPath;
+	}
+
+	std::wstring ConfigManager::DescribeSource(const std::wstring& iniPath)
+	{
+		const ConfigSourceSelection selection = GetEffectiveConfigSourceSelection();
+		if (selection.mode == ConfigSourceMode::BuiltIn)
+		{
+			return GetBuiltInConfigSourceLabel();
+		}
+		return ResolveEffectiveIniPath(iniPath);
+	}
+
 	bool ConfigManager::Load(const std::wstring& iniPath, AppSettings& settings, std::string& errorMessage, std::string* warningMessage)
 	{
+		const ConfigSourceSelection selection = GetEffectiveConfigSourceSelection();
+		if (selection.mode == ConfigSourceMode::BuiltIn)
+		{
+			settings = AppSettings{};
+			ApplyBuiltInConfig(settings);
+			errorMessage.clear();
+			if (warningMessage)
+			{
+				warningMessage->clear();
+			}
+			return true;
+		}
+
 		try
 		{
-			INI_File ini(iniPath);
+			INI_File ini(ResolveEffectiveIniPath(iniPath));
 			ConfigReadContext context{ ini };
 
 			const wchar_t* fontSection = L"CialloHook";

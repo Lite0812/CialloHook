@@ -5,53 +5,97 @@ namespace Rut
 {
 	namespace MemX
 	{
+		namespace
+		{
+			bool MakePageWritable(LPVOID address, SIZE_T size, DWORD& oldProtect)
+			{
+				if (!address || size == 0)
+				{
+					return false;
+				}
+				return VirtualProtect(address, size, PAGE_EXECUTE_READWRITE, &oldProtect) != FALSE;
+			}
+
+			void RestorePageProtection(LPVOID address, SIZE_T size, DWORD oldProtect)
+			{
+				if (!address || size == 0)
+				{
+					return;
+				}
+				DWORD ignored = 0;
+				VirtualProtect(address, size, oldProtect, &ignored);
+			}
+		}
+
 		BOOL WriteMemory(LPVOID lpAddress, LPCVOID lpBuffer, SIZE_T nSize)
 		{
-			DWORD old = 0;
-			BOOL protect = VirtualProtectEx(GetCurrentProcess(), lpAddress, nSize, PAGE_EXECUTE_READWRITE, &old);
-			BOOL written = WriteProcessMemory(GetCurrentProcess(), lpAddress, lpBuffer, nSize, NULL);
+			if (!lpAddress || !lpBuffer || nSize == 0)
+			{
+				return FALSE;
+			}
 
-			if (protect && written) return TRUE;
+			DWORD oldProtect = 0;
+			if (!MakePageWritable(lpAddress, nSize, oldProtect))
+			{
+				return FALSE;
+			}
 
-			MessageBoxW(NULL, L"WriteMemory Failed!!", NULL, NULL);
-
-			return FALSE;
+			memcpy(lpAddress, lpBuffer, nSize);
+			FlushInstructionCache(GetCurrentProcess(), lpAddress, nSize);
+			RestorePageProtection(lpAddress, nSize, oldProtect);
+			return TRUE;
 		}
 
 		BOOL ReadMemory(LPVOID lpAddress, LPVOID lpBuffer, SIZE_T nSize)
 		{
-			DWORD old = 0;
-			BOOL protect = VirtualProtectEx(GetCurrentProcess(), lpAddress, nSize, PAGE_EXECUTE_READWRITE, &old);
-			BOOL written = ReadProcessMemory(GetCurrentProcess(), lpAddress, lpBuffer, nSize, NULL);
+			if (!lpAddress || !lpBuffer || nSize == 0)
+			{
+				return FALSE;
+			}
 
-			if (protect && written) return TRUE;
-
-			MessageBoxW(NULL, L"ReadMemory Failed!!", NULL, NULL);
-
-			return FALSE;
+			__try
+			{
+				memcpy(lpBuffer, lpAddress, nSize);
+				return TRUE;
+			}
+			__except (EXCEPTION_EXECUTE_HANDLER)
+			{
+				return FALSE;
+			}
 		}
 
 		uintptr_t MemSearch(uintptr_t pFind, SIZE_T szFind, PBYTE pToFind, SIZE_T szToFind, BOOL backward)
 		{
-			if ((pFind >= 0x7FFF0000) || (pFind <= 0x00010000) || !szToFind) return NULL;
+			if (!pFind || !pToFind || !szFind || !szToFind || szFind < szToFind) return NULL;
 
-			if (!backward)
+			__try
 			{
-				for (size_t ite = 0; ite < szFind; ite++)
+				if (!backward)
 				{
-					if (!memcmp(pToFind, reinterpret_cast<void*>(pFind++), szToFind)) return (pFind - 1);
+					uintptr_t end = pFind + szFind - szToFind;
+					for (uintptr_t current = pFind; current <= end; ++current)
+					{
+						if (!memcmp(pToFind, reinterpret_cast<void*>(current), szToFind)) return current;
+					}
+				}
+				else
+				{
+					uintptr_t end = pFind - szFind + szToFind;
+					for (uintptr_t current = pFind; current >= end; --current)
+					{
+						if (!memcmp(pToFind, reinterpret_cast<void*>(current), szToFind)) return current;
+						if (current == 0)
+						{
+							break;
+						}
+					}
 				}
 			}
-			else
+			__except (EXCEPTION_EXECUTE_HANDLER)
 			{
-				for (size_t ite = 0; ite < szFind; ite++)
-				{
-					if (!memcmp(pToFind, reinterpret_cast<void*>(pFind--), szToFind)) return (pFind + 1);
-				}
+				return NULL;
 			}
 
-			MessageBoxW(NULL, L"MemSearch Failed!!", NULL, NULL);
-			ExitProcess(0);
 			return NULL;
 		}
 	}

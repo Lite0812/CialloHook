@@ -235,6 +235,50 @@
 			LogMessage(LogLevel::Info, L"StartupWindowGate: defer hwnd=%p", hWnd);
 		}
 
+		struct StartupVisibleWindowCaptureContext
+		{
+			DWORD processId = 0;
+			std::vector<HWND> windows;
+		};
+
+		static BOOL CALLBACK CollectVisibleStartupWindowsProc(HWND hWnd, LPARAM lParam)
+		{
+			StartupVisibleWindowCaptureContext* context = reinterpret_cast<StartupVisibleWindowCaptureContext*>(lParam);
+			if (!context || !IsStartupDeferredWindowCandidate(hWnd) || !IsWindowVisible(hWnd))
+			{
+				return TRUE;
+			}
+
+			DWORD processId = 0;
+			GetWindowThreadProcessId(hWnd, &processId);
+			if (processId != context->processId)
+			{
+				return TRUE;
+			}
+
+			context->windows.push_back(hWnd);
+			return TRUE;
+		}
+
+		static void CaptureExistingStartupWindows()
+		{
+			StartupVisibleWindowCaptureContext context = {};
+			context.processId = GetCurrentProcessId();
+			if (!EnumWindows(CollectVisibleStartupWindowsProc, reinterpret_cast<LPARAM>(&context)))
+			{
+				LogMessage(LogLevel::Warn, L"StartupWindowGate: EnumWindows failed, gle=%lu", GetLastError());
+				return;
+			}
+
+			for (HWND hWnd : context.windows)
+			{
+				RememberStartupDeferredWindow(hWnd);
+				rawSetWindowPos(hWnd, nullptr, 0, 0, 0, 0,
+					SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_HIDEWINDOW);
+				LogMessage(LogLevel::Info, L"StartupWindowGate: captured pre-existing hwnd=%p", hWnd);
+			}
+		}
+
 		static bool ShouldDeferStartupWindow(HWND hWnd)
 		{
 			return IsStartupWindowGateActive()
@@ -278,6 +322,10 @@
 			}
 			LogMessage(LogLevel::Info, L"EnableStartupWindowGate: enable=%d bypassTid=%lu",
 				enable ? 1 : 0, (unsigned long)sg_startupWindowGateBypassThreadId);
+			if (enable)
+			{
+				CaptureExistingStartupWindows();
+			}
 		}
 
 		void ReleaseStartupWindowGate()
@@ -452,7 +500,7 @@
 
 		bool HookCreateWindowExA()
 		{
-			bool failed = DetourAttachFunc(&rawCreateWindowExA, newCreateWindowExA);
+			bool failed = !TryDetourAttach(&rawCreateWindowExA, newCreateWindowExA);
 			LogMessage(failed ? LogLevel::Error : LogLevel::Info, L"HookCreateWindowExA: %s", failed ? L"failed" : L"ok");
 			return failed;
 		}
@@ -494,7 +542,7 @@
 
 		bool HookCreateWindowExW()
 		{
-			bool failed = DetourAttachFunc(&rawCreateWindowExW, newCreateWindowExW);
+			bool failed = !TryDetourAttach(&rawCreateWindowExW, newCreateWindowExW);
 			LogMessage(failed ? LogLevel::Error : LogLevel::Info, L"HookCreateWindowExW: %s", failed ? L"failed" : L"ok");
 			return failed;
 		}
@@ -513,7 +561,7 @@
 
 		bool HookShowWindow()
 		{
-			bool failed = DetourAttachFunc(&rawShowWindow, newShowWindow);
+			bool failed = !TryDetourAttach(&rawShowWindow, newShowWindow);
 			LogMessage(failed ? LogLevel::Error : LogLevel::Info, L"HookShowWindow: %s", failed ? L"failed" : L"ok");
 			return failed;
 		}
@@ -532,7 +580,7 @@
 
 		bool HookShowWindowAsync()
 		{
-			bool failed = DetourAttachFunc(&rawShowWindowAsync, newShowWindowAsync);
+			bool failed = !TryDetourAttach(&rawShowWindowAsync, newShowWindowAsync);
 			LogMessage(failed ? LogLevel::Error : LogLevel::Info, L"HookShowWindowAsync: %s", failed ? L"failed" : L"ok");
 			return failed;
 		}
@@ -552,7 +600,7 @@
 
 		bool HookSetWindowPos()
 		{
-			bool failed = DetourAttachFunc(&rawSetWindowPos, newSetWindowPos);
+			bool failed = !TryDetourAttach(&rawSetWindowPos, newSetWindowPos);
 			LogMessage(failed ? LogLevel::Error : LogLevel::Info, L"HookSetWindowPos: %s", failed ? L"failed" : L"ok");
 			return failed;
 		}
@@ -576,7 +624,7 @@
 
 		bool HookSetWindowTextA()
 		{
-			bool failed = DetourAttachFunc(&rawSetWindowTextA, newSetWindowTextA);
+			bool failed = !TryDetourAttach(&rawSetWindowTextA, newSetWindowTextA);
 			LogMessage(failed ? LogLevel::Error : LogLevel::Info, L"HookSetWindowTextA: %s", failed ? L"failed" : L"ok");
 			return failed;
 		}
@@ -735,7 +783,7 @@
 
 		bool HookSetWindowTextW()
 		{
-			bool failed = DetourAttachFunc(&rawSetWindowTextW, newSetWindowTextW);
+			bool failed = !TryDetourAttach(&rawSetWindowTextW, newSetWindowTextW);
 			LogMessage(failed ? LogLevel::Error : LogLevel::Info, L"HookSetWindowTextW: %s", failed ? L"failed" : L"ok");
 			return failed;
 		}

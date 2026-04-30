@@ -1124,7 +1124,7 @@ namespace CialloHook
 					sg_rawSignVerifyMsvc = reinterpret_cast<pPatchSignVerifyMsvc>(Pe::FindData(GetModuleHandleW(nullptr), kPatternSignVerifyMsvc, strlen(kPatternSignVerifyMsvc)));
 					if (sg_rawSignVerifyMsvc)
 					{
-						bool failed = DetourAttachFunc(&sg_rawSignVerifyMsvc, PatchSignVerifyMsvc);
+						bool failed = !TryDetourAttach(&sg_rawSignVerifyMsvc, PatchSignVerifyMsvc);
 						sg_signVerifyHooked = !failed;
 						LogMessage(sg_signVerifyHooked ? LogLevel::Info : LogLevel::Warn, L"KrkrPluginBridge: sign verify hook=%s", sg_signVerifyHooked ? L"ok" : L"failed");
 					}
@@ -1174,7 +1174,7 @@ namespace CialloHook
 					sg_rawCreateStreamBorland = reinterpret_cast<pCreateStreamBorland>(Pe::FindData(kPatternCreateStreamBorland, strlen(kPatternCreateStreamBorland)));
 					if (sg_rawCreateStreamBorland)
 					{
-						bool failed = DetourAttachFunc(&sg_rawCreateStreamBorland, CompilerHelper::WrapAsStaticFunc<tTJSBinaryStream*, PatchCreateStreamBorland, const ttstr&, tjs_uint32>());
+						bool failed = !TryDetourAttach(&sg_rawCreateStreamBorland, CompilerHelper::WrapAsStaticFunc<tTJSBinaryStream*, PatchCreateStreamBorland, const ttstr&, tjs_uint32>());
 						sg_createStreamHooked = !failed;
 						LogMessage(sg_createStreamHooked ? LogLevel::Info : LogLevel::Warn, L"KrkrPluginBridge: borland CreateStream pattern/hook=%s", sg_createStreamHooked ? L"ok" : L"failed");
 					}
@@ -1190,7 +1190,7 @@ namespace CialloHook
 					sg_rawCreateStreamMsvc = ResolveCreateStreamMsvc();
 					if (sg_rawCreateStreamMsvc)
 					{
-						bool failed = DetourAttachFunc(&sg_rawCreateStreamMsvc, PatchCreateStreamMsvc);
+						bool failed = !TryDetourAttach(&sg_rawCreateStreamMsvc, PatchCreateStreamMsvc);
 						sg_createStreamHooked = !failed;
 #if defined(_M_IX86)
 						LogMessage(sg_createStreamHooked ? LogLevel::Info : LogLevel::Warn, L"KrkrPluginBridge: msvc CreateStream pattern/hook=%s", sg_createStreamHooked ? L"ok" : L"failed");

@@ -1,10 +1,8 @@
 #include <Windows.h>
 #include <DbgHelp.h>
-#include <TlHelp32.h>
 #include <cstdio>
 #include <cstdarg>
 #include <string>
-#include <vector>
 
 #include "../../RuntimeCore/hook/Hook_API.h"
 #include "Proxy.h"
@@ -166,6 +164,17 @@ static bool IsProcessShuttingDown()
 	return rtlDllShutdownInProgress() ? true : false;
 }
 
+static bool ShouldAbortHookInitialization(const wchar_t* stage)
+{
+	if (!IsProcessShuttingDown())
+	{
+		return false;
+	}
+
+	BootstrapLog(L"%s: abort initialization because process is shutting down", stage);
+	return true;
+}
+
 static bool WriteCrashDump(EXCEPTION_POINTERS* exceptionInfo, const wchar_t* stage)
 {
 	if (IsProcessShuttingDown())
@@ -286,104 +295,11 @@ static bool IsWinmmProxyModule(HMODULE module)
 	return lstrcmpiW(fileName, L"winmm.dll") == 0;
 }
 
-class StartupConsentThreadSuspender
-{
-public:
-	void SuspendOtherProcessThreads()
-	{
-		if (!suspendedThreads_.empty())
-		{
-			return;
-		}
-
-		const DWORD currentProcessId = GetCurrentProcessId();
-		const DWORD currentThreadId = GetCurrentThreadId();
-		HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
-		if (snapshot == INVALID_HANDLE_VALUE)
-		{
-			BootstrapLog(L"StartupConsentThreadSuspender: CreateToolhelp32Snapshot failed (GetLastError=%lu)", GetLastError());
-			return;
-		}
-
-		THREADENTRY32 entry = {};
-		entry.dwSize = sizeof(entry);
-		if (!Thread32First(snapshot, &entry))
-		{
-			BootstrapLog(L"StartupConsentThreadSuspender: Thread32First failed (GetLastError=%lu)", GetLastError());
-			CloseHandle(snapshot);
-			return;
-		}
-
-		do
-		{
-			if (entry.th32OwnerProcessID != currentProcessId || entry.th32ThreadID == currentThreadId)
-			{
-				continue;
-			}
-
-			HANDLE threadHandle = OpenThread(THREAD_SUSPEND_RESUME | THREAD_QUERY_LIMITED_INFORMATION, FALSE, entry.th32ThreadID);
-			if (!threadHandle)
-			{
-				continue;
-			}
-
-			if (SuspendThread(threadHandle) == static_cast<DWORD>(-1))
-			{
-				CloseHandle(threadHandle);
-				continue;
-			}
-
-			suspendedThreads_.push_back(threadHandle);
-		} while (Thread32Next(snapshot, &entry));
-
-		CloseHandle(snapshot);
-		BootstrapLog(L"StartupConsentThreadSuspender: suspended %zu thread(s)", suspendedThreads_.size());
-	}
-
-	void ResumeAll()
-	{
-		for (HANDLE threadHandle : suspendedThreads_)
-		{
-			if (threadHandle)
-			{
-				ResumeThread(threadHandle);
-				CloseHandle(threadHandle);
-			}
-		}
-
-		if (!suspendedThreads_.empty())
-		{
-			BootstrapLog(L"StartupConsentThreadSuspender: resumed %zu thread(s)", suspendedThreads_.size());
-		}
-		suspendedThreads_.clear();
-	}
-
-	~StartupConsentThreadSuspender()
-	{
-		ResumeAll();
-	}
-
-private:
-	std::vector<HANDLE> suspendedThreads_;
-};
-
 static void RunHookInitialization(HookInitContext* initContext)
 {
-	StartupConsentThreadSuspender threadSuspender;
-	const bool shouldSuspendForStartupMessage =
-		CialloHook::HookManager::ShouldSuspendProcessForStartupMessage(initContext->module);
-	BootstrapLog(L"HookInitThread: startup message suspension=%d", shouldSuspendForStartupMessage ? 1 : 0);
-	if (shouldSuspendForStartupMessage)
+	if (ShouldAbortHookInitialization(L"HookInitThread: pre-start"))
 	{
-		threadSuspender.SuspendOtherProcessThreads();
-		const bool continueInitialization =
-			CialloHook::HookManager::TryHandleStartupMessageBeforeInitialization(initContext->module);
-		threadSuspender.ResumeAll();
-		if (!continueInitialization)
-		{
-			BootstrapLog(L"HookInitThread: initialization aborted before full hook setup");
-			return;
-		}
+		return;
 	}
 
 	if (initContext->waitForGuiReady)
@@ -399,6 +315,10 @@ static void RunHookInitialization(HookInitContext* initContext)
 			{
 				break;
 			}
+			if (ShouldAbortHookInitialization(L"HookInitThread: waiting for GUI"))
+			{
+				return;
+			}
 			Sleep(stepMs);
 			waitedMs += stepMs;
 		}
@@ -406,7 +326,25 @@ static void RunHookInitialization(HookInitContext* initContext)
 	}
 	if (initContext->delayMs > 0)
 	{
-		Sleep(initContext->delayMs);
+		DWORD waitedMs = 0;
+		const DWORD stepMs = 100;
+		while (waitedMs < initContext->delayMs)
+		{
+			if (ShouldAbortHookInitialization(L"HookInitThread: delayed startup"))
+			{
+				return;
+			}
+
+			DWORD remainingMs = initContext->delayMs - waitedMs;
+			DWORD sleepMs = remainingMs < stepMs ? remainingMs : stepMs;
+			Sleep(sleepMs);
+			waitedMs += sleepMs;
+		}
+	}
+
+	if (ShouldAbortHookInitialization(L"HookInitThread: before initialize"))
+	{
+		return;
 	}
 
 	CialloHook::HookManager::Initialize(initContext->module);
@@ -416,9 +354,21 @@ static void RunHookInitialization(HookInitContext* initContext)
 static DWORD WINAPI HookInitThread(LPVOID context)
 {
 	HookInitContext* initContext = reinterpret_cast<HookInitContext*>(context);
+	HMODULE pinnedModule = nullptr;
 	if (initContext == nullptr)
 	{
 		BootstrapLog(L"HookInitThread: context is null");
+		return 0;
+	}
+
+	if (!GetModuleHandleExW(
+		GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+		reinterpret_cast<LPCWSTR>(initContext->module),
+		&pinnedModule))
+	{
+		BootstrapLog(L"HookInitThread: failed to pin module %p (GetLastError=%lu), abort initialization",
+			initContext->module, GetLastError());
+		delete initContext;
 		return 0;
 	}
 
@@ -435,6 +385,8 @@ static DWORD WINAPI HookInitThread(LPVOID context)
 
 	delete initContext;
 	BootstrapLog(L"HookInitThread end");
+	BootstrapLog(L"HookInitThread: releasing module pin %p", pinnedModule);
+	FreeLibraryAndExitThread(pinnedModule, 0);
 	return 0;
 }
 
@@ -453,16 +405,8 @@ static void StartHookInitialization(HMODULE hModule)
 		return;
 	}
 
-	BootstrapLog(L"DllMain: CreateThread failed (GetLastError=%lu), fallback to direct initialize", GetLastError());
+	BootstrapLog(L"DllMain: CreateThread failed (GetLastError=%lu), skip direct initialize to avoid loader-lock risk", GetLastError());
 	delete initContext;
-	__try
-	{
-		CialloHook::HookManager::Initialize(hModule);
-	}
-	__except (HandleSehException(GetExceptionInformation(), L"HookManager::Initialize(fallback)"))
-	{
-		BootstrapLog(L"DllMain fallback initialize aborted by SEH");
-	}
 }
 
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID)
@@ -497,6 +441,11 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID)
 		{
 			BootstrapLog(L"DllMain: locale emulator relaunch handled during early init");
 			return TRUE;
+		}
+		if (!CialloHook::HookManager::TryHandleConsentInDllMain(hModule))
+		{
+			BootstrapLog(L"DllMain: startup consent declined during attach");
+			return FALSE;
 		}
 		StartHookInitialization(hModule);
 		break;

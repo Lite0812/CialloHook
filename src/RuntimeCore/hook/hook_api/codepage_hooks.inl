@@ -29,7 +29,7 @@
 
 		bool HookMultiByteToWideChar()
 		{
-			return DetourAttachFunc(&rawMultiByteToWideChar, newMultiByteToWideChar);
+			return !TryDetourAttach(&rawMultiByteToWideChar, newMultiByteToWideChar);
 		}
 		//*********END Hook MultiByteToWideChar*********
 
@@ -53,7 +53,7 @@
 
 		bool HookWideCharToMultiByte()
 		{
-			return DetourAttachFunc(&rawWideCharToMultiByte, newWideCharToMultiByte);
+			return !TryDetourAttach(&rawWideCharToMultiByte, newWideCharToMultiByte);
 		}
 		//*********END Hook WideCharToMultiByte*********
 

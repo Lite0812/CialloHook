@@ -566,7 +566,7 @@
 		{
 			sg_lpFontName = cpFontName;
 			SetFontAdjustments(uiCharSet, enableCharsetSpoof, spoofFromCharSet, spoofToCharSet, iHeight, iWidth, iWeight, fScale, fSpacingScale, fGlyphAspectRatio, iGlyphOffsetX, iGlyphOffsetY, iMetricsOffsetLeft, iMetricsOffsetRight, iMetricsOffsetTop, iMetricsOffsetBottom);
-			return DetourAttachFunc(&rawCreateFontA, newCreateFontA);
+			return !TryDetourAttach(&rawCreateFontA, newCreateFontA);
 		}
 		//*********END Hook CreateFontA*********
 
@@ -627,7 +627,7 @@
 		{
 			sg_lpFontName = cpFontName;
 			SetFontAdjustments(uiCharSet, enableCharsetSpoof, spoofFromCharSet, spoofToCharSet, iHeight, iWidth, iWeight, fScale, fSpacingScale, fGlyphAspectRatio, iGlyphOffsetX, iGlyphOffsetY, iMetricsOffsetLeft, iMetricsOffsetRight, iMetricsOffsetTop, iMetricsOffsetBottom);
-			return DetourAttachFunc(&rawCreateFontIndirectA, newCreateFontIndirectA);
+			return !TryDetourAttach(&rawCreateFontIndirectA, newCreateFontIndirectA);
 		}
 		//*********END Hook CreateFontIndirectA*********
 
@@ -674,7 +674,7 @@
 		{
 			sg_lpFontNameW = wpFontName;
 			SetFontAdjustments(uiCharSet, enableCharsetSpoof, spoofFromCharSet, spoofToCharSet, iHeight, iWidth, iWeight, fScale, fSpacingScale, fGlyphAspectRatio, iGlyphOffsetX, iGlyphOffsetY, iMetricsOffsetLeft, iMetricsOffsetRight, iMetricsOffsetTop, iMetricsOffsetBottom);
-			return DetourAttachFunc(&rawCreateFontW, newCreateFontW);
+			return !TryDetourAttach(&rawCreateFontW, newCreateFontW);
 		}
 		//*********END Hook CreateFontW*******
 
@@ -727,7 +727,7 @@
 		{
 			sg_lpFontNameW = wpFontName;
 			SetFontAdjustments(uiCharSet, enableCharsetSpoof, spoofFromCharSet, spoofToCharSet, iHeight, iWidth, iWeight, fScale, fSpacingScale, fGlyphAspectRatio, iGlyphOffsetX, iGlyphOffsetY, iMetricsOffsetLeft, iMetricsOffsetRight, iMetricsOffsetTop, iMetricsOffsetBottom);
-			return DetourAttachFunc(&rawCreateFontIndirectW, newCreateFontIndirectW);
+			return !TryDetourAttach(&rawCreateFontIndirectW, newCreateFontIndirectW);
 		}
 		//*********END Hook CreateFontIndirectW*********
 
@@ -861,13 +861,13 @@
 		bool HookEnumFontFamiliesExA(bool unlockSelection)
 		{
 			sg_unlockFontSelection = unlockSelection;
-			return DetourAttachFunc(&rawEnumFontFamiliesExA, newEnumFontFamiliesExA);
+			return !TryDetourAttach(&rawEnumFontFamiliesExA, newEnumFontFamiliesExA);
 		}
 
 		bool HookEnumFontFamiliesExW(bool unlockSelection)
 		{
 			sg_unlockFontSelection = unlockSelection;
-			return DetourAttachFunc(&rawEnumFontFamiliesExW, newEnumFontFamiliesExW);
+			return !TryDetourAttach(&rawEnumFontFamiliesExW, newEnumFontFamiliesExW);
 		}
 
 		static pSelectObject rawSelectObject = SelectObject;
@@ -1845,7 +1845,7 @@
 				return;
 			}
 			rawDWriteFactoryCreateTextFormat = target;
-			bool failed = DetourAttachFunc(&rawDWriteFactoryCreateTextFormat, newDWriteFactoryCreateTextFormat);
+			bool failed = !TryDetourAttach(&rawDWriteFactoryCreateTextFormat, newDWriteFactoryCreateTextFormat);
 			sg_hookedDWriteCreateTextFormat = !failed;
 		}
 
@@ -2106,211 +2106,211 @@
 
 		bool HookCreateFontIndirectExA()
 		{
-			return DetourAttachFunc(&rawCreateFontIndirectExA, newCreateFontIndirectExA);
+			return !TryDetourAttach(&rawCreateFontIndirectExA, newCreateFontIndirectExA);
 		}
 
 		bool HookCreateFontIndirectExW()
 		{
-			return DetourAttachFunc(&rawCreateFontIndirectExW, newCreateFontIndirectExW);
+			return !TryDetourAttach(&rawCreateFontIndirectExW, newCreateFontIndirectExW);
 		}
 
 		bool HookGetObjectA()
 		{
-			return DetourAttachFunc(&rawGetObjectA, newGetObjectA);
+			return !TryDetourAttach(&rawGetObjectA, newGetObjectA);
 		}
 
 		bool HookGetObjectW()
 		{
-			return DetourAttachFunc(&rawGetObjectW, newGetObjectW);
+			return !TryDetourAttach(&rawGetObjectW, newGetObjectW);
 		}
 
 		bool HookGetTextFaceA()
 		{
-			return DetourAttachFunc(&rawGetTextFaceA, newGetTextFaceA);
+			return !TryDetourAttach(&rawGetTextFaceA, newGetTextFaceA);
 		}
 
 		bool HookGetTextFaceW()
 		{
-			return DetourAttachFunc(&rawGetTextFaceW, newGetTextFaceW);
+			return !TryDetourAttach(&rawGetTextFaceW, newGetTextFaceW);
 		}
 
 		bool HookGetTextMetricsA()
 		{
-			return DetourAttachFunc(&rawGetTextMetricsA, newGetTextMetricsA);
+			return !TryDetourAttach(&rawGetTextMetricsA, newGetTextMetricsA);
 		}
 
 		bool HookGetTextMetricsW()
 		{
-			return DetourAttachFunc(&rawGetTextMetricsW, newGetTextMetricsW);
+			return !TryDetourAttach(&rawGetTextMetricsW, newGetTextMetricsW);
 		}
 
 		bool HookGetCharABCWidthsA()
 		{
-			return DetourAttachFunc(&rawGetCharABCWidthsA, newGetCharABCWidthsA);
+			return !TryDetourAttach(&rawGetCharABCWidthsA, newGetCharABCWidthsA);
 		}
 
 		bool HookGetCharABCWidthsW()
 		{
-			return DetourAttachFunc(&rawGetCharABCWidthsW, newGetCharABCWidthsW);
+			return !TryDetourAttach(&rawGetCharABCWidthsW, newGetCharABCWidthsW);
 		}
 
 		bool HookGetCharABCWidthsFloatA()
 		{
-			return DetourAttachFunc(&rawGetCharABCWidthsFloatA, newGetCharABCWidthsFloatA);
+			return !TryDetourAttach(&rawGetCharABCWidthsFloatA, newGetCharABCWidthsFloatA);
 		}
 
 		bool HookGetCharABCWidthsFloatW()
 		{
-			return DetourAttachFunc(&rawGetCharABCWidthsFloatW, newGetCharABCWidthsFloatW);
+			return !TryDetourAttach(&rawGetCharABCWidthsFloatW, newGetCharABCWidthsFloatW);
 		}
 
 		bool HookGetCharWidthA()
 		{
-			return DetourAttachFunc(&rawGetCharWidthA, newGetCharWidthA);
+			return !TryDetourAttach(&rawGetCharWidthA, newGetCharWidthA);
 		}
 
 		bool HookGetCharWidthW()
 		{
-			return DetourAttachFunc(&rawGetCharWidthW, newGetCharWidthW);
+			return !TryDetourAttach(&rawGetCharWidthW, newGetCharWidthW);
 		}
 
 		bool HookGetCharWidth32A()
 		{
-			return DetourAttachFunc(&rawGetCharWidth32A, newGetCharWidth32A);
+			return !TryDetourAttach(&rawGetCharWidth32A, newGetCharWidth32A);
 		}
 
 		bool HookGetCharWidth32W()
 		{
-			return DetourAttachFunc(&rawGetCharWidth32W, newGetCharWidth32W);
+			return !TryDetourAttach(&rawGetCharWidth32W, newGetCharWidth32W);
 		}
 
 		bool HookGetKerningPairsA()
 		{
-			return DetourAttachFunc(&rawGetKerningPairsA, newGetKerningPairsA);
+			return !TryDetourAttach(&rawGetKerningPairsA, newGetKerningPairsA);
 		}
 
 		bool HookGetKerningPairsW()
 		{
-			return DetourAttachFunc(&rawGetKerningPairsW, newGetKerningPairsW);
+			return !TryDetourAttach(&rawGetKerningPairsW, newGetKerningPairsW);
 		}
 
 		bool HookGetOutlineTextMetricsA()
 		{
-			return DetourAttachFunc(&rawGetOutlineTextMetricsA, newGetOutlineTextMetricsA);
+			return !TryDetourAttach(&rawGetOutlineTextMetricsA, newGetOutlineTextMetricsA);
 		}
 
 		bool HookGetOutlineTextMetricsW()
 		{
-			return DetourAttachFunc(&rawGetOutlineTextMetricsW, newGetOutlineTextMetricsW);
+			return !TryDetourAttach(&rawGetOutlineTextMetricsW, newGetOutlineTextMetricsW);
 		}
 
 		bool HookAddFontResourceA()
 		{
-			return DetourAttachFunc(&rawAddFontResourceA, newAddFontResourceA);
+			return !TryDetourAttach(&rawAddFontResourceA, newAddFontResourceA);
 		}
 
 		bool HookAddFontResourceW()
 		{
-			return DetourAttachFunc(&rawAddFontResourceW, newAddFontResourceW);
+			return !TryDetourAttach(&rawAddFontResourceW, newAddFontResourceW);
 		}
 
 		bool HookAddFontResourceExA()
 		{
-			return DetourAttachFunc(&rawAddFontResourceExA, newAddFontResourceExA);
+			return !TryDetourAttach(&rawAddFontResourceExA, newAddFontResourceExA);
 		}
 
 		bool HookAddFontMemResourceEx()
 		{
-			return DetourAttachFunc(&rawAddFontMemResourceEx, newAddFontMemResourceEx);
+			return !TryDetourAttach(&rawAddFontMemResourceEx, newAddFontMemResourceEx);
 		}
 
 		bool HookRemoveFontResourceA()
 		{
-			return DetourAttachFunc(&rawRemoveFontResourceA, newRemoveFontResourceA);
+			return !TryDetourAttach(&rawRemoveFontResourceA, newRemoveFontResourceA);
 		}
 
 		bool HookRemoveFontResourceW()
 		{
-			return DetourAttachFunc(&rawRemoveFontResourceW, newRemoveFontResourceW);
+			return !TryDetourAttach(&rawRemoveFontResourceW, newRemoveFontResourceW);
 		}
 
 		bool HookRemoveFontResourceExA()
 		{
-			return DetourAttachFunc(&rawRemoveFontResourceExA, newRemoveFontResourceExA);
+			return !TryDetourAttach(&rawRemoveFontResourceExA, newRemoveFontResourceExA);
 		}
 
 		bool HookRemoveFontMemResourceEx()
 		{
-			return DetourAttachFunc(&rawRemoveFontMemResourceEx, newRemoveFontMemResourceEx);
+			return !TryDetourAttach(&rawRemoveFontMemResourceEx, newRemoveFontMemResourceEx);
 		}
 
 		bool HookEnumFontsA(bool unlockSelection)
 		{
 			sg_unlockFontSelection = unlockSelection;
-			return DetourAttachFunc(&rawEnumFontsA, newEnumFontsA);
+			return !TryDetourAttach(&rawEnumFontsA, newEnumFontsA);
 		}
 
 		bool HookEnumFontsW(bool unlockSelection)
 		{
 			sg_unlockFontSelection = unlockSelection;
-			return DetourAttachFunc(&rawEnumFontsW, newEnumFontsW);
+			return !TryDetourAttach(&rawEnumFontsW, newEnumFontsW);
 		}
 
 		bool HookEnumFontFamiliesA(bool unlockSelection)
 		{
 			sg_unlockFontSelection = unlockSelection;
-			return DetourAttachFunc(&rawEnumFontFamiliesA, newEnumFontFamiliesA);
+			return !TryDetourAttach(&rawEnumFontFamiliesA, newEnumFontFamiliesA);
 		}
 
 		bool HookEnumFontFamiliesW(bool unlockSelection)
 		{
 			sg_unlockFontSelection = unlockSelection;
-			return DetourAttachFunc(&rawEnumFontFamiliesW, newEnumFontFamiliesW);
+			return !TryDetourAttach(&rawEnumFontFamiliesW, newEnumFontFamiliesW);
 		}
 
 		bool HookGetCharWidthFloatA()
 		{
-			return DetourAttachFunc(&rawGetCharWidthFloatA, newGetCharWidthFloatA);
+			return !TryDetourAttach(&rawGetCharWidthFloatA, newGetCharWidthFloatA);
 		}
 
 		bool HookGetCharWidthFloatW()
 		{
-			return DetourAttachFunc(&rawGetCharWidthFloatW, newGetCharWidthFloatW);
+			return !TryDetourAttach(&rawGetCharWidthFloatW, newGetCharWidthFloatW);
 		}
 
 		bool HookGetCharWidthI()
 		{
-			return DetourAttachFunc(&rawGetCharWidthI, newGetCharWidthI);
+			return !TryDetourAttach(&rawGetCharWidthI, newGetCharWidthI);
 		}
 
 		bool HookGetCharABCWidthsI()
 		{
-			return DetourAttachFunc(&rawGetCharABCWidthsI, newGetCharABCWidthsI);
+			return !TryDetourAttach(&rawGetCharABCWidthsI, newGetCharABCWidthsI);
 		}
 
 		bool HookGetTextExtentPointI()
 		{
-			return DetourAttachFunc(&rawGetTextExtentPointI, newGetTextExtentPointI);
+			return !TryDetourAttach(&rawGetTextExtentPointI, newGetTextExtentPointI);
 		}
 
 		bool HookGetTextExtentExPointI()
 		{
-			return DetourAttachFunc(&rawGetTextExtentExPointI, newGetTextExtentExPointI);
+			return !TryDetourAttach(&rawGetTextExtentExPointI, newGetTextExtentExPointI);
 		}
 
 		bool HookGetFontData()
 		{
-			return DetourAttachFunc(&rawGetFontData, newGetFontData);
+			return !TryDetourAttach(&rawGetFontData, newGetFontData);
 		}
 
 		bool HookGetFontLanguageInfo()
 		{
-			return DetourAttachFunc(&rawGetFontLanguageInfo, newGetFontLanguageInfo);
+			return !TryDetourAttach(&rawGetFontLanguageInfo, newGetFontLanguageInfo);
 		}
 
 		bool HookGetFontUnicodeRanges()
 		{
-			return DetourAttachFunc(&rawGetFontUnicodeRanges, newGetFontUnicodeRanges);
+			return !TryDetourAttach(&rawGetFontUnicodeRanges, newGetFontUnicodeRanges);
 		}
 
 		bool HookDWriteCreateFactory()
@@ -2329,7 +2329,7 @@
 			{
 				return false;
 			}
-			bool failed = DetourAttachFunc(&rawDWriteCreateFactory, newDWriteCreateFactory);
+			bool failed = !TryDetourAttach(&rawDWriteCreateFactory, newDWriteCreateFactory);
 			sg_hookedDWriteCreateFactory = !failed;
 			return failed;
 		}
@@ -2350,7 +2350,7 @@
 			{
 				return false;
 			}
-			bool failed = DetourAttachFunc(&rawGdipCreateFontFamilyFromName, newGdipCreateFontFamilyFromName);
+			bool failed = !TryDetourAttach(&rawGdipCreateFontFamilyFromName, newGdipCreateFontFamilyFromName);
 			sg_hookedGdipCreateFontFamily = !failed;
 			return failed;
 		}
@@ -2371,7 +2371,7 @@
 			{
 				return false;
 			}
-			bool failed = DetourAttachFunc(&rawGdipCreateFontFromLogfontW, newGdipCreateFontFromLogfontW);
+			bool failed = !TryDetourAttach(&rawGdipCreateFontFromLogfontW, newGdipCreateFontFromLogfontW);
 			sg_hookedGdipCreateFontFromLogfontW = !failed;
 			return failed;
 		}
@@ -2392,7 +2392,7 @@
 			{
 				return false;
 			}
-			bool failed = DetourAttachFunc(&rawGdipCreateFontFromLogfontA, newGdipCreateFontFromLogfontA);
+			bool failed = !TryDetourAttach(&rawGdipCreateFontFromLogfontA, newGdipCreateFontFromLogfontA);
 			sg_hookedGdipCreateFontFromLogfontA = !failed;
 			return failed;
 		}
@@ -2413,7 +2413,7 @@
 			{
 				return false;
 			}
-			bool failed = DetourAttachFunc(&rawGdipCreateFontFromHFONT, newGdipCreateFontFromHFONT);
+			bool failed = !TryDetourAttach(&rawGdipCreateFontFromHFONT, newGdipCreateFontFromHFONT);
 			sg_hookedGdipCreateFontFromHFONT = !failed;
 			return failed;
 		}
@@ -2434,7 +2434,7 @@
 			{
 				return false;
 			}
-			bool failed = DetourAttachFunc(&rawGdipCreateFontFromDC, newGdipCreateFontFromDC);
+			bool failed = !TryDetourAttach(&rawGdipCreateFontFromDC, newGdipCreateFontFromDC);
 			sg_hookedGdipCreateFontFromDC = !failed;
 			return failed;
 		}
@@ -2455,7 +2455,7 @@
 			{
 				return false;
 			}
-			bool failed = DetourAttachFunc(&rawGdipCreateFont, newGdipCreateFont);
+			bool failed = !TryDetourAttach(&rawGdipCreateFont, newGdipCreateFont);
 			sg_hookedGdipCreateFont = !failed;
 			return failed;
 		}
@@ -2476,7 +2476,7 @@
 			{
 				return false;
 			}
-			bool failed = DetourAttachFunc(&rawGdipDrawString, newGdipDrawString);
+			bool failed = !TryDetourAttach(&rawGdipDrawString, newGdipDrawString);
 			sg_hookedGdipDrawString = !failed;
 			return failed;
 		}
@@ -2497,7 +2497,7 @@
 			{
 				return false;
 			}
-			bool failed = DetourAttachFunc(&rawGdipDrawDriverString, newGdipDrawDriverString);
+			bool failed = !TryDetourAttach(&rawGdipDrawDriverString, newGdipDrawDriverString);
 			sg_hookedGdipDrawDriverString = !failed;
 			return failed;
 		}
@@ -2518,7 +2518,7 @@
 			{
 				return false;
 			}
-			bool failed = DetourAttachFunc(&rawGdipMeasureString, newGdipMeasureString);
+			bool failed = !TryDetourAttach(&rawGdipMeasureString, newGdipMeasureString);
 			sg_hookedGdipMeasureString = !failed;
 			return failed;
 		}
@@ -2539,7 +2539,7 @@
 			{
 				return false;
 			}
-			bool failed = DetourAttachFunc(&rawGdipMeasureCharacterRanges, newGdipMeasureCharacterRanges);
+			bool failed = !TryDetourAttach(&rawGdipMeasureCharacterRanges, newGdipMeasureCharacterRanges);
 			sg_hookedGdipMeasureCharacterRanges = !failed;
 			return failed;
 		}
@@ -2560,7 +2560,7 @@
 			{
 				return false;
 			}
-			bool failed = DetourAttachFunc(&rawGdipMeasureDriverString, newGdipMeasureDriverString);
+			bool failed = !TryDetourAttach(&rawGdipMeasureDriverString, newGdipMeasureDriverString);
 			sg_hookedGdipMeasureDriverString = !failed;
 			return failed;
 		}
@@ -2571,7 +2571,7 @@
 			{
 				return false;
 			}
-			bool failed = DetourAttachFunc(&rawLoadLibraryW, newLoadLibraryW);
+			bool failed = !TryDetourAttach(&rawLoadLibraryW, newLoadLibraryW);
 			sg_hookedLoadLibraryW = !failed;
 			return failed;
 		}
@@ -2582,7 +2582,7 @@
 			{
 				return false;
 			}
-			bool failed = DetourAttachFunc(&rawLoadLibraryExW, newLoadLibraryExW);
+			bool failed = !TryDetourAttach(&rawLoadLibraryExW, newLoadLibraryExW);
 			sg_hookedLoadLibraryExW = !failed;
 			return failed;
 		}

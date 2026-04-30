@@ -150,7 +150,6 @@ namespace Rut
 		void ReleaseStartupWindowGate();
 		bool HookWindowTitleAPIs(int mode = 2);
 		int ShowExternalStartupConsentDialog(const wchar_t* title, const wchar_t* body);
-		bool BringProcessMainWindowToFront(uint32_t processId, uint32_t waitTimeoutMs = 8000);
 
 		// Siglus XOR 密钥提取功能
 		void SetKeyExtractConfig(const wchar_t* gameexePath, const wchar_t* outputPath, bool showMsgBox);

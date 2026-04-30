@@ -1,6 +1,7 @@
 #include "LauncherConfig.h"
 
 #include "../runtime/LauncherPaths.h"
+#include "../../CialloHook/config/config_source.h"
 #include "../../RuntimeCore/base/Str.h"
 #include "../../RuntimeCore/io/INI.h"
 #include "../../RuntimeCore/hook/Hook_API.h"
@@ -142,14 +143,141 @@ namespace
 		}
 		return message;
 	}
+
+	std::wstring DecodeEscapedControlChars(const std::wstring& rawValue)
+	{
+		std::wstring result;
+		result.reserve(rawValue.size());
+
+		for (size_t i = 0; i < rawValue.size(); ++i)
+		{
+			wchar_t ch = rawValue[i];
+			if (ch != L'\\' || i + 1 >= rawValue.size())
+			{
+				result.push_back(ch);
+				continue;
+			}
+
+			wchar_t next = rawValue[i + 1];
+			switch (next)
+			{
+			case L'\\':
+				result.push_back(L'\\');
+				++i;
+				break;
+			case L'n':
+				result.push_back(L'\n');
+				++i;
+				break;
+			case L'r':
+				result.push_back(L'\r');
+				++i;
+				break;
+			case L't':
+				result.push_back(L'\t');
+				++i;
+				break;
+			default:
+				result.push_back(ch);
+				break;
+			}
+		}
+
+		return result;
+	}
+
+	std::wstring BuildStartupMessageBody(uint32_t style, const std::wstring& rawAuthor, const std::wstring& rawText)
+	{
+		std::wstring author = Trim(rawAuthor);
+		std::wstring text = Trim(rawText);
+		if (style == 1)
+		{
+			return text;
+		}
+
+		std::wstring body;
+		if (!author.empty())
+		{
+			body += L"【补丁作者】\r\n - ";
+			body += author;
+		}
+		if (!text.empty())
+		{
+			if (!body.empty())
+			{
+				body += L"\r\n\r\n";
+			}
+			body += L"【补丁声明】\r\n";
+			body += text;
+		}
+		return body;
+	}
+
+	bool LoadBuiltInLauncherConfig(CialloLauncher::LauncherConfig& config)
+	{
+		config = CialloLauncher::LauncherConfig{};
+		CialloHook::ApplyBuiltInLauncherConfig(config);
+		config.iniPath = CialloHook::GetBuiltInLauncherConfigSourceLabel();
+		config.launcherSection = L"BuiltIn";
+		config.targetDllCount = static_cast<uint32_t>(config.targetDllNames.size());
+
+		if (config.patchFolders.empty())
+		{
+			config.patchFolders.emplace_back(L"patch");
+		}
+		if (Trim(config.startupMessage.title).empty())
+		{
+			config.startupMessage.title = L"CialloHook";
+		}
+		if (config.startupMessage.enable && Trim(config.startupMessage.body).empty())
+		{
+			config.startupMessage.enable = false;
+		}
+		if (config.customPakEnable && config.customPakFiles.empty())
+		{
+			config.customPakEnable = false;
+			config.warningMessage = L"Built-in launcher config has CustomPak enabled but no customPakFiles; automatically disabled.";
+		}
+		if (Trim(config.targetExe).empty())
+		{
+			MessageBoxW(nullptr,
+				L"Built-in loader 配置未设置 targetExe。\n请编辑 src/CialloHook/config/config_source.h 里的 ApplyBuiltInLauncherConfig。",
+				L"CialloHook",
+				MB_OK | MB_ICONERROR);
+			return false;
+		}
+
+		InitLogger(L"CialloHook", config.debugMode, config.logToFile, config.logToConsole);
+		LogMessage(LogLevel::Info, L"Config loaded: %s", config.iniPath.c_str());
+		LogMessage(LogLevel::Info, L"Target executable: %s", config.targetExe.c_str());
+		LogMessage(LogLevel::Info, L"Configured dll count: %u", config.targetDllCount);
+		LogMessage(LogLevel::Info, L"LocaleEmulator enabled: %d", config.enableLocaleEmulator ? 1 : 0);
+		if (!config.warningMessage.empty())
+		{
+			LogMessage(LogLevel::Warn, L"%s", config.warningMessage.c_str());
+		}
+		return true;
+	}
 }
 
 namespace CialloLauncher
 {
 	bool LoadLauncherConfig(const std::wstring& exeDir, const std::wstring& exeNameNoExt, LauncherConfig& config)
 	{
+		const CialloHook::ConfigSourceSelection sourceSelection = CialloHook::GetConfigSourceSelection();
+		if (sourceSelection.mode == CialloHook::ConfigSourceMode::BuiltIn)
+		{
+			(void)exeDir;
+			(void)exeNameNoExt;
+			return LoadBuiltInLauncherConfig(config);
+		}
+
 		config = LauncherConfig{};
 		config.iniPath = ResolveLauncherIniPath(exeDir, exeNameNoExt);
+		if (sourceSelection.iniPathOverride && sourceSelection.iniPathOverride[0] != L'\0')
+		{
+			config.iniPath = sourceSelection.iniPathOverride;
+		}
 		if (!FileExists(config.iniPath))
 		{
 			std::wstring message = L"未找到配置文件：\n";
@@ -189,6 +317,20 @@ namespace CialloLauncher
 
 		config.targetExe = GetIniStringOrDefault(ini, config.launcherSection.c_str(), L"TargetEXE", L"");
 		config.targetDllCount = GetIniUIntOrDefault(ini, configWarnings, config.launcherSection.c_str(), L"TargetDLLCount", 0, 0, 4096);
+		config.startupMessage.enable = GetIniBoolOrDefault(ini, configWarnings, L"StartupMessage", L"Enable", false);
+		config.startupMessage.title = Trim(GetIniStringOrDefault(ini, L"StartupMessage", L"Title", L"CialloHook"));
+		if (config.startupMessage.title.empty())
+		{
+			config.startupMessage.title = L"CialloHook";
+		}
+		const uint32_t startupStyle = GetIniUIntOrDefault(ini, configWarnings, L"StartupMessage", L"Style", 1, 1, 2);
+		const std::wstring startupAuthor = GetIniStringOrDefault(ini, L"StartupMessage", L"Author", L"");
+		const std::wstring startupText = DecodeEscapedControlChars(GetIniStringOrDefault(ini, L"StartupMessage", L"Text", L""));
+		config.startupMessage.body = BuildStartupMessageBody(startupStyle, startupAuthor, startupText);
+		if (config.startupMessage.body.empty())
+		{
+			config.startupMessage.enable = false;
+		}
 		if (Trim(config.targetExe).empty())
 		{
 			throw std::runtime_error("TargetEXE is empty");

@@ -233,6 +233,184 @@ namespace Rut
 			paths.push_back(path);
 		}
 
+		std::wstring GetEnvironmentVariableString(const wchar_t* name, bool& exists)
+		{
+			exists = false;
+			DWORD required = GetEnvironmentVariableW(name, nullptr, 0);
+			if (required == 0)
+			{
+				return L"";
+			}
+			std::wstring value(required - 1, L'\0');
+			if (GetEnvironmentVariableW(name, &value[0], required) == 0)
+			{
+				return L"";
+			}
+			exists = true;
+			return value;
+		}
+
+		std::wstring BuildDelimitedEnvironmentValue(const std::vector<std::wstring>& paths)
+		{
+			std::wstring value;
+			for (const std::wstring& path : paths)
+			{
+				if (path.empty())
+				{
+					continue;
+				}
+				if (!value.empty())
+				{
+					value += L"|";
+				}
+				value += path;
+			}
+			return value;
+		}
+
+		void StageLocaleEmulatorFilesNextToExe(
+			const std::vector<std::wstring>& sourcePaths,
+			const std::wstring& exeDir,
+			const LocaleEmulatorFileStageOptions& options,
+			std::vector<std::wstring>& stagedPaths)
+		{
+			stagedPaths.clear();
+			if (exeDir.empty())
+			{
+				return;
+			}
+
+			const wchar_t* logPrefix = options.logPrefix ? options.logPrefix : L"LocaleEmulator";
+			for (const std::wstring& sourcePath : sourcePaths)
+			{
+				if (sourcePath.empty())
+				{
+					continue;
+				}
+
+				const std::wstring fileName = PathGetFileName(sourcePath);
+				if (fileName.empty())
+				{
+					continue;
+				}
+
+				const std::wstring targetPath = JoinPath(exeDir, fileName);
+				if (IsSamePath(sourcePath, targetPath))
+				{
+					continue;
+				}
+				if (IsFileExists(targetPath))
+				{
+					if (options.logSkipIfTargetExists)
+					{
+						LogMessage(LogLevel::Info, L"%s: skip staging %s because target already exists at %s",
+							logPrefix, sourcePath.c_str(), targetPath.c_str());
+					}
+					continue;
+				}
+				if (!CopyFileW(sourcePath.c_str(), targetPath.c_str(), FALSE))
+				{
+					LogMessage(LogLevel::Warn, L"%s: failed to stage %s next to exe at %s (error=%u)",
+						logPrefix, sourcePath.c_str(), targetPath.c_str(), GetLastError());
+					continue;
+				}
+
+				stagedPaths.push_back(targetPath);
+			}
+		}
+
+		std::wstring BuildPrependedPathValue(
+			const std::vector<std::wstring>& directories,
+			const std::wstring& originalPath)
+		{
+			std::wstring newPath;
+			for (const std::wstring& dir : directories)
+			{
+				if (dir.empty())
+				{
+					continue;
+				}
+				if (!newPath.empty())
+				{
+					newPath += L";";
+				}
+				newPath += dir;
+			}
+			if (newPath.empty())
+			{
+				return L"";
+			}
+			if (!originalPath.empty())
+			{
+				newPath += L";";
+				newPath += originalPath;
+			}
+			return newPath;
+		}
+
+		bool BuildEnvironmentBlockWithPath(const std::wstring& pathValue, std::vector<wchar_t>& environmentBlock)
+		{
+			environmentBlock.clear();
+			if (pathValue.empty())
+			{
+				return false;
+			}
+
+			LPWCH rawEnvironment = GetEnvironmentStringsW();
+			if (!rawEnvironment)
+			{
+				return false;
+			}
+
+			bool pathInserted = false;
+			for (const wchar_t* entry = rawEnvironment; *entry != L'\0'; entry += wcslen(entry) + 1)
+			{
+				const wchar_t* equals = wcschr(entry, L'=');
+				bool isPathEntry = false;
+				if (equals && equals == entry + 4 && _wcsnicmp(entry, L"PATH", 4) == 0)
+				{
+					isPathEntry = true;
+				}
+
+				const std::wstring value = isPathEntry
+					? (std::wstring(L"PATH=") + pathValue)
+					: std::wstring(entry);
+				environmentBlock.insert(environmentBlock.end(), value.begin(), value.end());
+				environmentBlock.push_back(L'\0');
+				pathInserted = pathInserted || isPathEntry;
+			}
+
+			if (!pathInserted)
+			{
+				const std::wstring pathEntry = std::wstring(L"PATH=") + pathValue;
+				environmentBlock.insert(environmentBlock.end(), pathEntry.begin(), pathEntry.end());
+				environmentBlock.push_back(L'\0');
+			}
+
+			environmentBlock.push_back(L'\0');
+			FreeEnvironmentStringsW(rawEnvironment);
+			return true;
+		}
+
+		bool PrependDirectoriesToPath(
+			const std::vector<std::wstring>& directories,
+			std::wstring& originalPath,
+			bool& originalPathExists)
+		{
+			originalPath = GetEnvironmentVariableString(L"PATH", originalPathExists);
+			std::wstring newPath = BuildPrependedPathValue(directories, originalPath);
+			if (newPath.empty())
+			{
+				return false;
+			}
+			return SetEnvironmentVariableW(L"PATH", newPath.c_str()) != FALSE;
+		}
+
+		void RestorePathEnvironment(const std::wstring& originalPath, bool originalPathExists)
+		{
+			SetEnvironmentVariableW(L"PATH", originalPathExists ? originalPath.c_str() : nullptr);
+		}
+
 		void CleanupPreparedRuntimeFiles(const std::vector<std::wstring>& paths)
 		{
 			std::wstring firstDir;

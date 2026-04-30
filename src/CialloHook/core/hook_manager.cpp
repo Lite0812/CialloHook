@@ -16,13 +16,21 @@
 using namespace Rut::FileX;
 using namespace Rut::HookX;
 
+#if defined(NDEBUG)
+#define CIALLOHOOK_VERBOSE_INFO_LOG(...) ((void)0)
+#else
+#define CIALLOHOOK_VERBOSE_INFO_LOG(...) LogMessage(LogLevel::Info, __VA_ARGS__)
+#endif
+
 namespace CialloHook
 {
 	namespace
 	{
 		const wchar_t* kLocaleEmulatorStagedFilesEnvVar = L"CIALLOHOOK_LE_STAGED_FILES";
+		const wchar_t* kStartupMessageAcceptedEnvVar = L"CIALLOHOOK_STARTUP_MESSAGE_ACCEPTED";
 		std::vector<std::wstring> sg_localeEmulatorStagedCleanupPaths;
-		volatile LONG sg_startupMessageHandledEarly = 0;
+		HANDLE sg_startupInitializationMutex = nullptr;
+		volatile LONG sg_startupInitializationMutexOwned = 0;
 	}
 
 	#pragma pack(push, 1)
@@ -125,16 +133,6 @@ namespace CialloHook
 		return path;
 	}
 
-	static std::wstring GetModuleNameNoExtension(HMODULE module)
-	{
-		std::wstring modulePath = GetModulePath(module);
-		if (modulePath.empty())
-		{
-			return L"CialloHook";
-		}
-		return PathRemoveExtension(PathGetFileName(modulePath));
-	}
-
 	static std::wstring JoinPath(const std::wstring& dir, const std::wstring& fileName)
 	{
 		if (dir.empty())
@@ -159,40 +157,6 @@ namespace CialloHook
 		return attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY) == 0;
 	}
 
-	static void AppendUniqueString(std::vector<std::wstring>& values, const std::wstring& value)
-	{
-		if (value.empty())
-		{
-			return;
-		}
-		for (const std::wstring& existing : values)
-		{
-			if (_wcsicmp(existing.c_str(), value.c_str()) == 0)
-			{
-				return;
-			}
-		}
-		values.push_back(value);
-	}
-
-	static std::wstring BuildDelimitedEnvironmentValue(const std::vector<std::wstring>& paths)
-	{
-		std::wstring value;
-		for (const std::wstring& path : paths)
-		{
-			if (path.empty())
-			{
-				continue;
-			}
-			if (!value.empty())
-			{
-				value += L"|";
-			}
-			value += path;
-		}
-		return value;
-	}
-
 	static std::vector<std::wstring> ParseDelimitedEnvironmentValue(const std::wstring& value)
 	{
 		std::vector<std::wstring> paths;
@@ -205,7 +169,7 @@ namespace CialloHook
 				: value.substr(start, end - start);
 			if (!current.empty())
 			{
-				AppendUniqueString(paths, current);
+				AppendUniquePath(paths, current);
 			}
 			if (end == std::wstring::npos)
 			{
@@ -214,58 +178,6 @@ namespace CialloHook
 			start = end + 1;
 		}
 		return paths;
-	}
-
-	static bool IsSamePathIgnoreCase(const std::wstring& left, const std::wstring& right)
-	{
-		return !left.empty() && !right.empty() && _wcsicmp(left.c_str(), right.c_str()) == 0;
-	}
-
-	static void StageLocaleEmulatorFilesNextToExe(
-		const std::vector<std::wstring>& sourcePaths,
-		const std::wstring& exeDir,
-		std::vector<std::wstring>& stagedPaths)
-	{
-		stagedPaths.clear();
-		if (exeDir.empty())
-		{
-			return;
-		}
-
-		for (const std::wstring& sourcePath : sourcePaths)
-		{
-			if (sourcePath.empty())
-			{
-				continue;
-			}
-
-			const std::wstring fileName = PathGetFileName(sourcePath);
-			if (fileName.empty())
-			{
-				continue;
-			}
-
-			const std::wstring targetPath = JoinPath(exeDir, fileName);
-			if (IsSamePathIgnoreCase(sourcePath, targetPath))
-			{
-				continue;
-			}
-			if (IsExistingFilePath(targetPath))
-			{
-				LogMessage(LogLevel::Info, L"LocaleEmulator: skip staging %s because target already exists at %s",
-					sourcePath.c_str(), targetPath.c_str());
-				continue;
-			}
-
-			if (!CopyFileW(sourcePath.c_str(), targetPath.c_str(), FALSE))
-			{
-				LogMessage(LogLevel::Warn, L"LocaleEmulator: failed to stage %s next to exe at %s (error=%u)",
-					sourcePath.c_str(), targetPath.c_str(), GetLastError());
-				continue;
-			}
-
-			stagedPaths.push_back(targetPath);
-		}
 	}
 
 	static std::wstring ToLowerCopy(const std::wstring& text)
@@ -318,6 +230,132 @@ namespace CialloHook
 		return JoinPath(moduleDir, dllIniName);
 	}
 
+	struct ModuleSettingsContext
+	{
+		std::wstring modulePath;
+		std::wstring dllNameNoExt;
+		std::wstring iniPath;
+	};
+
+	static ModuleSettingsContext BuildModuleSettingsContext(HMODULE module)
+	{
+		ModuleSettingsContext context;
+		context.modulePath = GetModulePath(module);
+		context.dllNameNoExt = context.modulePath.empty()
+			? std::wstring(L"CialloHook")
+			: PathRemoveExtension(PathGetFileName(context.modulePath));
+		context.iniPath = ResolveIniPath(module, context.dllNameNoExt);
+		return context;
+	}
+
+	static bool TryLoadModuleSettings(
+		const ModuleSettingsContext& context,
+		AppSettings& settings,
+		std::string& errorMessage,
+		std::string* warningMessage)
+	{
+		return ConfigManager::Load(context.iniPath, settings, errorMessage, warningMessage);
+	}
+
+	static bool IsTruthyEnvironmentVariable(const wchar_t* name)
+	{
+		if (!name || name[0] == L'\0')
+		{
+			return false;
+		}
+
+		wchar_t value[16] = {};
+		DWORD len = GetEnvironmentVariableW(name, value, _countof(value));
+		if (len == 0 || len >= _countof(value))
+		{
+			return false;
+		}
+
+		return lstrcmpiW(value, L"1") == 0
+			|| lstrcmpiW(value, L"true") == 0
+			|| lstrcmpiW(value, L"yes") == 0
+			|| lstrcmpiW(value, L"on") == 0;
+	}
+
+	static bool ConsumeTruthyEnvironmentVariable(const wchar_t* name)
+	{
+		const bool enabled = IsTruthyEnvironmentVariable(name);
+		if (enabled)
+		{
+			SetEnvironmentVariableW(name, nullptr);
+		}
+		return enabled;
+	}
+
+	static uint64_t HashWideStringNoCase(const std::wstring& value)
+	{
+		uint64_t hash = 14695981039346656037ull;
+		for (wchar_t ch : value)
+		{
+			const uint16_t lower = static_cast<uint16_t>(towlower(static_cast<wint_t>(ch)));
+			hash ^= static_cast<uint8_t>(lower & 0xFF);
+			hash *= 1099511628211ull;
+			hash ^= static_cast<uint8_t>((lower >> 8) & 0xFF);
+			hash *= 1099511628211ull;
+		}
+		return hash;
+	}
+
+	static std::wstring BuildStartupInitializationMutexName()
+	{
+		wchar_t exePath[MAX_PATH] = {};
+		if (!GetModuleFileNameW(nullptr, exePath, MAX_PATH))
+		{
+			return L"Local\\CialloHook.StartupInit.Unknown";
+		}
+
+		wchar_t mutexName[96] = {};
+		swprintf_s(mutexName, L"Local\\CialloHook.StartupInit.%016llX",
+			static_cast<unsigned long long>(HashWideStringNoCase(exePath)));
+		return mutexName;
+	}
+
+	static bool TryAcquireStartupInitializationMutex()
+	{
+		if (InterlockedCompareExchange(&sg_startupInitializationMutexOwned, 0, 0) != 0)
+		{
+			return true;
+		}
+
+		const std::wstring mutexName = BuildStartupInitializationMutexName();
+		HANDLE mutexHandle = CreateMutexW(nullptr, TRUE, mutexName.c_str());
+		if (!mutexHandle)
+		{
+			return true;
+		}
+
+		if (GetLastError() == ERROR_ALREADY_EXISTS)
+		{
+			CloseHandle(mutexHandle);
+			return false;
+		}
+
+		sg_startupInitializationMutex = mutexHandle;
+		InterlockedExchange(&sg_startupInitializationMutexOwned, 1);
+		return true;
+	}
+
+	static void ReleaseStartupInitializationMutex()
+	{
+		if (InterlockedExchange(&sg_startupInitializationMutexOwned, 0) == 0)
+		{
+			return;
+		}
+
+		HANDLE mutexHandle = sg_startupInitializationMutex;
+		sg_startupInitializationMutex = nullptr;
+		if (mutexHandle)
+		{
+			ReleaseMutex(mutexHandle);
+			CloseHandle(mutexHandle);
+		}
+	}
+
 	static bool IsLoaderMode(const std::wstring& mode)
 	{
 		return ToLowerCopy(mode) == L"loader";
@@ -352,115 +390,6 @@ namespace CialloHook
 		return PathRemoveFileName(exePath);
 	}
 
-	static std::wstring GetEnvironmentVariableString(const wchar_t* name, bool& exists)
-	{
-		exists = false;
-		DWORD required = GetEnvironmentVariableW(name, nullptr, 0);
-		if (required == 0)
-		{
-			return L"";
-		}
-		std::wstring value(required - 1, L'\0');
-		if (GetEnvironmentVariableW(name, &value[0], required) == 0)
-		{
-			return L"";
-		}
-		exists = true;
-		return value;
-	}
-
-static std::wstring BuildPrependedPathValue(
-	const std::vector<std::wstring>& directories,
-	const std::wstring& originalPath)
-{
-	std::wstring newPath;
-	for (const std::wstring& dir : directories)
-	{
-		if (dir.empty())
-		{
-			continue;
-		}
-		if (!newPath.empty())
-		{
-			newPath += L";";
-		}
-		newPath += dir;
-	}
-	if (newPath.empty())
-	{
-		return L"";
-	}
-	if (!originalPath.empty())
-	{
-		newPath += L";";
-		newPath += originalPath;
-	}
-	return newPath;
-}
-
-static bool BuildEnvironmentBlockWithPath(const std::wstring& pathValue, std::vector<wchar_t>& environmentBlock)
-{
-	environmentBlock.clear();
-	if (pathValue.empty())
-	{
-		return false;
-	}
-
-	LPWCH rawEnvironment = GetEnvironmentStringsW();
-	if (!rawEnvironment)
-	{
-		return false;
-	}
-
-	bool pathInserted = false;
-	for (const wchar_t* entry = rawEnvironment; *entry != L'\0'; entry += wcslen(entry) + 1)
-	{
-		const wchar_t* equals = wcschr(entry, L'=');
-		bool isPathEntry = false;
-		if (equals && equals == entry + 4 && _wcsnicmp(entry, L"PATH", 4) == 0)
-		{
-			isPathEntry = true;
-		}
-
-		const std::wstring value = isPathEntry
-			? (std::wstring(L"PATH=") + pathValue)
-			: std::wstring(entry);
-		environmentBlock.insert(environmentBlock.end(), value.begin(), value.end());
-		environmentBlock.push_back(L'\0');
-		pathInserted = pathInserted || isPathEntry;
-	}
-
-	if (!pathInserted)
-	{
-		const std::wstring pathEntry = std::wstring(L"PATH=") + pathValue;
-		environmentBlock.insert(environmentBlock.end(), pathEntry.begin(), pathEntry.end());
-		environmentBlock.push_back(L'\0');
-	}
-
-	environmentBlock.push_back(L'\0');
-	FreeEnvironmentStringsW(rawEnvironment);
-	return true;
-}
-
-	static bool PrependDirectoriesToPath(
-		const std::vector<std::wstring>& directories,
-		std::wstring& originalPath,
-		bool& originalPathExists)
-	{
-		originalPath = GetEnvironmentVariableString(L"PATH", originalPathExists);
-	std::wstring newPath = BuildPrependedPathValue(directories, originalPath);
-		if (newPath.empty())
-		{
-			return false;
-		}
-		return SetEnvironmentVariableW(L"PATH", newPath.c_str()) != FALSE;
-	}
-
-	static void RestorePathEnvironment(const std::wstring& originalPath, bool originalPathExists)
-	{
-		SetEnvironmentVariableW(L"PATH", originalPathExists ? originalPath.c_str() : nullptr);
-	}
-
 	static void CleanupMedFontCache()
 	{
 		const std::filesystem::path target = std::filesystem::current_path() / L"_FONTSET.MED";
@@ -476,7 +405,7 @@ static bool BuildEnvironmentBlockWithPath(const std::wstring& pathValue, std::ve
 		}
 		if (std::filesystem::remove(target, ec))
 		{
-			LogMessage(LogLevel::Info, L"MED cleanup: deleted %s", target.wstring().c_str());
+			CIALLOHOOK_VERBOSE_INFO_LOG(L"MED cleanup: deleted %s", target.wstring().c_str());
 			return;
 		}
 		if (ec)
@@ -600,9 +529,9 @@ static bool BuildEnvironmentBlockWithPath(const std::wstring& pathValue, std::ve
 			return true;
 		}
 
-		LogMessage(LogLevel::Info, L"StartupMessage: showing external consent dialog, title=%s", settings.title.c_str());
+		CIALLOHOOK_VERBOSE_INFO_LOG(L"StartupMessage: showing external consent dialog, title=%s", settings.title.c_str());
 		int dialogResult = ShowExternalStartupConsentDialog(settings.title.c_str(), body.c_str());
-		LogMessage(LogLevel::Info, L"StartupMessage: dialog result=%d", dialogResult);
+		CIALLOHOOK_VERBOSE_INFO_LOG(L"StartupMessage: dialog result=%d", dialogResult);
 		return dialogResult == IDYES;
 	}
 
@@ -708,11 +637,11 @@ static bool BuildEnvironmentBlockWithPath(const std::wstring& pathValue, std::ve
 		}
 		if (loaderFromCustomPak)
 		{
-			LogMessage(LogLevel::Info, L"LocaleEmulator: LoaderDll.dll loaded from configured CustomPak cache");
+			CIALLOHOOK_VERBOSE_INFO_LOG(L"LocaleEmulator: LoaderDll.dll loaded from configured CustomPak cache");
 		}
 		else if (loaderFromConfiguredOverride)
 		{
-			LogMessage(LogLevel::Info, L"LocaleEmulator: LoaderDll.dll loaded from configured patch path");
+			CIALLOHOOK_VERBOSE_INFO_LOG(L"LocaleEmulator: LoaderDll.dll loaded from configured patch path");
 		}
 
 		PFN_LeCreateProcess leCreateProcess = (PFN_LeCreateProcess)GetProcAddress(loaderDll, "LeCreateProcess");
@@ -749,7 +678,9 @@ static bool BuildEnvironmentBlockWithPath(const std::wstring& pathValue, std::ve
 		bool originalStagedFilesValueExists = false;
 		if (!preparedPaths.empty())
 		{
-			StageLocaleEmulatorFilesNextToExe(preparedPaths, exeDir, stagedPaths);
+			LocaleEmulatorFileStageOptions stageOptions;
+			stageOptions.logPrefix = L"LocaleEmulator";
+			StageLocaleEmulatorFilesNextToExe(preparedPaths, exeDir, stageOptions, stagedPaths);
 			if (!stagedPaths.empty())
 			{
 				AppendUniquePath(runtimeSearchDirs, exeDir);
@@ -759,25 +690,25 @@ static bool BuildEnvironmentBlockWithPath(const std::wstring& pathValue, std::ve
 					originalStagedFilesValue = GetEnvironmentVariableString(kLocaleEmulatorStagedFilesEnvVar, originalStagedFilesValueExists);
 					SetEnvironmentVariableW(kLocaleEmulatorStagedFilesEnvVar, stagedValue.c_str());
 				}
-				LogMessage(LogLevel::Info, L"LocaleEmulator: staged %u runtime file(s) next to exe for proxy relaunch",
+				CIALLOHOOK_VERBOSE_INFO_LOG(L"LocaleEmulator: staged %u runtime file(s) next to exe for proxy relaunch",
 					static_cast<uint32_t>(stagedPaths.size()));
 			}
 		}
 
 		std::wstring originalPath;
 		bool originalPathExists = false;
-	const std::wstring launchPath = BuildPrependedPathValue(runtimeSearchDirs, GetEnvironmentVariableString(L"PATH", originalPathExists));
-	std::vector<wchar_t> environmentBlock;
-	const bool environmentBlockReady = BuildEnvironmentBlockWithPath(launchPath, environmentBlock);
+		const std::wstring launchPath = BuildPrependedPathValue(runtimeSearchDirs, GetEnvironmentVariableString(L"PATH", originalPathExists));
+		std::vector<wchar_t> environmentBlock;
+		const bool environmentBlockReady = BuildEnvironmentBlockWithPath(launchPath, environmentBlock);
 		const bool pathUpdated = PrependDirectoriesToPath(runtimeSearchDirs, originalPath, originalPathExists);
 		if (!runtimeSearchDirs.empty() && !pathUpdated)
 		{
 			LogMessage(LogLevel::Warn, L"LocaleEmulator: failed to prepend runtime search dirs to PATH");
 		}
-	if (!runtimeSearchDirs.empty() && !environmentBlockReady)
-	{
-		LogMessage(LogLevel::Warn, L"LocaleEmulator: failed to build environment block with runtime search dirs");
-	}
+		if (!runtimeSearchDirs.empty() && !environmentBlockReady)
+		{
+			LogMessage(LogLevel::Warn, L"LocaleEmulator: failed to build environment block with runtime search dirs");
+		}
 
 		const uint32_t creationFlags = environmentBlockReady ? CREATE_UNICODE_ENVIRONMENT : 0;
 		DWORD result = leCreateProcess(
@@ -827,12 +758,11 @@ static bool BuildEnvironmentBlockWithPath(const std::wstring& pathValue, std::ve
 	{
 		try
 		{
-			std::wstring dllNameNoExt = GetModuleNameNoExtension(dllModule);
-			std::wstring iniPath = ResolveIniPath(dllModule, dllNameNoExt);
+			const ModuleSettingsContext context = BuildModuleSettingsContext(dllModule);
 
 			AppSettings settings;
 			std::string errorMessage;
-			if (!ConfigManager::Load(iniPath, settings, errorMessage, nullptr))
+			if (!TryLoadModuleSettings(context, settings, errorMessage, nullptr))
 			{
 				return false;
 			}
@@ -845,53 +775,44 @@ static bool BuildEnvironmentBlockWithPath(const std::wstring& pathValue, std::ve
 		}
 	}
 
-	bool HookManager::ShouldSuspendProcessForStartupMessage(HMODULE dllModule)
+	bool HookManager::TryHandleConsentInDllMain(HMODULE dllModule)
 	{
 		try
 		{
-			std::wstring dllNameNoExt = GetModuleNameNoExtension(dllModule);
-			std::wstring iniPath = ResolveIniPath(dllModule, dllNameNoExt);
+			const ModuleSettingsContext context = BuildModuleSettingsContext(dllModule);
 
 			AppSettings settings;
 			std::string errorMessage;
-			if (!ConfigManager::Load(iniPath, settings, errorMessage, nullptr))
-			{
-				return false;
-			}
-
-			return settings.startupMessage.enable;
-		}
-		catch (...)
-		{
-			return false;
-		}
-	}
-
-	bool HookManager::TryHandleStartupMessageBeforeInitialization(HMODULE dllModule)
-	{
-		try
-		{
-			std::wstring dllNameNoExt = GetModuleNameNoExtension(dllModule);
-			std::wstring iniPath = ResolveIniPath(dllModule, dllNameNoExt);
-
-			AppSettings settings;
-			std::string errorMessage;
-			if (!ConfigManager::Load(iniPath, settings, errorMessage, nullptr))
+			if (!TryLoadModuleSettings(context, settings, errorMessage, nullptr))
 			{
 				return true;
 			}
-			if (!settings.startupMessage.enable)
+			if (!settings.startupMessage.enable || IsTruthyEnvironmentVariable(kStartupMessageAcceptedEnvVar))
 			{
 				return true;
 			}
 
-			if (!ShowStartupMessage(settings.startupMessage))
+			std::wstring body = BuildStartupMessageBody(settings.startupMessage);
+			if (body.empty())
+			{
+				return true;
+			}
+
+			const std::wstring title = TrimWideCopy(settings.startupMessage.title).empty()
+				? std::wstring(L"游玩通知")
+				: settings.startupMessage.title;
+			const int dialogResult = MessageBoxW(
+				nullptr,
+				body.c_str(),
+				title.c_str(),
+				MB_YESNO | MB_ICONINFORMATION | MB_TOPMOST);
+			if (dialogResult != IDYES)
 			{
 				ExitProcess(0);
 				return false;
 			}
 
-			InterlockedExchange(&sg_startupMessageHandledEarly, 1);
+			SetEnvironmentVariableW(kStartupMessageAcceptedEnvVar, L"1");
 			return true;
 		}
 		catch (...)
@@ -915,7 +836,7 @@ static bool BuildEnvironmentBlockWithPath(const std::wstring& pathValue, std::ve
 		{
 			if (IsExistingFilePath(path))
 			{
-				AppendUniqueString(sg_localeEmulatorStagedCleanupPaths, path);
+				AppendUniquePath(sg_localeEmulatorStagedCleanupPaths, path);
 			}
 		}
 
@@ -934,22 +855,38 @@ static bool BuildEnvironmentBlockWithPath(const std::wstring& pathValue, std::ve
 
 	void HookManager::Initialize(HMODULE dllModule)
 	{
-		std::wstring dllNameNoExt = GetModuleNameNoExtension(dllModule);
-		const bool startupMessageHandledEarly = InterlockedExchange(&sg_startupMessageHandledEarly, 0) != 0;
+		const ModuleSettingsContext context = BuildModuleSettingsContext(dllModule);
+		const std::wstring& dllNameNoExt = context.dllNameNoExt;
+		const bool startupMessageConsentAlreadyGranted = ConsumeTruthyEnvironmentVariable(kStartupMessageAcceptedEnvVar);
+		if (!TryAcquireStartupInitializationMutex())
+		{
+			InitLogger(dllNameNoExt.c_str(), true, false, false);
+			LogMessage(LogLevel::Info, L"Startup initialization already in progress, skip duplicate launch");
+			ExitProcess(0);
+			return;
+		}
+
+		struct StartupInitializationMutexReleaser
+		{
+			~StartupInitializationMutexReleaser()
+			{
+				ReleaseStartupInitializationMutex();
+			}
+		} startupInitializationMutexReleaser;
+
 		try
 		{
-			std::wstring modulePath = GetModulePath(dllModule);
-			std::wstring iniPath = ResolveIniPath(dllModule, dllNameNoExt);
+			const std::wstring configSource = ConfigManager::DescribeSource(context.iniPath);
 
 			InitLogger(dllNameNoExt.c_str(), true, false, false);
-			LogMessage(LogLevel::Info, L"Initialize start: module=%s", modulePath.empty() ? L"(unknown)" : modulePath.c_str());
+			LogMessage(LogLevel::Info, L"Initialize start: module=%s", context.modulePath.empty() ? L"(unknown)" : context.modulePath.c_str());
 			LogMessage(LogLevel::Info, L"Initialize context: PID=%lu TID=%lu", GetCurrentProcessId(), GetCurrentThreadId());
-			LogMessage(LogLevel::Info, L"Config path: %s", iniPath.c_str());
+			LogMessage(LogLevel::Info, L"Config source: %s", configSource.c_str());
 
 			AppSettings settings;
 			std::string errorMessage;
 			std::string warningMessage;
-			if (!ConfigManager::Load(iniPath, settings, errorMessage, &warningMessage))
+			if (!TryLoadModuleSettings(context, settings, errorMessage, &warningMessage))
 			{
 				std::wstring wideError = Utf8ToWide(errorMessage);
 				LogMessage(LogLevel::Error, L"Config load failed: %s", wideError.c_str());
@@ -959,7 +896,7 @@ static bool BuildEnvironmentBlockWithPath(const std::wstring& pathValue, std::ve
 
 			bool effectiveDebugEnable = settings.debug.enable;
 			InitLogger(dllNameNoExt.c_str(), effectiveDebugEnable, settings.debug.logToFile, settings.debug.logToConsole);
-			LogMessage(LogLevel::Info, L"Config loaded: %s", iniPath.c_str());
+			LogMessage(LogLevel::Info, L"Config loaded: %s", configSource.c_str());
 			LogMessage(LogLevel::Info, L"Debug flags: Enable=%d File=%d Console=%d Effective=%d",
 				settings.debug.enable ? 1 : 0,
 				settings.debug.logToFile ? 1 : 0,
@@ -993,12 +930,10 @@ static bool BuildEnvironmentBlockWithPath(const std::wstring& pathValue, std::ve
 				return;
 			}
 
-			if (!startupMessageHandledEarly)
+			if (!startupMessageConsentAlreadyGranted)
 			{
-				HookModules::ApplyPreStartupHooks(settings);
 				if (!ShowStartupMessage(settings.startupMessage))
 				{
-					ReleaseStartupWindowGate();
 					LogMessage(LogLevel::Info, L"StartupMessage: user declined patch notice, exit process");
 					ExitProcess(0);
 					return;
@@ -1006,13 +941,9 @@ static bool BuildEnvironmentBlockWithPath(const std::wstring& pathValue, std::ve
 			}
 			else if (settings.startupMessage.enable)
 			{
-				LogMessage(LogLevel::Info, L"StartupMessage: early consent already granted, skip duplicate dialog");
+				LogMessage(LogLevel::Info, L"StartupMessage: prior consent already granted, skip in-process dialog");
 			}
 			HookModules::ApplyPostStartupHooks(settings);
-			if (settings.startupMessage.enable)
-			{
-				BringProcessMainWindowToFront(GetCurrentProcessId(), 10000);
-			}
 			LogMessage(LogLevel::Info, L"All hook modules applied");
 		}
 		catch (const std::exception& err)

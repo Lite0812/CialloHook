@@ -38,6 +38,9 @@
     <ClInclude Include="config\config_manager.h">
       <Filter>config</Filter>
     </ClInclude>
+    <ClInclude Include="config\config_source.h">
+      <Filter>config</Filter>
+    </ClInclude>
     <ClInclude Include="config\settings.h">
       <Filter>config</Filter>
     </ClInclude>

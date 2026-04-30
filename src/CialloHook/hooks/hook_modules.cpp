@@ -14,6 +14,12 @@
 using namespace Rut::FileX;
 using namespace Rut::HookX;
 
+#if defined(NDEBUG)
+#define CIALLOHOOK_VERBOSE_INFO_LOG(...) ((void)0)
+#else
+#define CIALLOHOOK_VERBOSE_INFO_LOG(...) LogMessage(LogLevel::Info, __VA_ARGS__)
+#endif
+
 namespace CialloHook
 {
 	namespace HookModules
@@ -624,7 +630,7 @@ namespace CialloHook
 			const bool hasFontOverride = !IsBlankText(settings.font);
 			if (!hasFontOverride && !settings.enableCnJpMap)
 			{
-				LogMessage(LogLevel::Info, L"ApplyFontHooks: Font is empty and cn-jp map disabled, skip font hooks");
+				CIALLOHOOK_VERBOSE_INFO_LOG(L"ApplyFontHooks: Font is empty and cn-jp map disabled, skip font hooks");
 				return;
 			}
 
@@ -635,7 +641,7 @@ namespace CialloHook
 			{
 				std::wstring gameDir = GetGameDirectory();
 				std::wstring mapJsonPath = ToGameAbsolutePath(gameDir, settings.cnJpMapJson);
-				LogMessage(LogLevel::Info, L"ApplyFontHooks: cn-jp map requested path=%s", mapJsonPath.c_str());
+				CIALLOHOOK_VERBOSE_INFO_LOG(L"ApplyFontHooks: cn-jp map requested path=%s", mapJsonPath.c_str());
 				if (!IsExistingRegularFile(mapJsonPath))
 				{
 					LogMessage(LogLevel::Error, L"ApplyFontHooks: cn-jp map json missing: %s", mapJsonPath.c_str());
@@ -699,24 +705,24 @@ namespace CialloHook
 				settings.enableCnJpMap ? L"enabled" : L"disabled",
 				settings.cnJpMapVerboseLog ? 1 : 0,
 				settings.cnJpMapReadEncoding);
-			LogMessage(LogLevel::Info, L"ApplyFontHooks: skipRules=%u redirectRules=%u",
+			CIALLOHOOK_VERBOSE_INFO_LOG(L"ApplyFontHooks: skipRules=%u redirectRules=%u",
 				(uint32_t)skipFontNames.size(),
 				(uint32_t)resolvedRedirectRules.size());
 			for (size_t i = 0; i < skipFontNames.size(); ++i)
 			{
-				LogMessage(LogLevel::Info, L"ApplyFontHooks: skipFont[%u]=%s", (uint32_t)i, skipFontNames[i]);
+				CIALLOHOOK_VERBOSE_INFO_LOG(L"ApplyFontHooks: skipFont[%u]=%s", (uint32_t)i, skipFontNames[i]);
 			}
 			for (size_t i = 0; i < resolvedRedirectRules.size(); ++i)
 			{
-				LogMessage(LogLevel::Info, L"ApplyFontHooks: redirectFont[%u] %s -> %s",
+				CIALLOHOOK_VERBOSE_INFO_LOG(L"ApplyFontHooks: redirectFont[%u] %s -> %s",
 					(uint32_t)i,
 					resolvedRedirectRules[i].sourceFont.c_str(),
 					resolvedRedirectRules[i].targetFont.c_str());
 			}
-			LogMessage(LogLevel::Info, L"ApplyFontHooks: glyphOffset=(%d,%d) metricsOffset=(L%d,R%d,T%d,B%d)",
+			CIALLOHOOK_VERBOSE_INFO_LOG(L"ApplyFontHooks: glyphOffset=(%d,%d) metricsOffset=(L%d,R%d,T%d,B%d)",
 				settings.glyphOffsetX, settings.glyphOffsetY,
 				settings.metricsOffsetLeft, settings.metricsOffsetRight, settings.metricsOffsetTop, settings.metricsOffsetBottom);
-			LogMessage(LogLevel::Info, L"ApplyFontHooks: GDI+ hooks draw=%d drawDriver=%d measure=%d measureRanges=%d measureDriver=%d lateLoad=%d",
+			CIALLOHOOK_VERBOSE_INFO_LOG(L"ApplyFontHooks: GDI+ hooks draw=%d drawDriver=%d measure=%d measureRanges=%d measureDriver=%d lateLoad=%d",
 				settings.hookGdipDrawString ? 1 : 0,
 				settings.hookGdipDrawDriverString ? 1 : 0,
 				settings.hookGdipMeasureString ? 1 : 0,
@@ -1076,7 +1082,7 @@ namespace CialloHook
 			EnableTextReplaceVerboseLog(settings.enableVerboseLog);
 			bool enableWaffleTextCrashPatch = enginePatchSettings.enableWafflePatch && enginePatchSettings.waffleFixGetTextCrash;
 			SetWaffleGetTextCrashPatchEnabled(enableWaffleTextCrashPatch);
-			LogMessage(LogLevel::Info, L"ApplyTextHooks: rule count=%u, readEncoding=%u, writeEncoding=%u, verbose=%d, waffleGetTextCrash=%d",
+			CIALLOHOOK_VERBOSE_INFO_LOG(L"ApplyTextHooks: rule count=%u, readEncoding=%u, writeEncoding=%u, verbose=%d, waffleGetTextCrash=%d",
 				(uint32_t)settings.rules.size(), textReadCp, textWriteCp, settings.enableVerboseLog ? 1 : 0, enableWaffleTextCrashPatch ? 1 : 0);
 			if (settings.rules.empty())
 			{
@@ -1090,7 +1096,7 @@ namespace CialloHook
 				std::string replacementA = WideToCodePage(rule.second, textWriteCp);
 				AddTextReplaceRule(SaveStrOnHeap(originalA), SaveStrOnHeap(replacementA));
 				AddTextReplaceRuleW(SaveWStrOnHeap(rule.first), SaveWStrOnHeap(rule.second));
-				LogMessage(LogLevel::Info, L"ApplyTextHooks: rule[%u] \"%s\" -> \"%s\"",
+				CIALLOHOOK_VERBOSE_INFO_LOG(L"ApplyTextHooks: rule[%u] \"%s\" -> \"%s\"",
 					(uint32_t)i, rule.first.c_str(), rule.second.c_str());
 			}
 
@@ -1162,7 +1168,7 @@ namespace CialloHook
 		{
 			if (settings.rules.empty())
 			{
-				LogMessage(LogLevel::Info, L"ApplyWindowTitleHooks: no rules");
+				CIALLOHOOK_VERBOSE_INFO_LOG(L"ApplyWindowTitleHooks: no rules");
 				return;
 			}
 
@@ -1178,51 +1184,31 @@ namespace CialloHook
 			EnableWindowTitleVerboseLog(settings.enableVerboseLog);
 
 			HookWindowTitleAPIs(settings.titleMode);
-			LogMessage(LogLevel::Info, L"ApplyWindowTitleHooks: rule count=%u, mode=%d, readEncoding=%u, writeEncoding=%u, verbose=%d",
+			CIALLOHOOK_VERBOSE_INFO_LOG(L"ApplyWindowTitleHooks: rule count=%u, mode=%d, readEncoding=%u, writeEncoding=%u, verbose=%d",
 				(uint32_t)settings.rules.size(), settings.titleMode, titleReadCp, titleWriteCp, settings.enableVerboseLog ? 1 : 0);
-		}
-
-		void ApplyPreStartupHooks(const AppSettings& settings)
-		{
-			if (settings.startupMessage.enable)
-			{
-				LogMessage(LogLevel::Info, L"Apply hooks: startup window gate");
-				UINT titleReadCp = settings.windowTitle.readEncoding != 0
-					? (UINT)settings.windowTitle.readEncoding
-					: (settings.windowTitle.encoding == 0 ? CP_ACP : (UINT)settings.windowTitle.encoding);
-				UINT titleWriteCp = settings.windowTitle.writeEncoding != 0 ? (UINT)settings.windowTitle.writeEncoding : titleReadCp;
-				SetWindowTitleEncodings(titleReadCp, titleWriteCp);
-				EnableWindowTitleVerboseLog(settings.windowTitle.enableVerboseLog);
-				EnableStartupWindowGate(true, GetCurrentThreadId());
-				HookWindowTitleAPIs(settings.windowTitle.titleMode);
-			}
-			else
-			{
-				LogMessage(LogLevel::Info, L"Apply hooks: startup window gate skipped");
-			}
 		}
 
 		void ApplyPostStartupHooks(const AppSettings& settings)
 		{
-			LogMessage(LogLevel::Info, L"Apply hooks: file patch");
+			CIALLOHOOK_VERBOSE_INFO_LOG(L"Apply hooks: file patch");
 			ApplyFilePatchHooks(settings.filePatch, settings.fileSpoof, settings.directoryRedirect, settings.enginePatches);
 
-			LogMessage(LogLevel::Info, L"Apply hooks: siglus key extract");
+			CIALLOHOOK_VERBOSE_INFO_LOG(L"Apply hooks: siglus key extract");
 			ApplySiglusKeyExtract(settings.siglusKeyExtract);
 
-			LogMessage(LogLevel::Info, L"Apply hooks: text");
+			CIALLOHOOK_VERBOSE_INFO_LOG(L"Apply hooks: text");
 			ApplyTextHooks(settings.textReplace, settings.enginePatches);
 
-			LogMessage(LogLevel::Info, L"Apply hooks: window title");
+			CIALLOHOOK_VERBOSE_INFO_LOG(L"Apply hooks: window title");
 			ApplyWindowTitleHooks(settings.windowTitle);
 
-			LogMessage(LogLevel::Info, L"Apply hooks: registry");
+			CIALLOHOOK_VERBOSE_INFO_LOG(L"Apply hooks: registry");
 			ApplyRegistryHooks(settings.registry);
 
-			LogMessage(LogLevel::Info, L"Apply hooks: code page");
+			CIALLOHOOK_VERBOSE_INFO_LOG(L"Apply hooks: code page");
 			ApplyCodePageHooks(settings.codePage);
 
-			LogMessage(LogLevel::Info, L"Apply hooks: font");
+			CIALLOHOOK_VERBOSE_INFO_LOG(L"Apply hooks: font");
 			ApplyFontHooks(settings.font);
 			ReleaseStartupWindowGate();
 		}
@@ -1231,7 +1217,7 @@ namespace CialloHook
 		{
 			if (!settings.enable)
 			{
-				LogMessage(LogLevel::Info, L"ApplySiglusKeyExtract: disabled");
+				CIALLOHOOK_VERBOSE_INFO_LOG(L"ApplySiglusKeyExtract: disabled");
 				return;
 			}
 
@@ -1271,7 +1257,7 @@ namespace CialloHook
 		{
 			if (!patchSettings.enable && !spoofSettings.enable && !directoryRedirectSettings.enable && !enginePatchSettings.enableKrkrPatch)
 			{
-				LogMessage(LogLevel::Info, L"ApplyFilePatchHooks: disabled (patch, spoof, redirect and krkrpatch)");
+				CIALLOHOOK_VERBOSE_INFO_LOG(L"ApplyFilePatchHooks: disabled (patch, spoof, redirect and krkrpatch)");
 				return;
 			}
 			std::wstring gameDir = GetGameDirectory();
@@ -1484,7 +1470,7 @@ namespace CialloHook
 		{
 			if (!settings.enable)
 			{
-				LogMessage(LogLevel::Info, L"ApplyRegistryHooks: disabled");
+				CIALLOHOOK_VERBOSE_INFO_LOG(L"ApplyRegistryHooks: disabled");
 				return;
 			}
 
@@ -1522,7 +1508,7 @@ namespace CialloHook
 		{
 			if (!settings.enable)
 			{
-				LogMessage(LogLevel::Info, L"ApplyCodePageHooks: disabled");
+				CIALLOHOOK_VERBOSE_INFO_LOG(L"ApplyCodePageHooks: disabled");
 				return;
 			}
 

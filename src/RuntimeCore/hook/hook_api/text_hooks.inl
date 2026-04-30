@@ -1447,7 +1447,7 @@
 
 		bool HookTextOutA()
 		{
-			return DetourAttachFunc(&rawTextOutA, newTextOutA);
+			return !TryDetourAttach(&rawTextOutA, newTextOutA);
 		}
 		//*********END Hook TextOutA*********
 
@@ -1508,7 +1508,7 @@
 
 		bool HookTextOutW()
 		{
-			return DetourAttachFunc(&rawTextOutW, newTextOutW);
+			return !TryDetourAttach(&rawTextOutW, newTextOutW);
 		}
 		//*********END Hook TextOutW*********
 
@@ -1568,7 +1568,7 @@
 
 		bool HookExtTextOutA()
 		{
-			return DetourAttachFunc(&rawExtTextOutA, newExtTextOutA);
+			return !TryDetourAttach(&rawExtTextOutA, newExtTextOutA);
 		}
 		//*********END Hook ExtTextOutA*********
 
@@ -1655,7 +1655,7 @@
 
 		bool HookExtTextOutW()
 		{
-			return DetourAttachFunc(&rawExtTextOutW, newExtTextOutW);
+			return !TryDetourAttach(&rawExtTextOutW, newExtTextOutW);
 		}
 		//*********END Hook ExtTextOutW*********
 
@@ -1700,7 +1700,7 @@
 
 		bool HookDrawTextA()
 		{
-			return DetourAttachFunc(&rawDrawTextA, newDrawTextA);
+			return !TryDetourAttach(&rawDrawTextA, newDrawTextA);
 		}
 		//*********END Hook DrawTextA*********
 
@@ -1757,7 +1757,7 @@
 
 		bool HookDrawTextW()
 		{
-			return DetourAttachFunc(&rawDrawTextW, newDrawTextW);
+			return !TryDetourAttach(&rawDrawTextW, newDrawTextW);
 		}
 		//*********END Hook DrawTextW*********
 
@@ -1804,7 +1804,7 @@
 
 		bool HookDrawTextExA()
 		{
-			return DetourAttachFunc(&rawDrawTextExA, newDrawTextExA);
+			return !TryDetourAttach(&rawDrawTextExA, newDrawTextExA);
 		}
 		//*********END Hook DrawTextExA*********
 
@@ -1865,7 +1865,7 @@
 
 		bool HookDrawTextExW()
 		{
-			return DetourAttachFunc(&rawDrawTextExW, newDrawTextExW);
+			return !TryDetourAttach(&rawDrawTextExW, newDrawTextExW);
 		}
 		//*********END Hook DrawTextExW*********
 
@@ -1904,7 +1904,7 @@
 
 		bool HookPolyTextOutA()
 		{
-			return DetourAttachFunc(&rawPolyTextOutA, newPolyTextOutA);
+			return !TryDetourAttach(&rawPolyTextOutA, newPolyTextOutA);
 		}
 
 		static pPolyTextOutW rawPolyTextOutW = PolyTextOutW;
@@ -1942,7 +1942,7 @@
 
 		bool HookPolyTextOutW()
 		{
-			return DetourAttachFunc(&rawPolyTextOutW, newPolyTextOutW);
+			return !TryDetourAttach(&rawPolyTextOutW, newPolyTextOutW);
 		}
 
 		static pTabbedTextOutA rawTabbedTextOutA = TabbedTextOutA;
@@ -1962,7 +1962,7 @@
 
 		bool HookTabbedTextOutA()
 		{
-			return DetourAttachFunc(&rawTabbedTextOutA, newTabbedTextOutA);
+			return !TryDetourAttach(&rawTabbedTextOutA, newTabbedTextOutA);
 		}
 
 		static pTabbedTextOutW rawTabbedTextOutW = TabbedTextOutW;
@@ -1982,7 +1982,7 @@
 
 		bool HookTabbedTextOutW()
 		{
-			return DetourAttachFunc(&rawTabbedTextOutW, newTabbedTextOutW);
+			return !TryDetourAttach(&rawTabbedTextOutW, newTabbedTextOutW);
 		}
 
 		static pGetTabbedTextExtentA rawGetTabbedTextExtentA = GetTabbedTextExtentA;
@@ -2008,7 +2008,7 @@
 
 		bool HookGetTabbedTextExtentA()
 		{
-			return DetourAttachFunc(&rawGetTabbedTextExtentA, newGetTabbedTextExtentA);
+			return !TryDetourAttach(&rawGetTabbedTextExtentA, newGetTabbedTextExtentA);
 		}
 
 		static pGetTabbedTextExtentW rawGetTabbedTextExtentW = GetTabbedTextExtentW;
@@ -2034,7 +2034,7 @@
 
 		bool HookGetTabbedTextExtentW()
 		{
-			return DetourAttachFunc(&rawGetTabbedTextExtentW, newGetTabbedTextExtentW);
+			return !TryDetourAttach(&rawGetTabbedTextExtentW, newGetTabbedTextExtentW);
 		}
 
 		static pGetTextExtentPoint32A rawGetTextExtentPoint32A = GetTextExtentPoint32A;
@@ -2079,7 +2079,7 @@
 
 		bool HookGetTextExtentPoint32A()
 		{
-			return DetourAttachFunc(&rawGetTextExtentPoint32A, newGetTextExtentPoint32A);
+			return !TryDetourAttach(&rawGetTextExtentPoint32A, newGetTextExtentPoint32A);
 		}
 
 		static pGetTextExtentPoint32W rawGetTextExtentPoint32W = GetTextExtentPoint32W;
@@ -2121,7 +2121,7 @@
 
 		bool HookGetTextExtentPoint32W()
 		{
-			return DetourAttachFunc(&rawGetTextExtentPoint32W, newGetTextExtentPoint32W);
+			return !TryDetourAttach(&rawGetTextExtentPoint32W, newGetTextExtentPoint32W);
 		}
 
 		static pGetTextExtentExPointA rawGetTextExtentExPointA = GetTextExtentExPointA;
@@ -2155,7 +2155,7 @@
 
 		bool HookGetTextExtentExPointA()
 		{
-			return DetourAttachFunc(&rawGetTextExtentExPointA, newGetTextExtentExPointA);
+			return !TryDetourAttach(&rawGetTextExtentExPointA, newGetTextExtentExPointA);
 		}
 
 		static pGetTextExtentExPointW rawGetTextExtentExPointW = GetTextExtentExPointW;
@@ -2252,7 +2252,7 @@
 
 		bool HookGetTextExtentExPointW()
 		{
-			return DetourAttachFunc(&rawGetTextExtentExPointW, newGetTextExtentExPointW);
+			return !TryDetourAttach(&rawGetTextExtentExPointW, newGetTextExtentExPointW);
 		}
 
 		static pGetTextExtentPointA rawGetTextExtentPointA = GetTextExtentPointA;
@@ -2286,7 +2286,7 @@
 
 		bool HookGetTextExtentPointA()
 		{
-			return DetourAttachFunc(&rawGetTextExtentPointA, newGetTextExtentPointA);
+			return !TryDetourAttach(&rawGetTextExtentPointA, newGetTextExtentPointA);
 		}
 
 		static pGetTextExtentPointW rawGetTextExtentPointW = GetTextExtentPointW;
@@ -2328,7 +2328,7 @@
 
 		bool HookGetTextExtentPointW()
 		{
-			return DetourAttachFunc(&rawGetTextExtentPointW, newGetTextExtentPointW);
+			return !TryDetourAttach(&rawGetTextExtentPointW, newGetTextExtentPointW);
 		}
 
 		static pGetCharacterPlacementA rawGetCharacterPlacementA = GetCharacterPlacementA;
@@ -2348,7 +2348,7 @@
 
 		bool HookGetCharacterPlacementA()
 		{
-			return DetourAttachFunc(&rawGetCharacterPlacementA, newGetCharacterPlacementA);
+			return !TryDetourAttach(&rawGetCharacterPlacementA, newGetCharacterPlacementA);
 		}
 
 		static pGetCharacterPlacementW rawGetCharacterPlacementW = GetCharacterPlacementW;
@@ -2368,7 +2368,7 @@
 
 		bool HookGetCharacterPlacementW()
 		{
-			return DetourAttachFunc(&rawGetCharacterPlacementW, newGetCharacterPlacementW);
+			return !TryDetourAttach(&rawGetCharacterPlacementW, newGetCharacterPlacementW);
 		}
 
 		static pGetGlyphIndicesA rawGetGlyphIndicesA = GetGlyphIndicesA;
@@ -2388,7 +2388,7 @@
 
 		bool HookGetGlyphIndicesA()
 		{
-			return DetourAttachFunc(&rawGetGlyphIndicesA, newGetGlyphIndicesA);
+			return !TryDetourAttach(&rawGetGlyphIndicesA, newGetGlyphIndicesA);
 		}
 
 		DWORD WINAPI newGetGlyphIndicesW(HDC hdc, LPCWSTR lpstr, int c, LPWORD pgi, DWORD fl)
@@ -2406,7 +2406,7 @@
 
 		bool HookGetGlyphIndicesW()
 		{
-			return DetourAttachFunc(&rawGetGlyphIndicesW, newGetGlyphIndicesW);
+			return !TryDetourAttach(&rawGetGlyphIndicesW, newGetGlyphIndicesW);
 		}
 
 		//*********Hook GetGlyphOutlineA*********
@@ -2518,7 +2518,7 @@
 
 		bool HookGetGlyphOutlineA()
 		{
-			return DetourAttachFunc(&rawGetGlyphOutlineA, newGetGlyphOutlineA);
+			return !TryDetourAttach(&rawGetGlyphOutlineA, newGetGlyphOutlineA);
 		}
 		//*********END Hook GetGlyphOutlineA*********
 
@@ -2614,7 +2614,7 @@
 
 		bool HookGetGlyphOutlineW()
 		{
-			return DetourAttachFunc(&rawGetGlyphOutlineW, newGetGlyphOutlineW);
+			return !TryDetourAttach(&rawGetGlyphOutlineW, newGetGlyphOutlineW);
 		}
 		//*********END Hook GetGlyphOutlineW*********
 		//*********END Text Replace*********

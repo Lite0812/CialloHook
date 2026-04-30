@@ -62,6 +62,13 @@ namespace CialloLauncher
 		void* environment,
 		void* token);
 
+	struct LauncherStartupMessage
+	{
+		bool enable = false;
+		std::wstring title = L"CialloHook";
+		std::wstring body;
+	};
+
 	struct LauncherConfig
 	{
 		std::wstring iniPath;
@@ -75,6 +82,7 @@ namespace CialloLauncher
 		bool customPakEnable = false;
 		bool enableLocaleEmulator = false;
 		LEB localeEmulatorBlock = {};
+		LauncherStartupMessage startupMessage;
 		std::vector<std::wstring> customPakFiles;
 		std::vector<std::wstring> patchFolders;
 		std::vector<std::wstring> targetDllNames;

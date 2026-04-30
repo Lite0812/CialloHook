@@ -367,52 +367,6 @@ namespace Rut
 			}
 		}
 
-		namespace
-		{
-			struct ForegroundWindowSearchContext
-			{
-				DWORD processId = 0;
-				HWND foundWindow = nullptr;
-			};
-
-			BOOL CALLBACK EnumForegroundWindowProc(HWND hWnd, LPARAM lParam)
-			{
-				ForegroundWindowSearchContext* context = reinterpret_cast<ForegroundWindowSearchContext*>(lParam);
-				if (!context || !hWnd || !IsWindowVisible(hWnd))
-				{
-					return TRUE;
-				}
-				if (GetWindow(hWnd, GW_OWNER) != nullptr)
-				{
-					return TRUE;
-				}
-
-				DWORD windowProcessId = 0;
-				GetWindowThreadProcessId(hWnd, &windowProcessId);
-				if (windowProcessId != context->processId)
-				{
-					return TRUE;
-				}
-
-				LONG_PTR style = GetWindowLongPtrW(hWnd, GWL_STYLE);
-				if ((style & WS_CHILD) != 0)
-				{
-					return TRUE;
-				}
-
-				context->foundWindow = hWnd;
-				return FALSE;
-			}
-
-			static HWND FindProcessMainWindow(DWORD processId)
-			{
-				ForegroundWindowSearchContext context = {};
-				context.processId = processId;
-				EnumWindows(EnumForegroundWindowProc, reinterpret_cast<LPARAM>(&context));
-				return context.foundWindow;
-			}
-		}
-
 		int ShowExternalStartupConsentDialog(const wchar_t* title, const wchar_t* body)
 		{
 			std::wstring safeTitle = title ? title : L"CialloHook";
@@ -422,52 +376,9 @@ namespace Rut
 				return IDYES;
 			}
 
+			LogMessage(LogLevel::Info, L"ShowExternalStartupConsentDialog: using direct MessageBoxW");
 			return MessageBoxW(nullptr, safeBody.c_str(), safeTitle.c_str(),
-				MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2 | MB_SETFOREGROUND | MB_TOPMOST);
-		}
-
-		bool BringProcessMainWindowToFront(uint32_t processId, uint32_t waitTimeoutMs)
-		{
-			DWORD targetPid = static_cast<DWORD>(processId);
-			if (targetPid == 0)
-			{
-				return false;
-			}
-
-			const DWORD stepMs = 100;
-			DWORD waitedMs = 0;
-			while (waitedMs <= waitTimeoutMs)
-			{
-				HWND hWnd = FindProcessMainWindow(targetPid);
-				if (hWnd && IsWindow(hWnd))
-				{
-					if (IsIconic(hWnd))
-					{
-						ShowWindowAsync(hWnd, SW_RESTORE);
-					}
-					else
-					{
-						ShowWindowAsync(hWnd, SW_SHOW);
-					}
-					AllowSetForegroundWindow(targetPid);
-					SetWindowPos(hWnd, HWND_TOPMOST, 0, 0, 0, 0,
-						SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-					SetWindowPos(hWnd, HWND_NOTOPMOST, 0, 0, 0, 0,
-						SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
-					BringWindowToTop(hWnd);
-					SetForegroundWindow(hWnd);
-					SetActiveWindow(hWnd);
-					LogMessage(LogLevel::Info, L"BringProcessMainWindowToFront: hwnd=%p pid=%lu", hWnd, (unsigned long)targetPid);
-					return true;
-				}
-
-				Sleep(stepMs);
-				waitedMs += stepMs;
-			}
-
-			LogMessage(LogLevel::Warn, L"BringProcessMainWindowToFront: window not found, pid=%lu timeout=%lu",
-				(unsigned long)targetPid, (unsigned long)waitTimeoutMs);
-			return false;
+				MB_YESNO | MB_ICONINFORMATION | MB_TOPMOST);
 		}
 
 		static const wchar_t* GetLogLevelName(LogLevel level)

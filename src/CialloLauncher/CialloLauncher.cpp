@@ -1,6 +1,7 @@
 #include <Windows.h>
 #include <shellapi.h>
 
+#include <cwctype>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -17,6 +18,8 @@ using namespace CialloLauncher;
 
 namespace
 {
+	const wchar_t* kStartupMessageAcceptedEnvVar = L"CIALLOHOOK_STARTUP_MESSAGE_ACCEPTED";
+
 	std::wstring Utf8ToWide(const std::string& utf8)
 	{
 		if (utf8.empty())
@@ -87,6 +90,141 @@ namespace
 		}
 		return ansi;
 	}
+
+	std::wstring GetEnvironmentVariableString(const wchar_t* name, bool& exists)
+	{
+		exists = false;
+		if (!name || name[0] == L'\0')
+		{
+			return L"";
+		}
+
+		DWORD required = GetEnvironmentVariableW(name, nullptr, 0);
+		if (required == 0)
+		{
+			return L"";
+		}
+
+		std::wstring value(required - 1, L'\0');
+		if (GetEnvironmentVariableW(name, &value[0], required) == 0)
+		{
+			return L"";
+		}
+
+		exists = true;
+		return value;
+	}
+
+	class ScopedEnvironmentVariableOverride
+	{
+	public:
+		ScopedEnvironmentVariableOverride() = default;
+
+		~ScopedEnvironmentVariableOverride()
+		{
+			if (!name_.empty())
+			{
+				SetEnvironmentVariableW(name_.c_str(), hadOriginalValue_ ? originalValue_.c_str() : nullptr);
+			}
+		}
+
+		void Set(const wchar_t* name, const wchar_t* value)
+		{
+			if (!name || name[0] == L'\0')
+			{
+				return;
+			}
+
+			name_ = name;
+			originalValue_ = GetEnvironmentVariableString(name, hadOriginalValue_);
+			SetEnvironmentVariableW(name, value);
+		}
+
+	private:
+		std::wstring name_;
+		std::wstring originalValue_;
+		bool hadOriginalValue_ = false;
+	};
+
+	uint64_t HashWideStringNoCase(const std::wstring& value)
+	{
+		uint64_t hash = 14695981039346656037ull;
+		for (wchar_t ch : value)
+		{
+			const uint16_t lower = static_cast<uint16_t>(towlower(static_cast<wint_t>(ch)));
+			hash ^= static_cast<uint8_t>(lower & 0xFF);
+			hash *= 1099511628211ull;
+			hash ^= static_cast<uint8_t>((lower >> 8) & 0xFF);
+			hash *= 1099511628211ull;
+		}
+		return hash;
+	}
+
+	std::wstring ResolveTargetExePathForLauncher(const std::wstring& exeDir, const std::wstring& targetExe)
+	{
+		if (targetExe.empty() || CialloLauncher::IsAbsolutePath(targetExe))
+		{
+			return targetExe;
+		}
+		return CialloLauncher::JoinPath(exeDir, targetExe);
+	}
+
+	std::wstring BuildLaunchMutexName(const std::wstring& targetExePath)
+	{
+		const std::wstring key = targetExePath.empty() ? L"CialloLauncher" : targetExePath;
+		wchar_t mutexName[96] = {};
+		swprintf_s(mutexName, L"Local\\CialloLauncher.Launch.%016llX",
+			static_cast<unsigned long long>(HashWideStringNoCase(key)));
+		return mutexName;
+	}
+
+	class ScopedLaunchMutex
+	{
+	public:
+		explicit ScopedLaunchMutex(const std::wstring& name)
+		{
+			if (name.empty())
+			{
+				acquired_ = true;
+				return;
+			}
+
+			handle_ = CreateMutexW(nullptr, TRUE, name.c_str());
+			if (!handle_)
+			{
+				acquired_ = true;
+				return;
+			}
+
+			if (GetLastError() == ERROR_ALREADY_EXISTS)
+			{
+				CloseHandle(handle_);
+				handle_ = nullptr;
+				acquired_ = false;
+				return;
+			}
+
+			acquired_ = true;
+		}
+
+		~ScopedLaunchMutex()
+		{
+			if (handle_)
+			{
+				ReleaseMutex(handle_);
+				CloseHandle(handle_);
+			}
+		}
+
+		bool IsAcquired() const
+		{
+			return acquired_;
+		}
+
+	private:
+		HANDLE handle_ = nullptr;
+		bool acquired_ = false;
+	};
 
 	std::string BuildDetoursDllPath(const std::wstring& dllPath, const std::wstring& exeDir)
 	{
@@ -191,6 +329,14 @@ INT APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
 	int argc = 0;
 	LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+	if (argv && argc >= 4 && _wcsicmp(argv[1], L"--startup-consent") == 0)
+	{
+		std::wstring title = argv[2];
+		std::wstring body = argv[3];
+		LocalFree(argv);
+		const int consentResult = ShowExternalStartupConsentDialog(title.c_str(), body.c_str());
+		return consentResult == IDYES ? 0 : 1;
+	}
 	if (argv && argc >= 4 && _wcsicmp(argv[1], L"--cleanup-cache") == 0)
 	{
 		DWORD processId = static_cast<DWORD>(wcstoul(argv[2], nullptr, 10));
@@ -217,6 +363,29 @@ INT APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 		if (!LoadLauncherConfig(exeDir, exeNameNoExt, config))
 		{
 			return -1;
+		}
+
+		const std::wstring resolvedTargetExe = ResolveTargetExePathForLauncher(exeDir, config.targetExe);
+		ScopedLaunchMutex launchMutex(BuildLaunchMutexName(resolvedTargetExe));
+		if (!launchMutex.IsAcquired())
+		{
+			LogMessage(LogLevel::Info, L"Launch already in progress, ignore duplicate click: %s",
+				resolvedTargetExe.empty() ? config.targetExe.c_str() : resolvedTargetExe.c_str());
+			return 0;
+		}
+
+		ScopedEnvironmentVariableOverride startupMessageAcceptedOverride;
+		if (config.startupMessage.enable && !config.startupMessage.body.empty())
+		{
+			const int consentResult = ShowExternalStartupConsentDialog(
+				config.startupMessage.title.c_str(),
+				config.startupMessage.body.c_str());
+			if (consentResult != IDYES)
+			{
+				LogMessage(LogLevel::Info, L"Launcher startup consent declined");
+				return 0;
+			}
+			startupMessageAcceptedOverride.Set(kStartupMessageAcceptedEnvVar, L"1");
 		}
 
 		if (config.customPakEnable)
