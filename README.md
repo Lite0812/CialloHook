@@ -35,6 +35,7 @@
 - `CialloHook.dll`：核心模块本体
 - `CialloHook.ini`：主配置文件
 - `version.ini` / `winmm.ini`：给代理名预留的同内容配置
+- `src/CialloHook/config/config_source.h`：编译期配置来源开关，可切换 `ini` 或内置硬编码配置
 - `CialloLauncher.exe`：启动器模式入口
 - `LoaderDll.dll` / `LocaleEmulator.dll`：部分模式和转区功能所需依赖
 - `subs_cn_jp.json`：日繁到简中映射示例文件
@@ -129,6 +130,37 @@ LogToConsole = false
 - Hook 是否成功加载
 - 字体是否被替换
 - 是否有基础日志输出
+
+## 配置来源切换
+
+现在支持两种配置来源：
+
+- `ini`：默认模式，继续读取游戏目录里的 `CialloHook.ini` / `version.ini` / `winmm.ini`
+- `built-in`：把配置直接写进源码，编译后 DLL 和 Loader 都可以不依赖 ini 内容
+
+切换入口在 `src/CialloHook/config/config_source.h`：
+
+```cpp
+selection.mode = ConfigSourceMode::IniFile;
+```
+
+如果要改成编译进 DLL / Loader：
+
+```cpp
+selection.mode = ConfigSourceMode::BuiltIn;
+```
+
+然后按模式修改同一个文件里的两个函数：
+
+- `ApplyBuiltInConfig`：CialloHook.dll / proxy 模式 / DLL 内逻辑
+- `ApplyBuiltInLauncherConfig`：CialloLauncher.exe / loader 模式启动参数
+
+Loader 模式要注意两点：
+
+- `ApplyBuiltInConfig` 里把 `settings.loadMode.mode` 改成 `L"loader"`
+- `ApplyBuiltInLauncherConfig` 里把 `targetExe` 改成目标游戏 EXE
+
+另外，`targetDllNames` 只用于“额外注入 DLL”；启动器本身会自动追加 `CialloHook.dll`，一般不要重复填写。
 
 ## 常见用法
 
