@@ -1834,6 +1834,7 @@
 			{
 				return;
 			}
+			ScopedDetourErrorDialogSuppression suppressDetourErrorDialog;
 			void** vtable = *(void***)factory;
 			if (!vtable)
 			{
@@ -2064,11 +2065,21 @@
 			{
 				return;
 			}
-			if (wcsstr(moduleName, L"dwrite") || wcsstr(moduleName, L"DWRITE"))
+			const bool shouldHookDWrite = wcsstr(moduleName, L"dwrite") || wcsstr(moduleName, L"DWRITE");
+			const bool shouldHookGdiplus = wcsstr(moduleName, L"gdiplus") || wcsstr(moduleName, L"GDIPLUS");
+			if (!shouldHookDWrite && !shouldHookGdiplus)
+			{
+				return;
+			}
+
+			ScopedDetourErrorDialogSuppression suppressDetourErrorDialog;
+			const bool detourBatchStarted = BeginDetourBatch();
+
+			if (shouldHookDWrite)
 			{
 				HookDWriteCreateFactory();
 			}
-			if (wcsstr(moduleName, L"gdiplus") || wcsstr(moduleName, L"GDIPLUS"))
+			if (shouldHookGdiplus)
 			{
 				HookGdipCreateFontFamilyFromName();
 				HookGdipCreateFontFromLogfontW();
@@ -2081,6 +2092,11 @@
 				HookGdipMeasureString();
 				HookGdipMeasureCharacterRanges();
 				HookGdipMeasureDriverString();
+			}
+
+			if (detourBatchStarted && !EndDetourBatch(L"Late-loaded font detour batch"))
+			{
+				LogMessage(LogLevel::Warn, L"TryHookLateLoadedModules: detour batch commit failed for %s", moduleName);
 			}
 		}
 

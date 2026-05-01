@@ -9,6 +9,7 @@
 
 #include "../../RuntimeCore/io/File.h"
 #include "../../RuntimeCore/io/CustomPakVFS.h"
+#include "../../RuntimeCore/hook/Hook.h"
 #include "../../RuntimeCore/hook/Hook_API.h"
 
 using namespace Rut::FileX;
@@ -56,6 +57,11 @@ namespace CialloHook
 			wchar_t* p = new wchar_t[text.size() + 1];
 			memcpy(p, text.c_str(), (text.size() + 1) * sizeof(wchar_t));
 			return p;
+		}
+
+		static bool CommitDetourBatchIfStarted(bool batchStarted, const wchar_t* operationName)
+		{
+			return !batchStarted || EndDetourBatch(operationName);
 		}
 
 		static std::string WideToCodePage(const std::wstring& text, uint32_t codePage)
@@ -733,6 +739,7 @@ namespace CialloHook
 			uint32_t attachOkCount = 0;
 			uint32_t attachFailCount = 0;
 			std::wstring attachFailedApis;
+			const bool detourBatchStarted = BeginDetourBatch();
 			auto logHookAttach = [&](const wchar_t* hookName, bool detourResult)
 			{
 				const bool ok = !detourResult;
@@ -1053,9 +1060,15 @@ namespace CialloHook
 			{
 				logHookAttach(L"HookGdipMeasureDriverString", HookGdipMeasureDriverString());
 			}
+
+			const bool detourBatchCommitted = CommitDetourBatchIfStarted(detourBatchStarted, L"ApplyFontHooks detour batch");
+			if (!detourBatchCommitted)
+			{
+				LogMessage(LogLevel::Warn, L"ApplyFontHooks: detour batch commit failed");
+			}
 			if (attachOkCount || attachFailCount)
 			{
-				LogMessage(attachFailCount ? LogLevel::Warn : LogLevel::Info,
+				LogMessage((attachFailCount || !detourBatchCommitted) ? LogLevel::Warn : LogLevel::Info,
 					L"ApplyFontHooks: extended attach summary ok=%u failed=%u",
 					attachOkCount, attachFailCount);
 				if (attachFailCount)
@@ -1105,6 +1118,7 @@ namespace CialloHook
 			uint32_t disabledCount = 0;
 			uint32_t enabledCount = 0;
 			std::wstring failedApis;
+			const bool detourBatchStarted = BeginDetourBatch();
 			auto hookAndLog = [&](const wchar_t* apiName, bool enabled, bool(*hookFunc)())
 			{
 				if (!enabled)
@@ -1155,6 +1169,18 @@ namespace CialloHook
 			hookAndLog(L"GetGlyphIndicesW", settings.hookGetGlyphIndicesW, HookGetGlyphIndicesW);
 			hookAndLog(L"GetGlyphOutlineA", settings.hookGetGlyphOutlineA, HookGetGlyphOutlineA);
 			hookAndLog(L"GetGlyphOutlineW", settings.hookGetGlyphOutlineW, HookGetGlyphOutlineW);
+
+			const bool detourBatchCommitted = CommitDetourBatchIfStarted(detourBatchStarted, L"ApplyTextHooks detour batch");
+			if (!detourBatchCommitted)
+			{
+				successCount = 0;
+				failCount = enabledCount;
+				if (!failedApis.empty())
+				{
+					failedApis += L", ";
+				}
+				failedApis += L"Detour batch commit";
+			}
 			LogMessage(failCount > 0 ? LogLevel::Warn : LogLevel::Info,
 				L"ApplyTextHooks: summary enabled=%u disabled=%u ok=%u failed=%u",
 				enabledCount, disabledCount, successCount, failCount);
@@ -1183,7 +1209,12 @@ namespace CialloHook
 			SetWindowTitleEncodings(titleReadCp, titleWriteCp);
 			EnableWindowTitleVerboseLog(settings.enableVerboseLog);
 
+			const bool detourBatchStarted = BeginDetourBatch();
 			HookWindowTitleAPIs(settings.titleMode);
+			if (!CommitDetourBatchIfStarted(detourBatchStarted, L"ApplyWindowTitleHooks detour batch"))
+			{
+				LogMessage(LogLevel::Warn, L"ApplyWindowTitleHooks: detour batch commit failed");
+			}
 			CIALLOHOOK_VERBOSE_INFO_LOG(L"ApplyWindowTitleHooks: rule count=%u, mode=%d, readEncoding=%u, writeEncoding=%u, verbose=%d",
 				(uint32_t)settings.rules.size(), settings.titleMode, titleReadCp, titleWriteCp, settings.enableVerboseLog ? 1 : 0);
 		}
@@ -1226,7 +1257,13 @@ namespace CialloHook
 			std::wstring keyOutputPath = ToGameAbsolutePath(gameDir, settings.keyOutputPath);
 			SetKeyExtractConfig(gameexePath.c_str(), keyOutputPath.c_str(), settings.showMessageBox);
 
+			const bool detourBatchStarted = BeginDetourBatch();
 			bool keyExtractEnabled = EnableSiglusKeyExtract();
+			if (!CommitDetourBatchIfStarted(detourBatchStarted, L"ApplySiglusKeyExtract detour batch"))
+			{
+				keyExtractEnabled = false;
+				LogMessage(LogLevel::Warn, L"ApplySiglusKeyExtract: detour batch commit failed");
+			}
 			LogMessage(keyExtractEnabled ? LogLevel::Info : LogLevel::Warn,
 				L"ApplySiglusKeyExtract: enabled=%d gameexe=%s output=%s showMessageBox=%d",
 				keyExtractEnabled ? 1 : 0,
@@ -1388,7 +1425,13 @@ namespace CialloHook
 				return;
 			}
 
+			const bool detourBatchStarted = BeginDetourBatch();
 			bool hookSuccess = HookFileAPIs();
+			if (!CommitDetourBatchIfStarted(detourBatchStarted, L"ApplyFilePatchHooks detour batch"))
+			{
+				hookSuccess = false;
+				LogMessage(LogLevel::Warn, L"ApplyFilePatchHooks: detour batch commit failed");
+			}
 
 			std::vector<const wchar_t*> patchFolders;
 			for (const std::wstring& folder : activePatchFolders)
@@ -1496,7 +1539,13 @@ namespace CialloHook
 			}
 
 			bool loaded = Rut::HookX::LoadVirtualRegistryFiles(registryFilePathPointers.data(), registryFilePathPointers.size(), settings.enableLog);
+			const bool detourBatchStarted = loaded && BeginDetourBatch();
 			bool hooked = loaded ? Rut::HookX::HookRegistryAPIs() : false;
+			if (!CommitDetourBatchIfStarted(detourBatchStarted, L"ApplyRegistryHooks detour batch"))
+			{
+				hooked = false;
+				LogMessage(LogLevel::Warn, L"ApplyRegistryHooks: detour batch commit failed");
+			}
 			LogMessage((loaded && hooked) ? LogLevel::Info : LogLevel::Error,
 				L"ApplyRegistryHooks: files=%u load=%s hook=%s",
 				static_cast<uint32_t>(registryFilePaths.size()),
@@ -1513,7 +1562,13 @@ namespace CialloHook
 			}
 
 			Rut::HookX::SetCodePageMapping(settings.fromCodePage, settings.toCodePage);
+			const bool detourBatchStarted = BeginDetourBatch();
 			bool hookSuccess = HookCodePageAPIs();
+			if (!CommitDetourBatchIfStarted(detourBatchStarted, L"ApplyCodePageHooks detour batch"))
+			{
+				hookSuccess = false;
+				LogMessage(LogLevel::Warn, L"ApplyCodePageHooks: detour batch commit failed");
+			}
 			LogMessage(hookSuccess ? LogLevel::Info : LogLevel::Error, L"ApplyCodePageHooks: %u -> %u (%s)",
 				settings.fromCodePage, settings.toCodePage, hookSuccess ? L"success" : L"failed");
 		}

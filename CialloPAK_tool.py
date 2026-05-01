@@ -2,8 +2,10 @@ import argparse
 import concurrent.futures
 import hashlib
 import os
+import shutil
 import struct
 import sys
+import tempfile
 import time
 import lzma
 import zlib
@@ -31,6 +33,7 @@ LZMA_LP = 0
 LZMA_PB = 4
 LZMA_DICT_SIZE = 1 << 27
 IO_CHUNK_SIZE = 4 * 1024 * 1024
+LARGE_FILE_THRESHOLD = 64 * 1024 * 1024
 
 
 def normalize_relpath(text: str) -> str:
@@ -54,23 +57,28 @@ def derive_key(scope: bytes, material: bytes, size: int) -> bytes:
     return h.digest()
 
 
-def xor_crypt(data: bytes, key: bytes, nonce: bytes) -> bytes:
+def xor_crypt_at_offset(data: bytes, key: bytes, nonce: bytes, start_offset: int = 0) -> bytes:
     out = bytearray(len(data))
-    counter = 0
     pos = 0
     while pos < len(data):
+        absolute = start_offset + pos
+        counter = absolute // 64
+        inner_offset = absolute % 64
         block = hashlib.blake2b(
             nonce + struct.pack("<Q", counter),
             digest_size=64,
             key=key,
             person=b"CialloXorV4",
         ).digest()
-        take = min(len(data) - pos, len(block))
+        take = min(len(data) - pos, len(block) - inner_offset)
         for i in range(take):
-            out[pos + i] = data[pos + i] ^ block[i]
+            out[pos + i] = data[pos + i] ^ block[inner_offset + i]
         pos += take
-        counter += 1
     return bytes(out)
+
+
+def xor_crypt(data: bytes, key: bytes, nonce: bytes) -> bytes:
+    return xor_crypt_at_offset(data, key, nonce, 0)
 
 
 def _compress_zstd(data: bytes, level: int = 10) -> bytes:
@@ -237,6 +245,316 @@ def _write_file_with_progress(file_path: Path, data: bytes, progress_prefix: str
         _write_bytes_to_fp(fp, data, progress_prefix=progress_prefix)
 
 
+class _ProgressReader:
+    def __init__(self, fp, total: int, progress_prefix: str = ""):
+        self._fp = fp
+        self._total = total
+        self._done = 0
+        self._progress_prefix = progress_prefix
+        if self._total <= 0 and self._progress_prefix:
+            print_progress(self._progress_prefix, 1, 1)
+
+    def read(self, size: int = -1):
+        data = self._fp.read(size)
+        if data:
+            self._done += len(data)
+            if self._progress_prefix:
+                print_progress(self._progress_prefix, self._done, self._total)
+        return data
+
+    def __getattr__(self, name: str):
+        return getattr(self._fp, name)
+
+
+class _ProgressWriter:
+    def __init__(self, fp, total: int, progress_prefix: str = ""):
+        self._fp = fp
+        self._total = total
+        self._done = 0
+        self._progress_prefix = progress_prefix
+        if self._total <= 0 and self._progress_prefix:
+            print_progress(self._progress_prefix, 1, 1)
+
+    def write(self, data):
+        written = self._fp.write(data)
+        amount = len(data) if written is None else written
+        self._done += amount
+        if amount > 0 and self._progress_prefix:
+            print_progress(self._progress_prefix, self._done, self._total)
+        return written
+
+    def flush(self):
+        return self._fp.flush()
+
+    def __getattr__(self, name: str):
+        return getattr(self._fp, name)
+
+
+def _should_use_streaming_path(total_size: int) -> bool:
+    return total_size >= LARGE_FILE_THRESHOLD
+
+
+def _should_show_detail_progress(show_progress: bool, total_files: int, total_size: int) -> bool:
+    return show_progress and (total_files == 1 or _should_use_streaming_path(total_size))
+
+
+def _create_temp_file_path(suffix: str = ".tmp") -> Path:
+    fd, temp_name = tempfile.mkstemp(prefix="ciallopak_", suffix=suffix)
+    os.close(fd)
+    return Path(temp_name)
+
+
+def _remove_temp_file(path):
+    if not path:
+        return
+    try:
+        Path(path).unlink()
+    except FileNotFoundError:
+        pass
+
+
+def _scan_file_metadata(file_path: Path, progress_prefix: str = ""):
+    total = file_path.stat().st_size
+    done = 0
+    content_hash = hashlib.blake2b(digest_size=32, person=b"CialloDedupV4")
+    with file_path.open("rb") as fp:
+        while True:
+            chunk = fp.read(IO_CHUNK_SIZE)
+            if not chunk:
+                break
+            content_hash.update(chunk)
+            done += len(chunk)
+            if progress_prefix:
+                print_progress(progress_prefix, done, total)
+    if total <= 0 and progress_prefix:
+        print_progress(progress_prefix, 1, 1)
+    return total, content_hash.digest()
+
+
+def _stream_xor_fp_to_fp(src_fp, dst_fp, total_size: int, key: bytes, nonce: bytes, progress_prefix: str = "", start_offset: int = 0):
+    if total_size <= 0:
+        if progress_prefix:
+            print_progress(progress_prefix, 1, 1)
+        return
+    done = 0
+    while done < total_size:
+        chunk = src_fp.read(min(IO_CHUNK_SIZE, total_size - done))
+        if not chunk:
+            break
+        dst_fp.write(xor_crypt_at_offset(chunk, key, nonce, start_offset + done))
+        done += len(chunk)
+        if progress_prefix:
+            print_progress(progress_prefix, done, total_size)
+    if done != total_size:
+        raise ValueError("数据流尺寸不匹配")
+
+
+def _compress_file_to_temp(file_path: Path, compression: str, progress_prefix: str = "", zstd_level: int = 22):
+    temp_path = _create_temp_file_path(".packed")
+    total = file_path.stat().st_size
+    c = compression.lower()
+    try:
+        with file_path.open("rb") as src, temp_path.open("wb") as dst:
+            reader = _ProgressReader(src, total, progress_prefix)
+            if c == "zlib":
+                mode = MODE_ZLIB
+                dst.write(bytes([mode]))
+                compressor = zlib.compressobj(9)
+                while True:
+                    chunk = reader.read(IO_CHUNK_SIZE)
+                    if not chunk:
+                        break
+                    compressed = compressor.compress(chunk)
+                    if compressed:
+                        dst.write(compressed)
+                tail = compressor.flush()
+                if tail:
+                    dst.write(tail)
+            elif c == "zstd":
+                if zstd is None:
+                    raise ValueError("当前环境未安装zstandard，无法使用zstd压缩")
+                mode = MODE_ZSTD
+                dst.write(bytes([mode]))
+                zstd.ZstdCompressor(level=zstd_level).copy_stream(reader, dst)
+            elif c == "lzma":
+                mode = MODE_LZMA
+                dst.write(bytes([mode]))
+                lc, lp, pb, dict_size = _sanitize_lzma_params()
+                dst.write(_lzma_props_bytes(lc, lp, pb, dict_size))
+                compressor = lzma.LZMACompressor(
+                    format=lzma.FORMAT_RAW,
+                    filters=_lzma_filters(lc, lp, pb, dict_size),
+                )
+                while True:
+                    chunk = reader.read(IO_CHUNK_SIZE)
+                    if not chunk:
+                        break
+                    compressed = compressor.compress(chunk)
+                    if compressed:
+                        dst.write(compressed)
+                tail = compressor.flush()
+                if tail:
+                    dst.write(tail)
+            else:
+                raise ValueError(f"不支持的压缩参数: {compression}")
+        return mode, temp_path, temp_path.stat().st_size
+    except Exception:
+        _remove_temp_file(temp_path)
+        raise
+
+
+def _select_streaming_packed_source(file_path: Path, rel: str, compression: str, orig_size: int, detail_progress: bool = False):
+    c = compression.lower()
+    if c not in {"raw", "zlib", "zstd", "lzma", "auto"}:
+        raise ValueError(f"不支持的压缩参数: {compression}")
+
+    best_mode = MODE_RAW
+    best_temp_path = None
+    best_packed_size = orig_size + 1
+
+    if c == "raw":
+        if detail_progress:
+            emit_log_line(f"[单文件] 压缩完成 {rel} ({mode_name(best_mode)})")
+        return best_mode, best_temp_path, best_packed_size
+
+    candidates = []
+    if c in {"zlib", "auto"}:
+        candidates.append("zlib")
+    if c in {"zstd", "auto"}:
+        if zstd is None:
+            if c == "zstd":
+                raise ValueError("当前环境未安装zstandard，无法使用zstd压缩")
+        else:
+            candidates.append("zstd")
+    if c in {"lzma", "auto"}:
+        candidates.append("lzma")
+
+    for candidate in candidates:
+        if detail_progress:
+            emit_log_line(f"[单文件] 压缩中 {rel} ({candidate})")
+        mode, temp_path, packed_size = _compress_file_to_temp(
+            file_path,
+            candidate,
+            progress_prefix=f"单文件压缩[{candidate}] {rel}" if detail_progress else "",
+        )
+        if packed_size < best_packed_size:
+            _remove_temp_file(best_temp_path)
+            best_mode = mode
+            best_temp_path = temp_path
+            best_packed_size = packed_size
+        else:
+            _remove_temp_file(temp_path)
+
+    if detail_progress:
+        emit_log_line(f"[单文件] 压缩完成 {rel} ({mode_name(best_mode)})")
+    return best_mode, best_temp_path, best_packed_size
+
+
+def _write_encrypted_packed_source(dst_fp, file_path: Path, packed_mode: int, packed_temp_path, packed_size: int, key: bytes, nonce: bytes, progress_prefix: str = ""):
+    if packed_temp_path is None:
+        total = packed_size
+        dst_fp.write(xor_crypt_at_offset(bytes([packed_mode]), key, nonce, 0))
+        done = 1
+        if progress_prefix:
+            print_progress(progress_prefix, done, total)
+        with file_path.open("rb") as src_fp:
+            while True:
+                chunk = src_fp.read(IO_CHUNK_SIZE)
+                if not chunk:
+                    break
+                dst_fp.write(xor_crypt_at_offset(chunk, key, nonce, done))
+                done += len(chunk)
+                if progress_prefix:
+                    print_progress(progress_prefix, done, total)
+        if done != total:
+            raise ValueError("写入封包时尺寸不匹配")
+        return
+
+    with Path(packed_temp_path).open("rb") as packed_fp:
+        _stream_xor_fp_to_fp(packed_fp, dst_fp, packed_size, key, nonce, progress_prefix=progress_prefix)
+
+
+def _decrypt_entry_payload_to_temp(fp, entry, detail_progress: str = ""):
+    total = entry["stored_size"]
+    key = derive_key(b"DATA", entry["nonce"], entry["orig_size"])
+    temp_path = _create_temp_file_path(".payload")
+    fp.seek(entry["offset"])
+    try:
+        enc_mode = fp.read(1)
+        if len(enc_mode) != 1:
+            raise ValueError("数据区越界")
+        mode = xor_crypt_at_offset(enc_mode, key, entry["nonce"], 0)[0]
+        done = 1
+        if detail_progress:
+            print_progress(f"{detail_progress} 读取封包", done, total)
+        with temp_path.open("wb") as temp_fp:
+            while done < total:
+                enc_chunk = fp.read(min(IO_CHUNK_SIZE, total - done))
+                if not enc_chunk:
+                    break
+                temp_fp.write(xor_crypt_at_offset(enc_chunk, key, entry["nonce"], done))
+                done += len(enc_chunk)
+                if detail_progress:
+                    print_progress(f"{detail_progress} 读取封包", done, total)
+        if done != total:
+            raise ValueError("数据区越界")
+        return mode, temp_path
+    except Exception:
+        _remove_temp_file(temp_path)
+        raise
+
+
+def _decompress_payload_to_file(payload_path: Path, mode: int, out_path: Path, orig_size: int, progress_prefix: str = ""):
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with payload_path.open("rb") as src_fp, out_path.open("wb") as dst_fp:
+        writer = _ProgressWriter(dst_fp, orig_size, progress_prefix)
+        if mode == MODE_RAW:
+            shutil.copyfileobj(src_fp, writer, IO_CHUNK_SIZE)
+        elif mode == MODE_ZLIB:
+            decomp = zlib.decompressobj()
+            while True:
+                chunk = src_fp.read(IO_CHUNK_SIZE)
+                if not chunk:
+                    break
+                raw_chunk = decomp.decompress(chunk)
+                if raw_chunk:
+                    writer.write(raw_chunk)
+            tail = decomp.flush()
+            if tail:
+                writer.write(tail)
+        elif mode == MODE_ZSTD:
+            if zstd is None:
+                raise ValueError("当前环境未安装zstandard，无法解压zstd封包")
+            zstd.ZstdDecompressor().copy_stream(src_fp, writer)
+        elif mode == MODE_LZMA:
+            props = src_fp.read(5)
+            if len(props) < 5:
+                raise ValueError("LZMA数据损坏")
+            prop0 = props[0]
+            dict_size = struct.unpack("<I", props[1:5])[0]
+            if prop0 >= 9 * 5 * 5:
+                raise ValueError("LZMA属性非法")
+            lc = prop0 % 9
+            rem = prop0 // 9
+            lp = rem % 5
+            pb = rem // 5
+            decomp = lzma.LZMADecompressor(format=lzma.FORMAT_RAW, filters=_lzma_filters(lc, lp, pb, dict_size))
+            while True:
+                chunk = src_fp.read(IO_CHUNK_SIZE)
+                if not chunk:
+                    break
+                raw_chunk = decomp.decompress(chunk)
+                if raw_chunk:
+                    writer.write(raw_chunk)
+        else:
+            raise ValueError("未知压缩模式")
+        writer.flush()
+
+    actual_size = out_path.stat().st_size
+    if actual_size != orig_size:
+        raise ValueError("尺寸校验失败")
+
+
 def _prepare_pack_item(task):
     if len(task) == 4:
         file_path_str, rel, compression, detail_progress = task
@@ -393,6 +711,48 @@ def format_size(num_bytes: int) -> str:
     return f"{value:.2f}{units[unit]}"
 
 
+def format_duration(seconds: float) -> str:
+    if seconds < 60:
+        return f"{seconds:.3f}s"
+    minutes, remain = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{int(minutes)}m {remain:.3f}s"
+    hours, minutes = divmod(int(minutes), 60)
+    return f"{hours}h {minutes}m {remain:.3f}s"
+
+
+def format_ratio(numerator: int, denominator: int) -> str:
+    if denominator <= 0:
+        return "N/A"
+    return f"{(numerator / denominator):.2%}"
+
+
+def emit_pack_summary(total_files: int, logical_size: int, pak_size: int, elapsed: float, dedup_reused: int = 0):
+    emit_log_line(
+        "封包汇总: 文件数={files} | 原始大小={logical} | 封包大小={packed} | 总压缩率={ratio} | 耗时={elapsed}".format(
+            files=total_files,
+            logical=format_size(logical_size),
+            packed=format_size(pak_size),
+            ratio=format_ratio(pak_size, logical_size),
+            elapsed=format_duration(elapsed),
+        )
+    )
+    if dedup_reused:
+        emit_log_line(f"封包汇总: 去重复用文件数={dedup_reused}")
+
+
+def emit_unpack_summary(total_files: int, logical_size: int, pak_size: int, elapsed: float):
+    emit_log_line(
+        "解包汇总: 文件数={files} | 输出大小={logical} | 封包大小={packed} | 总压缩率={ratio} | 耗时={elapsed}".format(
+            files=total_files,
+            logical=format_size(logical_size),
+            packed=format_size(pak_size),
+            ratio=format_ratio(pak_size, logical_size),
+            elapsed=format_duration(elapsed),
+        )
+    )
+
+
 def _pack_header(file_count: int, index_offset: int, index_size: int, index_nonce: bytes) -> bytes:
     return struct.pack(
         f"<9s H I Q Q {NONCE_SIZE}s",
@@ -508,6 +868,151 @@ def read_entry_data(fp, entry, detail_progress: str = ""):
     return raw
 
 
+def _pack_streaming(files, pak_path: Path, dedup_mode: bool = False, show_progress: bool = True, compression: str = "auto"):
+    hash_seen = {}
+    dedup_map = {}
+    entries = []
+    dedup_reused = 0
+    total_files = len(files)
+    logical_size = sum(file_path.stat().st_size for file_path, _ in files)
+    header_size = struct.calcsize(f"<9s H I Q Q {NONCE_SIZE}s")
+    start_time = time.perf_counter()
+
+    pak_path.parent.mkdir(parents=True, exist_ok=True)
+    with pak_path.open("wb") as fp:
+        fp.write(b"\x00" * header_size)
+        for idx, (file_path, rel) in enumerate(files, 1):
+            file_size = file_path.stat().st_size
+            detail_progress = _should_show_detail_progress(show_progress, total_files, file_size)
+            hash_bytes = custom_hash_bytes(rel)
+            hash_hex = hash_bytes.hex().upper()
+            if hash_hex in hash_seen and hash_seen[hash_hex] != rel:
+                raise ValueError(f"hash碰撞：{hash_seen[hash_hex]} 与 {rel}")
+            hash_seen[hash_hex] = rel
+
+            if detail_progress:
+                emit_log_line(f"[单文件] 扫描中 {rel}")
+            orig_size, content_id = _scan_file_metadata(
+                file_path,
+                progress_prefix=f"单文件读取 {rel}" if detail_progress else "",
+            )
+
+            reused = dedup_mode and content_id in dedup_map
+            packed_temp_path = None
+            if reused:
+                offset, stored_size, orig_size, nonce, mode = dedup_map[content_id]
+                dedup_reused += 1
+            else:
+                try:
+                    packed_mode, packed_temp_path, packed_size = _select_streaming_packed_source(
+                        file_path,
+                        rel,
+                        compression,
+                        orig_size,
+                        detail_progress=detail_progress,
+                    )
+                    nonce = hashlib.blake2b(content_id, digest_size=NONCE_SIZE, person=b"CialloNonceV4").digest()
+                    key = derive_key(b"DATA", nonce, orig_size)
+                    offset = fp.tell()
+                    _write_encrypted_packed_source(
+                        fp,
+                        file_path,
+                        packed_mode,
+                        packed_temp_path,
+                        packed_size,
+                        key,
+                        nonce,
+                        progress_prefix=f"单文件写入 {rel}" if detail_progress else "",
+                    )
+                    stored_size = packed_size
+                    mode = packed_mode
+                    if dedup_mode:
+                        dedup_map[content_id] = (offset, stored_size, orig_size, nonce, mode)
+                finally:
+                    _remove_temp_file(packed_temp_path)
+
+            flags = FLAG_DEDUP_REUSED if reused else 0
+            entries.append(
+                {
+                    "hash_bytes": hash_bytes,
+                    "flags": flags,
+                    "orig_size": orig_size,
+                    "stored_size": stored_size,
+                    "offset": offset,
+                    "nonce": nonce,
+                }
+            )
+            ratio = (stored_size / orig_size) if orig_size > 0 else 0.0
+            action = "复用" if reused else "写入"
+            emit_log_line(f"[{idx}/{total_files}] {action} {rel} | mode={mode_name(mode)} | {stored_size}/{orig_size} ({ratio:.2%})")
+            if show_progress:
+                print_progress("封包处理中", idx, total_files)
+
+        index_offset = fp.tell()
+        index_plain = _build_index(entries)
+        index_nonce = hashlib.blake2b(
+            struct.pack("<I", len(entries)) + struct.pack("<Q", index_offset),
+            digest_size=NONCE_SIZE,
+            person=b"CialloIdxV4",
+        ).digest()
+        index_key = derive_key(b"INDEX", b"__index__", len(index_plain))
+        index_enc = xor_crypt(index_plain, index_key, index_nonce)
+        fp.write(index_enc)
+        index_size = len(index_enc)
+        fp.seek(0)
+        fp.write(_pack_header(len(entries), index_offset, index_size, index_nonce))
+
+    emit_pack_summary(total_files, logical_size, pak_path.stat().st_size, time.perf_counter() - start_time, dedup_reused)
+
+
+def _unpack_streaming_groups(pak_path: Path, unique_groups, output_dir: Path, total_files: int, show_progress: bool = True):
+    done = 0
+    logical_size = sum(group["entry"]["orig_size"] * len(group["rels"]) for group in unique_groups)
+    start_time = time.perf_counter()
+    with pak_path.open("rb") as fp:
+        for group in unique_groups:
+            entry = group["entry"]
+            detail_progress = _should_show_detail_progress(
+                show_progress,
+                total_files,
+                max(entry["orig_size"], entry["stored_size"]),
+            )
+            lead_rel = group["rels"][0]
+            lead_out_path = output_dir / lead_rel
+            temp_payload_path = None
+            try:
+                if detail_progress:
+                    emit_log_line(f"[单文件] 解密中 {lead_rel}")
+                mode, temp_payload_path = _decrypt_entry_payload_to_temp(
+                    fp,
+                    entry,
+                    detail_progress=lead_rel if detail_progress else "",
+                )
+                if detail_progress:
+                    emit_log_line(f"[单文件] 解压写出中 {lead_rel} ({mode_name(mode)})")
+                _decompress_payload_to_file(
+                    temp_payload_path,
+                    mode,
+                    lead_out_path,
+                    entry["orig_size"],
+                    progress_prefix=f"单文件写出 {lead_rel}" if detail_progress else "",
+                )
+                done += 1
+                if show_progress:
+                    print_progress("解包处理中", done, total_files)
+
+                for rel in group["rels"][1:]:
+                    out_path = output_dir / rel
+                    out_path.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(lead_out_path, out_path)
+                    done += 1
+                    if show_progress:
+                        print_progress("解包处理中", done, total_files)
+            finally:
+                _remove_temp_file(temp_payload_path)
+    emit_unpack_summary(total_files, logical_size, pak_path.stat().st_size, time.perf_counter() - start_time)
+
+
 def pack(
     input_dir: Path,
     pak_path: Path,
@@ -523,13 +1028,19 @@ def pack(
         raise ValueError("输入目录没有可封包文件")
 
     rel_paths = [rel for _, rel in files]
+    logical_size = sum(file_path.stat().st_size for file_path, _ in files)
     write_manifest(manifest_path, rel_paths)
+    if any(_should_use_streaming_path(file_path.stat().st_size) for file_path, _ in files):
+        emit_log_line(f"检测到大文件，启用低内存流式封包模式（阈值 {format_size(LARGE_FILE_THRESHOLD)}）")
+        return _pack_streaming(files, pak_path, dedup_mode=dedup_mode, show_progress=show_progress, compression=compression)
+
     hash_seen = {}
     dedup_map = {}
     entries = []
     dedup_reused = 0
     total_files = len(files)
     header_size = struct.calcsize(f"<9s H I Q Q {NONCE_SIZE}s")
+    start_time = time.perf_counter()
 
     pak_path.parent.mkdir(parents=True, exist_ok=True)
     worker_count = resolve_worker_count(workers, total_files)
@@ -612,8 +1123,7 @@ def pack(
         if executor is not None:
             executor.shutdown(wait=True)
 
-    if dedup_mode:
-        print(f"去重复用文件数: {dedup_reused}")
+    emit_pack_summary(total_files, logical_size, pak_path.stat().st_size, time.perf_counter() - start_time, dedup_reused)
 
 
 def unpack(
@@ -634,8 +1144,10 @@ def unpack(
     output_dir.mkdir(parents=True, exist_ok=True)
     hash_name_count = {}
     total_files = len(entries)
+    logical_size = 0
     grouped = {}
     for entry in entries:
+        logical_size += entry["orig_size"]
         hash_hex = entry["hash_hex"]
         if manifest_map:
             if hash_hex not in manifest_map:
@@ -651,11 +1163,17 @@ def unpack(
         grouped[cache_key]["rels"].append(rel)
 
     unique_groups = list(grouped.values())
+    if any(_should_use_streaming_path(max(g["entry"]["orig_size"], g["entry"]["stored_size"])) for g in unique_groups):
+        emit_log_line(f"检测到大文件，启用低内存流式解包模式（阈值 {format_size(LARGE_FILE_THRESHOLD)}）")
+        _unpack_streaming_groups(pak_path, unique_groups, output_dir, total_files, show_progress=show_progress)
+        return
+
     decode_tasks = [
         (str(pak_path), g["entry"]["offset"], g["entry"]["stored_size"], g["entry"]["orig_size"], g["entry"]["nonce"])
         for g in unique_groups
     ]
     worker_count = resolve_worker_count(workers, len(decode_tasks))
+    start_time = time.perf_counter()
     if worker_count > 1:
         if parallel == "process":
             executor_cls = concurrent.futures.ProcessPoolExecutor
@@ -675,6 +1193,7 @@ def unpack(
                     done += 1
                     if show_progress:
                         print_progress("解包处理中", done, total_files)
+        emit_unpack_summary(total_files, logical_size, pak_path.stat().st_size, time.perf_counter() - start_time)
     else:
         done = 0
         detail_single = show_progress and total_files == 1
@@ -694,6 +1213,7 @@ def unpack(
                     done += 1
                     if show_progress:
                         print_progress("解包处理中", done, total_files)
+        emit_unpack_summary(total_files, logical_size, pak_path.stat().st_size, time.perf_counter() - start_time)
 
 
 def extract_by_name(pak_path: Path, rel_name: str) -> bytes:

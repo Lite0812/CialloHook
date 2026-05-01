@@ -1102,6 +1102,7 @@ namespace CialloHook
 			static void EnsureHooksInstalled()
 			{
 				TryApplyKrkrBootstrapBypass();
+				ScopedDetourErrorDialogSuppression suppressDetourErrorDialog;
 #if defined(_M_IX86)
 				if (sg_createStreamHooked)
 #else
