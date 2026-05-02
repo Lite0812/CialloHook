@@ -1,0 +1,1 @@
+#include "../../../GalPatch-main/KrkrPatch/KrkrPlugin/tp_stub.cpp"

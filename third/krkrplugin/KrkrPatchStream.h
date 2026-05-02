@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-#include "tp_stub_min.h"
+#include "tp_stub.h"
 
 class KrkrPatchStream : public tTJSBinaryStream
 {
