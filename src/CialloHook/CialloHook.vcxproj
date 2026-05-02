@@ -178,6 +178,7 @@
     <ClCompile Include="..\..\third\krkrplugin\CompilerHelper.cpp" />
     <ClCompile Include="..\..\third\krkrplugin\KrkrPatchStream.cpp" />
     <ClCompile Include="..\..\third\krkrplugin\Pe.cpp" />
+    <ClCompile Include="..\..\third\krkrplugin\tp_stub.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="config\config_manager.h" />
@@ -191,6 +192,7 @@
     <ClInclude Include="..\..\third\krkrplugin\CompilerType.h" />
     <ClInclude Include="..\..\third\krkrplugin\KrkrPatchStream.h" />
     <ClInclude Include="..\..\third\krkrplugin\Pe.h" />
+    <ClInclude Include="..\..\third\krkrplugin\tp_stub.h" />
     <ClInclude Include="..\..\third\krkrplugin\tp_stub_min.h" />
     <ClInclude Include="..\..\third\krkrplugin\CallingConvention\BorlandToCdeclAdapter.h" />
     <ClInclude Include="..\..\third\krkrplugin\CallingConvention\CdeclToBorlandAdapter.h" />

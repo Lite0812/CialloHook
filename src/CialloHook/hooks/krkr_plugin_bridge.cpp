@@ -2,6 +2,8 @@
 
 #include <Windows.h>
 
+#include <TlHelp32.h>
+
 #include <algorithm>
 #include <exception>
 #include <memory>
@@ -14,6 +16,7 @@
 #include "../../RuntimeCore/io/CustomPakVFS.h"
 #include "../../../third/detours/include/detours.h"
 #include "../../../third/krkrplugin/CompilerHelper.h"
+#include "../../../third/krkrplugin/tp_stub.h"
 #include "../../../third/krkrplugin/KrkrPatchStream.h"
 #include "../../../third/krkrplugin/Pe.h"
 
@@ -66,6 +69,27 @@ namespace CialloHook
 				return lowered;
 			}
 
+			static size_t FindArchiveEntryOffset(const std::wstring& loweredPath)
+			{
+				static const wchar_t* kMarkers[] =
+				{
+					L".xp3>",
+					L".xp3/",
+					L".xp3\\",
+				};
+
+				for (const wchar_t* marker : kMarkers)
+				{
+					size_t pos = loweredPath.find(marker);
+					if (pos != std::wstring::npos)
+					{
+						return pos + wcslen(marker);
+					}
+				}
+
+				return std::wstring::npos;
+			}
+
 			static bool StartsWithInsensitive(const std::wstring& value, const std::wstring& prefix)
 			{
 				if (value.size() < prefix.size())
@@ -113,6 +137,16 @@ namespace CialloHook
 				return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY) == 0;
 			}
 
+			static bool IsExistingDirectory(const std::wstring& path)
+			{
+				if (path.empty())
+				{
+					return false;
+				}
+				DWORD attrs = GetFileAttributesW(path.c_str());
+				return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0;
+			}
+
 			static bool TryBuildRelativePath(const std::wstring& source, std::wstring& relativePath)
 			{
 				relativePath.clear();
@@ -146,43 +180,48 @@ namespace CialloHook
 
 			static std::wstring PatchName(const ttstr& name)
 			{
-				std::wstring rawName = name.c_str();
-				std::wstring rawNameLower = ToLowerCopy(rawName);
-				std::wstring patchName = rawName;
-				if (rawNameLower.rfind(L"archive://./", 0) == 0 || rawNameLower.rfind(L"arc://./", 0) == 0)
+				std::wstring patchName = name.c_str();
+				size_t pos = std::wstring::npos;
+				std::wstring lowered = ToLowerCopy(patchName);
+				if (lowered.rfind(L"archive://./", 0) == 0 || lowered.rfind(L"arc://./", 0) == 0)
 				{
-					size_t pos = patchName.find_last_of(L"/\\");
-					if (pos != std::wstring::npos)
-					{
-						patchName.erase(0, pos + 1);
-					}
+					pos = patchName.find_last_of(L'/');
+					pos = pos == std::wstring::npos ? 0 : pos + 1;
 				}
-				else if (rawNameLower.rfind(L"file://./", 0) == 0)
+				else if (lowered.rfind(L"file://./", 0) == 0 && lowered.find(L".xp3>") != std::wstring::npos)
 				{
-					size_t entryPos = rawNameLower.find(L".xp3>");
-					if (entryPos != std::wstring::npos)
-					{
-						patchName = patchName.substr(entryPos + 5);
-					}
-					else
-					{
-						patchName.erase(0, wcslen(L"file://./"));
-					}
-				}
-				else
-				{
-					std::wstring relativePath;
-					if (TryBuildRelativePath(patchName, relativePath))
-					{
-						patchName = relativePath;
-					}
+					pos = patchName.find_last_of(L"/>");
+					pos = pos == std::wstring::npos ? 0 : pos + 1;
 				}
 
-				std::replace(patchName.begin(), patchName.end(), L'/', L'\\');
-				while (!patchName.empty() && (patchName[0] == L'.' || patchName[0] == L'\\'))
+				if (pos != std::wstring::npos)
 				{
-					patchName.erase(patchName.begin());
+					patchName.erase(0, pos);
 				}
+				return patchName;
+			}
+
+			static std::wstring PatchNameGalPatch(const ttstr& name)
+			{
+				std::wstring patchName = name.c_str();
+				size_t pos = std::wstring::npos;
+				if (patchName.rfind(L"archive://./", 0) == 0 || patchName.rfind(L"arc://./", 0) == 0)
+				{
+					pos = patchName.find_last_of(L'/');
+					pos = pos == std::wstring::npos ? 0 : pos + 1;
+				}
+				else if (patchName.rfind(L"file://./", 0) == 0 && patchName.find(L".xp3>") != std::wstring::npos)
+				{
+					pos = patchName.find_last_of(L"/>");
+					pos = pos == std::wstring::npos ? 0 : pos + 1;
+				}
+
+				if (pos == std::wstring::npos)
+				{
+					return {};
+				}
+
+				patchName.erase(0, pos);
 				return patchName;
 			}
 
@@ -314,35 +353,158 @@ namespace CialloHook
 				return true;
 			}
 
-			class TempTtstr
+			static std::pair<std::vector<std::wstring>, std::vector<std::wstring>> ListGalPatchTargets()
 			{
-			public:
-				explicit TempTtstr(const std::wstring& value)
-					: m_storage(value)
+				std::vector<std::wstring> patchDirs;
+				std::vector<std::wstring> patchArcs;
+
+				std::wstring basePath = sg_gameDir;
+				if (!basePath.empty() && basePath.back() != L'\\' && basePath.back() != L'/')
 				{
-					ZeroMemory(&m_variant, sizeof(m_variant));
-					m_variant.Length = static_cast<tjs_int>(m_storage.size());
-					if (m_variant.Length > TJS_VS_SHORT_LEN)
-					{
-						m_variant.LongString = const_cast<tjs_char*>(m_storage.c_str());
-					}
-					else
-					{
-						memcpy(m_variant.ShortString, m_storage.c_str(), (m_storage.size() + 1) * sizeof(wchar_t));
-					}
-					m_text.Ptr = &m_variant;
+					basePath += L"\\";
 				}
 
-				const ttstr& Get() const
+				static constexpr int kPatchCount = 9;
+				for (int num = kPatchCount; num > 0; --num)
 				{
-					return m_text;
+					std::wstring patchPrefix = basePath + L"unencrypted" + (num == 1 ? L"" : std::to_wstring(num));
+					std::wstring patchDir = patchPrefix + L"\\";
+					if (IsExistingDirectory(patchDir))
+					{
+						patchDirs.emplace_back(std::move(patchDir));
+					}
+
+					std::wstring patchArc = patchPrefix + L".xp3";
+					if (IsExistingRegularFile(patchArc))
+					{
+						patchArcs.emplace_back(std::move(patchArc));
+					}
 				}
 
-			private:
-				std::wstring m_storage;
-				tTJSVariantString m_variant = {};
-				ttstr m_text = {};
-			};
+				return { patchDirs, patchArcs };
+			}
+
+		#if defined(_M_IX86)
+			static bool IsGalPatchPathApiReady();
+			static std::pair<std::wstring, std::wstring> PatchUrlGalPatchExact(const ttstr& name, tjs_uint32 flags);
+		#endif
+
+			static bool TryBuildPatchUrlGalPatch(const ttstr& name, tjs_uint32 flags, std::wstring& patchUrl, std::wstring& patchArc)
+			{
+				patchUrl.clear();
+				patchArc.clear();
+				if (!sg_enableKrkrPatch || flags != TJS_BS_READ)
+				{
+					return false;
+				}
+		#if defined(_M_IX86)
+				if (!IsGalPatchPathApiReady())
+				{
+					return false;
+				}
+		#else
+				return false;
+		#endif
+
+				ttstr normalizedStorageName = TVPNormalizeStorageName(name);
+				std::wstring patchName = PatchNameGalPatch(normalizedStorageName);
+				if (sg_enableKrkrPatchVerboseLog)
+				{
+					LogMessage(LogLevel::Info, L"KrkrPluginBridge: PatchUrl normalized=%s", patchName.c_str());
+				}
+				if (patchName.empty())
+				{
+					return false;
+				}
+
+				auto [patchDirs, patchArcs] = ListGalPatchTargets();
+				for (const std::wstring& patchDir : patchDirs)
+				{
+					std::wstring candidate = patchDir + patchName;
+					ttstr candidateName(candidate.c_str());
+					if (TVPIsExistentStorageNoSearch(candidateName))
+					{
+						patchUrl = std::move(candidate);
+						return true;
+					}
+				}
+
+				for (const std::wstring& patchArchive : patchArcs)
+				{
+					std::wstring candidate = patchArchive + L">" + patchName;
+					ttstr candidateName(candidate.c_str());
+					if (TVPIsExistentStorageNoSearch(candidateName))
+					{
+						patchUrl = std::move(candidate);
+						patchArc = patchArchive;
+						return true;
+					}
+				}
+
+				return false;
+			}
+
+		#if defined(_M_IX86)
+			static std::pair<std::wstring, std::wstring> PatchUrlGalPatchExact(const ttstr& name, tjs_uint32 flags)
+			{
+				std::wstring rawName = name.c_str();
+				if (sg_enableKrkrPatchVerboseLog)
+				{
+					LogMessage(LogLevel::Info, L"KrkrPluginBridge: PatchUrl request=%s", rawName.c_str());
+				}
+
+				if (flags != TJS_BS_READ || !sg_enableKrkrPatch || !IsGalPatchPathApiReady())
+				{
+					return { rawName, L"" };
+				}
+
+				const ttstr normalizedStorageName = TVPNormalizeStorageName(name);
+				if (sg_enableKrkrPatchVerboseLog)
+				{
+					LogMessage(LogLevel::Info, L"KrkrPluginBridge: PatchUrl direct %s", normalizedStorageName.c_str());
+				}
+
+				const std::wstring patchName = PatchNameGalPatch(normalizedStorageName);
+				if (patchName.empty())
+				{
+					if (sg_enableKrkrPatchVerboseLog)
+					{
+						LogMessage(LogLevel::Info, L"KrkrPluginBridge: PatchUrl miss %s", rawName.c_str());
+					}
+					return { rawName, L"" };
+				}
+
+				static const auto kTargets = ListGalPatchTargets();
+				const auto& patchDirs = kTargets.first;
+				const auto& patchArcs = kTargets.second;
+
+				for (const std::wstring& patchDir : patchDirs)
+				{
+					const std::wstring patchUrl = patchDir + patchName;
+					if (TVPIsExistentStorageNoSearch(patchUrl.c_str()))
+					{
+						LogMessage(LogLevel::Info, L"KrkrPluginBridge: PatchUrl redirect %s -> %s", rawName.c_str(), patchUrl.c_str());
+						return { patchUrl, L"" };
+					}
+				}
+
+				for (const std::wstring& patchArc : patchArcs)
+				{
+					const std::wstring patchUrl = patchArc + L">" + patchName;
+					if (TVPIsExistentStorageNoSearch(patchUrl.c_str()))
+					{
+						LogMessage(LogLevel::Info, L"KrkrPluginBridge: PatchUrl redirect %s -> %s", rawName.c_str(), patchUrl.c_str());
+						return { patchUrl, patchArc };
+					}
+				}
+
+				if (sg_enableKrkrPatchVerboseLog)
+				{
+					LogMessage(LogLevel::Info, L"KrkrPluginBridge: PatchUrl miss %s", rawName.c_str());
+				}
+				return { rawName, L"" };
+			}
+		#endif
 
 			static bool TryResolvePatchFile(const std::wstring& folderSpec, const std::wstring& patchCandidate, std::wstring& patchUrl)
 			{
@@ -658,6 +820,23 @@ namespace CialloHook
 					return false;
 				}
 
+		#if defined(_M_IX86)
+				if (TryBuildPatchUrlGalPatch(name, flags, patchUrl, patchArc))
+				{
+					std::wstring displayPath = FormatStoragePathForLog(patchUrl);
+					LogMessage(LogLevel::Info, L"KrkrPluginBridge: PatchUrl redirect %s -> %s", rawName.c_str(), displayPath.c_str());
+					return true;
+				}
+				if (IsGalPatchPathApiReady())
+				{
+					if (sg_enableKrkrPatchVerboseLog)
+					{
+						LogMessage(LogLevel::Info, L"KrkrPluginBridge: PatchUrl miss %s", rawName.c_str());
+					}
+					return false;
+				}
+		#endif
+
 				std::wstring patchName = PatchName(name);
 				std::vector<std::wstring> patchCandidates = BuildPatchCandidates(patchName);
 				if (patchCandidates.empty())
@@ -694,15 +873,218 @@ namespace CialloHook
 #endif
 
 #if defined(_M_IX86)
+			using pV2Link = HRESULT(WINAPI*)(iTVPFunctionExporter* pExporter);
+			using pLoadLibraryA = HMODULE(WINAPI*)(LPCSTR lpLibFileName);
+			using pLoadLibraryW = HMODULE(WINAPI*)(LPCWSTR lpLibFileName);
+			using pLoadLibraryExA = HMODULE(WINAPI*)(LPCSTR lpLibFileName, HANDLE hFile, DWORD dwFlags);
+			using pLoadLibraryExW = HMODULE(WINAPI*)(LPCWSTR lpLibFileName, HANDLE hFile, DWORD dwFlags);
 			using pPatchSignVerifyMsvc = BOOL(__fastcall*)(HMODULE hModule);
 			using pCreateStreamBorland = tTJSBinaryStream* (*)(const ttstr& name, tjs_uint32 flags);
 			using pCreateStreamMsvc = tTJSBinaryStream* (KRKR_MSVC_HOOK_CALL*)(const ttstr& name, tjs_uint32 flags);
 
+			struct FindImportContext
+			{
+				const char* pszName = nullptr;
+				PVOID* ppvFunc = nullptr;
+			};
+
 			pPatchSignVerifyMsvc sg_rawSignVerifyMsvc = nullptr;
 			pCreateStreamBorland sg_rawCreateStreamBorland = nullptr;
+			pV2Link sg_rawV2Link = nullptr;
+			pLoadLibraryA sg_rawLoadLibraryA = nullptr;
+			pLoadLibraryW sg_rawLoadLibraryW = nullptr;
+			pLoadLibraryExA sg_rawLoadLibraryExA = nullptr;
+			pLoadLibraryExW sg_rawLoadLibraryExW = nullptr;
 			bool sg_compilerAnalyzed = false;
 			bool sg_signVerifyHooked = false;
 			bool sg_createStreamHooked = false;
+			bool sg_v2LinkHooked = false;
+			bool sg_loadLibraryHooked = false;
+			bool sg_tvpImportStubReady = false;
+			bool sg_injectV2Pending = false;
+
+			static void EnsureHooksInstalled();
+			static void InstallCreateStreamHook();
+			static BOOL __fastcall PatchSignVerifyMsvc(HMODULE /*hModule*/);
+			static HRESULT WINAPI HookV2Link(iTVPFunctionExporter* pExporter);
+
+			static BOOL CALLBACK CheckImportCallback(PVOID pContext, DWORD, LPCSTR pszName, PVOID* ppvFunc)
+			{
+				if (auto* findImportContext = static_cast<FindImportContext*>(pContext); findImportContext != nullptr && pszName != nullptr && strcmp(findImportContext->pszName, pszName) == 0)
+				{
+					findImportContext->ppvFunc = ppvFunc;
+					return FALSE;
+				}
+				return TRUE;
+			}
+
+			static bool ModuleImportsName(HMODULE hModule, const char* pszName)
+			{
+				if (!hModule || !pszName)
+				{
+					return false;
+				}
+
+				FindImportContext context = {};
+				context.pszName = pszName;
+				DetourEnumerateImportsEx(hModule, &context, nullptr, CheckImportCallback);
+				return context.ppvFunc != nullptr;
+			}
+
+			static bool IsGalPatchPathApiReady()
+			{
+				return sg_tvpImportStubReady;
+			}
+
+			static bool TryInstallSignVerifyHook(HMODULE hModule)
+			{
+				if (sg_signVerifyHooked)
+				{
+					return true;
+				}
+
+				static constexpr auto kPatternSignVerifyMsvc = "\x57\x8B\xF9\x8B\x8F\x80\x2A\x2A\x2A\x85\xC9\x75\x2A\x68\x2A\x2A\x2A\x2A\x8B\xCF\xE8\x2A\x2A\x2A\x2A\x5F\xC3";
+				sg_rawSignVerifyMsvc = reinterpret_cast<pPatchSignVerifyMsvc>(Pe::FindData(hModule, kPatternSignVerifyMsvc, strlen(kPatternSignVerifyMsvc)));
+				if (!sg_rawSignVerifyMsvc)
+				{
+					LogMessage(LogLevel::Warn, L"KrkrPluginBridge: sign verify pattern not found in krkr module");
+					return false;
+				}
+
+				bool failed = !TryDetourAttach(&sg_rawSignVerifyMsvc, PatchSignVerifyMsvc);
+				sg_signVerifyHooked = !failed;
+				LogMessage(sg_signVerifyHooked ? LogLevel::Info : LogLevel::Warn, L"KrkrPluginBridge: sign verify hook=%s", sg_signVerifyHooked ? L"ok" : L"failed");
+				return sg_signVerifyHooked;
+			}
+
+			static bool TryHookKrkrModule(HMODULE hModule)
+			{
+				if (!hModule)
+				{
+					return false;
+				}
+
+				auto* v2Link = reinterpret_cast<pV2Link>(GetProcAddress(hModule, "V2Link"));
+				if (!v2Link)
+				{
+					return false;
+				}
+
+				if (ModuleImportsName(hModule, "ImageUnload"))
+				{
+					if (sg_enableKrkrPatchVerboseLog)
+					{
+						LogMessage(LogLevel::Info, L"KrkrPluginBridge: found ImageUnload import, postpone V2Link hook");
+					}
+					return false;
+				}
+
+				TryInstallSignVerifyHook(hModule);
+				if (!sg_injectV2Pending)
+				{
+					return sg_signVerifyHooked;
+				}
+
+				if (sg_v2LinkHooked)
+				{
+					return true;
+				}
+
+				sg_rawV2Link = v2Link;
+				bool failed = !TryDetourAttach(&sg_rawV2Link, HookV2Link);
+				sg_v2LinkHooked = !failed;
+				LogMessage(sg_v2LinkHooked ? LogLevel::Info : LogLevel::Warn, L"KrkrPluginBridge: V2Link hook=%s", sg_v2LinkHooked ? L"ok" : L"failed");
+				return sg_v2LinkHooked;
+			}
+
+			static HMODULE WINAPI HookLoadLibraryA(LPCSTR lpLibFileName)
+			{
+				HMODULE hModule = sg_rawLoadLibraryA ? sg_rawLoadLibraryA(lpLibFileName) : nullptr;
+				TryHookKrkrModule(hModule);
+				return hModule;
+			}
+
+			static HMODULE WINAPI HookLoadLibraryW(LPCWSTR lpLibFileName)
+			{
+				HMODULE hModule = sg_rawLoadLibraryW ? sg_rawLoadLibraryW(lpLibFileName) : nullptr;
+				TryHookKrkrModule(hModule);
+				return hModule;
+			}
+
+			static HMODULE WINAPI HookLoadLibraryExA(LPCSTR lpLibFileName, HANDLE hFile, DWORD dwFlags)
+			{
+				HMODULE hModule = sg_rawLoadLibraryExA ? sg_rawLoadLibraryExA(lpLibFileName, hFile, dwFlags) : nullptr;
+				TryHookKrkrModule(hModule);
+				return hModule;
+			}
+
+			static HMODULE WINAPI HookLoadLibraryExW(LPCWSTR lpLibFileName, HANDLE hFile, DWORD dwFlags)
+			{
+				HMODULE hModule = sg_rawLoadLibraryExW ? sg_rawLoadLibraryExW(lpLibFileName, hFile, dwFlags) : nullptr;
+				TryHookKrkrModule(hModule);
+				return hModule;
+			}
+
+			static void EnsureKrkrEntryHooksInstalled()
+			{
+				if (sg_loadLibraryHooked)
+				{
+					return;
+				}
+
+				sg_rawLoadLibraryA = LoadLibraryA;
+				sg_rawLoadLibraryW = LoadLibraryW;
+				sg_rawLoadLibraryExA = LoadLibraryExA;
+				sg_rawLoadLibraryExW = LoadLibraryExW;
+
+				bool failed = false;
+				if (!BeginDetourBatch())
+				{
+					failed = true;
+				}
+				else
+				{
+					failed = !TryDetourAttach(&sg_rawLoadLibraryA, HookLoadLibraryA) || failed;
+					failed = !TryDetourAttach(&sg_rawLoadLibraryW, HookLoadLibraryW) || failed;
+					failed = !TryDetourAttach(&sg_rawLoadLibraryExA, HookLoadLibraryExA) || failed;
+					failed = !TryDetourAttach(&sg_rawLoadLibraryExW, HookLoadLibraryExW) || failed;
+					if (!EndDetourBatch(L"KrkrLoadLibraryHooks"))
+					{
+						failed = true;
+					}
+				}
+
+				sg_loadLibraryHooked = !failed;
+				sg_injectV2Pending = sg_loadLibraryHooked;
+				LogMessage(sg_loadLibraryHooked ? LogLevel::Info : LogLevel::Warn, L"KrkrPluginBridge: load library hook=%s", sg_loadLibraryHooked ? L"ok" : L"failed");
+			}
+
+			static HRESULT WINAPI HookV2Link(iTVPFunctionExporter* pExporter)
+			{
+				if (sg_v2LinkHooked)
+				{
+					TryDetourDetach(&sg_rawV2Link, HookV2Link);
+					sg_v2LinkHooked = false;
+				}
+
+				pV2Link rawV2Link = sg_rawV2Link;
+
+				sg_injectV2Pending = false;
+				sg_tvpImportStubReady = ::TVPInitImportStub(pExporter);
+				if (sg_tvpImportStubReady)
+				{
+					LogMessage(LogLevel::Info, L"KrkrPluginBridge: TVP import stub initialized");
+					InstallCreateStreamHook();
+				}
+
+				if (!rawV2Link)
+				{
+					LogMessage(LogLevel::Warn, L"KrkrPluginBridge: original V2Link missing");
+					return E_FAIL;
+				}
+
+				return rawV2Link(pExporter);
+			}
 
 			static BOOL __fastcall PatchSignVerifyMsvc(HMODULE /*hModule*/)
 			{
@@ -731,97 +1113,123 @@ namespace CialloHook
 			pCreateStreamMsvc sg_rawCreateStreamMsvc = nullptr;
 
 			static bool TryBuildPatchMemoryStream(const std::wstring& patchName, tTJSBinaryStream*& outStream, std::wstring& outSource);
+			static void EnsureHooksInstalled();
 
 			template <typename TArcStream, auto** TOriginalCreateStream>
 			static tTJSBinaryStream* PatchCreateStreamImpl(const ttstr& name, tjs_uint32 flags)
 			{
-				std::wstring rawName = name.c_str();
-				std::wstring patchName = PatchName(name);
-				if (EndsWithInsensitive(rawName, L".sig"))
+				try
 				{
-					if (sg_enableKrkrPatchVerboseLog)
+					std::wstring rawName = name.c_str();
+				#if defined(_M_IX86)
+					if (EndsWithInsensitive(rawName, L".sig"))
 					{
-						LogMessage(LogLevel::Info, L"KrkrPluginBridge: intercept sig stream %s", rawName.c_str());
-					}
-					return tTJSBinaryStream::ApplyWrapVTable(new KrkrPatchSigStream());
-				}
-
-				std::wstring patchUrl;
-				std::wstring patchArc;
-				if (!TryBuildPatchUrl(name, flags, patchUrl, patchArc))
-				{
-					tTJSBinaryStream* patchStream = nullptr;
-					std::wstring patchSource;
-					if (TryBuildPatchMemoryStream(patchName, patchStream, patchSource))
-					{
-						LogMessage(LogLevel::Info, L"KrkrPluginBridge: memory redirect %s -> %s", rawName.c_str(), patchSource.c_str());
-						return patchStream;
-					}
-					return CompilerHelper::CallStaticFunc<tTJSBinaryStream*, TOriginalCreateStream, const ttstr&, tjs_uint32>(name, flags);
-				}
-
-				if (!patchArc.empty() && IsCustomPakArchiveSource(patchArc))
-				{
-					tTJSBinaryStream* patchStream = nullptr;
-					std::wstring patchSource;
-					if (TryBuildPatchMemoryStream(patchName, patchStream, patchSource))
-					{
-						LogMessage(LogLevel::Info, L"KrkrPluginBridge: custom pak memory redirect %s -> %s", rawName.c_str(), patchSource.c_str());
-						return patchStream;
-					}
-					std::wstring displayPath = FormatStoragePathForLog(patchUrl);
-					LogMessage(LogLevel::Warn, L"KrkrPluginBridge: custom pak redirect lost before stream build %s -> %s", rawName.c_str(), displayPath.c_str());
-					return CompilerHelper::CallStaticFunc<tTJSBinaryStream*, TOriginalCreateStream, const ttstr&, tjs_uint32>(name, flags);
-				}
-
-				TempTtstr patchUrlName(patchUrl);
-				tTJSBinaryStream* patchUrlStream = CompilerHelper::CallStaticFunc<tTJSBinaryStream*, TOriginalCreateStream, const ttstr&, tjs_uint32>(patchUrlName.Get(), flags);
-				if (!patchUrlStream)
-				{
-					std::wstring displayPath = FormatStoragePathForLog(patchUrl);
-					LogMessage(LogLevel::Warn, L"KrkrPluginBridge: original CreateStream returned null for redirect=%s", displayPath.c_str());
-					tTJSBinaryStream* patchStream = nullptr;
-					std::wstring patchSource;
-					if (TryBuildPatchMemoryStream(patchName, patchStream, patchSource))
-					{
-						LogMessage(LogLevel::Info, L"KrkrPluginBridge: memory fallback %s -> %s", rawName.c_str(), patchSource.c_str());
-						return patchStream;
-					}
-					return CompilerHelper::CallStaticFunc<tTJSBinaryStream*, TOriginalCreateStream, const ttstr&, tjs_uint32>(name, flags);
-				}
-
-				if (!patchArc.empty())
-				{
-					TArcStream* arcStream = reinterpret_cast<TArcStream*>(patchUrlStream);
-					if (!arcStream->CurSegment)
-					{
-						std::wstring displayPath = FormatStoragePathForLog(patchUrl);
-						LogMessage(LogLevel::Warn, L"KrkrPluginBridge: arc stream missing CurSegment redirect=%s", displayPath.c_str());
-						return patchUrlStream;
-					}
-
-					try
-					{
-						std::wstring displayPath = FormatStoragePathForLog(patchUrl);
 						if (sg_enableKrkrPatchVerboseLog)
 						{
-							LogMessage(LogLevel::Info, L"KrkrPluginBridge: wrap archive redirect=%s start=%llu size=%llu", displayPath.c_str(), (unsigned long long)arcStream->CurSegment->Start, (unsigned long long)arcStream->CurSegment->OrgSize);
+							LogMessage(LogLevel::Info, L"KrkrPluginBridge: intercept sig stream %s", rawName.c_str());
 						}
+						return tTJSBinaryStream::ApplyWrapVTable(new KrkrPatchSigStream());
+					}
+
+					const auto [patchUrl, patchArc] = PatchUrlGalPatchExact(name, flags);
+					ttstr patchUrlName(patchUrl.c_str());
+					tTJSBinaryStream* patchUrlStream = CompilerHelper::CallStaticFunc<tTJSBinaryStream*, TOriginalCreateStream, const ttstr&, tjs_uint32>(patchUrlName, flags);
+					if (!patchUrlStream)
+					{
+						return nullptr;
+					}
+
+					if (!patchArc.empty())
+					{
+						TArcStream* arcStream = reinterpret_cast<TArcStream*>(patchUrlStream);
 						return tTJSBinaryStream::ApplyWrapVTable(new KrkrPatchArcStream(patchArc, arcStream->CurSegment));
 					}
-					catch (const std::exception&)
+
+					return patchUrlStream;
+				#else
+					std::wstring patchName = PatchName(name);
+					std::wstring patchUrl;
+					std::wstring patchArc;
+					if (!TryBuildPatchUrl(name, flags, patchUrl, patchArc))
+					{
+						tTJSBinaryStream* patchStream = nullptr;
+						std::wstring patchSource;
+						if (TryBuildPatchMemoryStream(patchName, patchStream, patchSource))
+						{
+							LogMessage(LogLevel::Info, L"KrkrPluginBridge: memory redirect %s -> %s", rawName.c_str(), patchSource.c_str());
+							return patchStream;
+						}
+						return CompilerHelper::CallStaticFunc<tTJSBinaryStream*, TOriginalCreateStream, const ttstr&, tjs_uint32>(name, flags);
+					}
+
+					if (!patchArc.empty() && IsCustomPakArchiveSource(patchArc))
+					{
+						tTJSBinaryStream* patchStream = nullptr;
+						std::wstring patchSource;
+						if (TryBuildPatchMemoryStream(patchName, patchStream, patchSource))
+						{
+							LogMessage(LogLevel::Info, L"KrkrPluginBridge: custom pak memory redirect %s -> %s", rawName.c_str(), patchSource.c_str());
+							return patchStream;
+						}
+						std::wstring displayPath = FormatStoragePathForLog(patchUrl);
+						LogMessage(LogLevel::Warn, L"KrkrPluginBridge: custom pak redirect lost before stream build %s -> %s", rawName.c_str(), displayPath.c_str());
+						return CompilerHelper::CallStaticFunc<tTJSBinaryStream*, TOriginalCreateStream, const ttstr&, tjs_uint32>(name, flags);
+					}
+
+					ttstr patchUrlName(patchUrl.c_str());
+					tTJSBinaryStream* patchUrlStream = CompilerHelper::CallStaticFunc<tTJSBinaryStream*, TOriginalCreateStream, const ttstr&, tjs_uint32>(patchUrlName, flags);
+					if (!patchUrlStream)
 					{
 						std::wstring displayPath = FormatStoragePathForLog(patchUrl);
-						LogMessage(LogLevel::Warn, L"KrkrPluginBridge: KrkrPatchArcStream build failed redirect=%s, fallback original stream", displayPath.c_str());
-						return patchUrlStream;
+						LogMessage(LogLevel::Warn, L"KrkrPluginBridge: original CreateStream returned null for redirect=%s", displayPath.c_str());
+						tTJSBinaryStream* patchStream = nullptr;
+						std::wstring patchSource;
+						if (TryBuildPatchMemoryStream(patchName, patchStream, patchSource))
+						{
+							LogMessage(LogLevel::Info, L"KrkrPluginBridge: memory fallback %s -> %s", rawName.c_str(), patchSource.c_str());
+							return patchStream;
+						}
+						return CompilerHelper::CallStaticFunc<tTJSBinaryStream*, TOriginalCreateStream, const ttstr&, tjs_uint32>(name, flags);
 					}
-				}
 
-				if (sg_enableKrkrPatchVerboseLog)
-				{
-					LogMessage(LogLevel::Info, L"KrkrPluginBridge: use redirected stream=%s", patchUrl.c_str());
+					if (!patchArc.empty())
+					{
+						TArcStream* arcStream = reinterpret_cast<TArcStream*>(patchUrlStream);
+						if (!arcStream->CurSegment)
+						{
+							std::wstring displayPath = FormatStoragePathForLog(patchUrl);
+							LogMessage(LogLevel::Warn, L"KrkrPluginBridge: arc stream missing CurSegment redirect=%s", displayPath.c_str());
+							return patchUrlStream;
+						}
+
+						try
+						{
+							std::wstring displayPath = FormatStoragePathForLog(patchUrl);
+							if (sg_enableKrkrPatchVerboseLog)
+							{
+								LogMessage(LogLevel::Info, L"KrkrPluginBridge: wrap archive redirect=%s start=%llu size=%llu", displayPath.c_str(), (unsigned long long)arcStream->CurSegment->Start, (unsigned long long)arcStream->CurSegment->OrgSize);
+							}
+							return tTJSBinaryStream::ApplyWrapVTable(new KrkrPatchArcStream(patchArc, arcStream->CurSegment));
+						}
+						catch (const std::exception&)
+						{
+							std::wstring displayPath = FormatStoragePathForLog(patchUrl);
+							LogMessage(LogLevel::Warn, L"KrkrPluginBridge: KrkrPatchArcStream build failed redirect=%s, fallback original stream", displayPath.c_str());
+							return patchUrlStream;
+						}
+					}
+
+					if (sg_enableKrkrPatchVerboseLog)
+					{
+						LogMessage(LogLevel::Info, L"KrkrPluginBridge: use redirected stream=%s", patchUrl.c_str());
+					}
+					return patchUrlStream;
+				#endif
 				}
-				return patchUrlStream;
+				catch (const std::exception&)
+				{
+					return CompilerHelper::CallStaticFunc<tTJSBinaryStream*, TOriginalCreateStream, const ttstr&, tjs_uint32>(name, flags);
+				}
 			}
 
 #if defined(_M_IX86)
@@ -837,41 +1245,63 @@ namespace CialloHook
 			}
 
 #if !defined(_M_IX86)
-			static tTJSBinaryStream* PatchCreateStreamByIndexMsvc(tTVPXP3Archive<CompilerType::Msvc>* pArchive, tjs_uint idx)
+			struct CreateStreamByIndexContext
 			{
-				if (!pArchive || !sg_enableKrkrPatch || !sg_rawCreateStreamByIndexMsvc)
+				tTVPXP3Archive<CompilerType::Msvc>* archive;
+				tjs_uint index;
+				tTJSBinaryStream* result;
+				bool handled;
+			};
+
+			static bool InvokeSehGuardedCallback(bool (*callback)(void*), void* context)
+			{
+				__try
 				{
-					return sg_rawCreateStreamByIndexMsvc ? sg_rawCreateStreamByIndexMsvc(pArchive, idx) : nullptr;
+					return callback != nullptr && callback(context);
+				}
+				__except (EXCEPTION_EXECUTE_HANDLER)
+				{
+					return false;
+				}
+			}
+
+			static bool ExecutePatchCreateStreamByIndex(void* rawContext)
+			{
+				CreateStreamByIndexContext* context = reinterpret_cast<CreateStreamByIndexContext*>(rawContext);
+				if (!context || !context->archive || !sg_enableKrkrPatch || !sg_rawCreateStreamByIndexMsvc)
+				{
+					return false;
 				}
 
+				auto* pArchive = context->archive;
 				const std::wstring archiveName = pArchive->Name.c_str();
 				if (!StartsWithInsensitive(archiveName, L"file://"))
 				{
-					return sg_rawCreateStreamByIndexMsvc(pArchive, idx);
+					return false;
 				}
-				if (pArchive->Count <= 0 || idx >= static_cast<tjs_uint>(pArchive->Count))
+				if (pArchive->Count <= 0 || context->index >= static_cast<tjs_uint>(pArchive->Count))
 				{
-					return sg_rawCreateStreamByIndexMsvc(pArchive, idx);
+					return false;
 				}
 
 				auto* itemBegin = pArchive->ItemVector.begin();
 				auto* itemEnd = pArchive->ItemVector.end();
 				if (!itemBegin || !itemEnd || itemEnd <= itemBegin)
 				{
-					return sg_rawCreateStreamByIndexMsvc(pArchive, idx);
+					return false;
 				}
 
 				size_t itemBytes = reinterpret_cast<const BYTE*>(itemEnd) - reinterpret_cast<const BYTE*>(itemBegin);
 				if (itemBytes == 0 || (itemBytes % static_cast<size_t>(pArchive->Count)) != 0)
 				{
-					return sg_rawCreateStreamByIndexMsvc(pArchive, idx);
+					return false;
 				}
 
 				size_t itemSize = itemBytes / static_cast<size_t>(pArchive->Count);
-				auto* pItem = reinterpret_cast<tTVPXP3Archive<CompilerType::Msvc>::tArchiveItem*>(reinterpret_cast<BYTE*>(itemBegin) + static_cast<size_t>(idx) * itemSize);
+				auto* pItem = reinterpret_cast<tTVPXP3Archive<CompilerType::Msvc>::tArchiveItem*>(reinterpret_cast<BYTE*>(itemBegin) + static_cast<size_t>(context->index) * itemSize);
 				if (!pItem || pItem->FileHash != 0)
 				{
-					return sg_rawCreateStreamByIndexMsvc(pArchive, idx);
+					return false;
 				}
 
 				std::wstring patchName = PatchName(pItem->Name);
@@ -879,11 +1309,32 @@ namespace CialloHook
 				std::wstring patchSource;
 				if (!TryBuildPatchMemoryStream(patchName, patchStream, patchSource))
 				{
-					return sg_rawCreateStreamByIndexMsvc(pArchive, idx);
+					return false;
 				}
 
 				LogMessage(LogLevel::Info, L"KrkrPluginBridge: x64 CreateStreamByIndex redirect archive=%s item=%s source=%s", archiveName.c_str(), pItem->Name.c_str(), patchSource.c_str());
-				return patchStream;
+				context->result = patchStream;
+				context->handled = true;
+				return true;
+			}
+
+			static tTJSBinaryStream* PatchCreateStreamByIndexMsvc(tTVPXP3Archive<CompilerType::Msvc>* pArchive, tjs_uint idx)
+			{
+				if (!pArchive || !sg_enableKrkrPatch || !sg_rawCreateStreamByIndexMsvc)
+				{
+					return sg_rawCreateStreamByIndexMsvc ? sg_rawCreateStreamByIndexMsvc(pArchive, idx) : nullptr;
+				}
+				CreateStreamByIndexContext context = { pArchive, idx, nullptr, false };
+				if (!InvokeSehGuardedCallback(ExecutePatchCreateStreamByIndex, &context))
+				{
+					LogMessage(LogLevel::Warn, L"KrkrPluginBridge: x64 CreateStreamByIndex access raised SEH, fallback to original");
+					return sg_rawCreateStreamByIndexMsvc(pArchive, idx);
+				}
+				if (context.handled && context.result)
+				{
+					return context.result;
+				}
+				return sg_rawCreateStreamByIndexMsvc(pArchive, idx);
 			}
 #endif
 
@@ -1099,12 +1550,61 @@ namespace CialloHook
 #endif
 			}
 
+		#if defined(_M_IX86)
+			static void InstallCreateStreamHook()
+			{
+				if (sg_createStreamHooked)
+				{
+					return;
+				}
+
+				switch (CompilerHelper::CompilerType)
+				{
+				case CompilerType::Borland:
+				{
+					static constexpr auto kPatternCreateStreamBorland = "\x55\x8B\xEC\x81\xC4\x60\xFF\xFF\xFF\x53\x56\x57\x89\x95\x6C\xFF\xFF\xFF\x89\x85\x70\xFF\xFF\xFF\xB8\x2A\x2A\x2A\x2A\xC7\x85\x7C\xFF\xFF\xFF\x2A\x2A\x2A\x2A\x89\x65\x80\x89\x85\x78\xFF\xFF\xFF\x66\xC7\x45\x84\x2A\x2A\x33\xD2\x89\x55\x90\x64\x8B\x0D\x2A\x2A\x2A\x2A\x89\x8D\x74\xFF\xFF\xFF\x8D\x85\x74\xFF\xFF\xFF\x64\xA3\x2A\x2A\x2A\x2A\x66\xC7\x45\x84\x08\x2A\x8B\x95\x6C\xFF\xFF\xFF\x8B\x85\x70\xFF\xFF\xFF\xE8\x2A\x2A\x2A\x2A\x8B\x95\x74\xFF\xFF\xFF\x64\x89\x15\x2A\x2A\x2A\x2A\xE9\x2A\x06\x2A\x2A";
+					sg_rawCreateStreamBorland = reinterpret_cast<pCreateStreamBorland>(Pe::FindData(kPatternCreateStreamBorland, strlen(kPatternCreateStreamBorland)));
+					if (sg_rawCreateStreamBorland)
+					{
+						const bool failed = !TryDetourAttach(&sg_rawCreateStreamBorland, CompilerHelper::WrapAsStaticFunc<tTJSBinaryStream*, PatchCreateStreamBorland, const ttstr&, tjs_uint32>());
+						sg_createStreamHooked = !failed;
+						LogMessage(sg_createStreamHooked ? LogLevel::Info : LogLevel::Warn, L"KrkrPluginBridge: borland CreateStream pattern/hook=%s", sg_createStreamHooked ? L"ok" : L"failed");
+					}
+					else
+					{
+						LogMessage(LogLevel::Warn, L"KrkrPluginBridge: borland CreateStream pattern not found");
+					}
+					break;
+				}
+				case CompilerType::Msvc:
+				{
+					sg_rawCreateStreamMsvc = ResolveCreateStreamMsvc();
+					if (sg_rawCreateStreamMsvc)
+					{
+						const bool failed = !TryDetourAttach(&sg_rawCreateStreamMsvc, PatchCreateStreamMsvc);
+						sg_createStreamHooked = !failed;
+						LogMessage(sg_createStreamHooked ? LogLevel::Info : LogLevel::Warn, L"KrkrPluginBridge: msvc CreateStream pattern/hook=%s", sg_createStreamHooked ? L"ok" : L"failed");
+					}
+					else
+					{
+						LogMessage(LogLevel::Warn, L"KrkrPluginBridge: msvc CreateStream target not found");
+					}
+					break;
+				}
+				default:
+					break;
+				}
+
+				LogMessage(sg_createStreamHooked ? LogLevel::Info : LogLevel::Warn, L"KrkrPluginBridge: create stream hook=%s", sg_createStreamHooked ? L"ok" : L"failed");
+			}
+		#endif
+
 			static void EnsureHooksInstalled()
 			{
 				TryApplyKrkrBootstrapBypass();
 				ScopedDetourErrorDialogSuppression suppressDetourErrorDialog;
 #if defined(_M_IX86)
-				if (sg_createStreamHooked)
+				if (sg_loadLibraryHooked)
 #else
 				if (sg_createStreamHooked && sg_createStreamByIndexHooked)
 #endif
@@ -1119,21 +1619,12 @@ namespace CialloHook
 				}
 
 #if defined(_M_IX86)
-				if (!sg_signVerifyHooked)
+				EnsureKrkrEntryHooksInstalled();
+				if (sg_enableKrkrPatchVerboseLog)
 				{
-					static constexpr auto kPatternSignVerifyMsvc = "\x57\x8B\xF9\x8B\x8F\x80\x2A\x2A\x2A\x85\xC9\x75\x2A\x68\x2A\x2A\x2A\x2A\x8B\xCF\xE8\x2A\x2A\x2A\x2A\x5F\xC3";
-					sg_rawSignVerifyMsvc = reinterpret_cast<pPatchSignVerifyMsvc>(Pe::FindData(GetModuleHandleW(nullptr), kPatternSignVerifyMsvc, strlen(kPatternSignVerifyMsvc)));
-					if (sg_rawSignVerifyMsvc)
-					{
-						bool failed = !TryDetourAttach(&sg_rawSignVerifyMsvc, PatchSignVerifyMsvc);
-						sg_signVerifyHooked = !failed;
-						LogMessage(sg_signVerifyHooked ? LogLevel::Info : LogLevel::Warn, L"KrkrPluginBridge: sign verify hook=%s", sg_signVerifyHooked ? L"ok" : L"failed");
-					}
-					else
-					{
-						LogMessage(LogLevel::Warn, L"KrkrPluginBridge: sign verify pattern not found");
-					}
+					LogMessage(LogLevel::Info, L"KrkrPluginBridge: waiting for V2Link import stub before CreateStream hook");
 				}
+				return;
 #else
 				if (!sg_signVerifyHooked)
 				{

@@ -806,6 +806,12 @@ namespace CialloHook
 				logHookAttach(L"HookEnumFontFamiliesW", HookEnumFontFamiliesW(settings.unlockFontSelection));
 			}
 
+			if (settings.unlockFontSelection)
+			{
+				HookChooseFontA();
+				HookChooseFontW();
+			}
+
 			if (settings.hookCreateFontIndirectExA)
 			{
 				HookCreateFontIndirectExA();

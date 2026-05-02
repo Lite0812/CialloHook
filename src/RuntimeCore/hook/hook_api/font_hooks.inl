@@ -738,24 +738,34 @@
 		{
 			pFONTENUMPROCA callback = nullptr;
 			LPARAM originalLParam = 0;
-			std::unordered_map<std::wstring, bool> seenFaceNames;
+			std::unordered_set<std::string> seenFaceNames;
+
+			EnumFontDedupContextA()
+			{
+				seenFaceNames.reserve(256);
+			}
 		};
 		struct EnumFontDedupContextW
 		{
 			pFONTENUMPROCW callback = nullptr;
 			LPARAM originalLParam = 0;
-			std::unordered_map<std::wstring, bool> seenFaceNames;
+			std::unordered_set<std::wstring> seenFaceNames;
+
+			EnumFontDedupContextW()
+			{
+				seenFaceNames.reserve(256);
+			}
 		};
-		static std::wstring NormalizeEnumFaceNameA(const LOGFONTA* lpelfe)
+		static std::string NormalizeEnumFaceNameA(const LOGFONTA* lpelfe)
 		{
 			if (!lpelfe || lpelfe->lfFaceName[0] == '\0')
 			{
-				return L"";
+				return {};
 			}
-			std::wstring faceName = AnsiToWide(lpelfe->lfFaceName);
+			std::string faceName(lpelfe->lfFaceName);
 			if (!faceName.empty())
 			{
-				CharUpperBuffW(&faceName[0], (DWORD)faceName.size());
+				CharUpperBuffA(&faceName[0], (DWORD)faceName.size());
 			}
 			return faceName;
 		}
@@ -776,14 +786,10 @@
 			{
 				return 1;
 			}
-			std::wstring faceName = NormalizeEnumFaceNameA(lpelfe);
-			if (!faceName.empty())
+			std::string faceName = NormalizeEnumFaceNameA(lpelfe);
+			if (!faceName.empty() && !context->seenFaceNames.insert(std::move(faceName)).second)
 			{
-				if (context->seenFaceNames.find(faceName) != context->seenFaceNames.end())
-				{
-					return 1;
-				}
-				context->seenFaceNames.emplace(std::move(faceName), true);
+				return 1;
 			}
 			return context->callback(lpelfe, lpntme, fontType, context->originalLParam);
 		}
@@ -795,13 +801,9 @@
 				return 1;
 			}
 			std::wstring faceName = NormalizeEnumFaceNameW(lpelfe);
-			if (!faceName.empty())
+			if (!faceName.empty() && !context->seenFaceNames.insert(std::move(faceName)).second)
 			{
-				if (context->seenFaceNames.find(faceName) != context->seenFaceNames.end())
-				{
-					return 1;
-				}
-				context->seenFaceNames.emplace(std::move(faceName), true);
+				return 1;
 			}
 			return context->callback(lpelfe, lpntme, fontType, context->originalLParam);
 		}
@@ -817,10 +819,6 @@
 			{
 				target.lfCharSet = DEFAULT_CHARSET;
 				target.lfFaceName[0] = '\0';
-			}
-			else
-			{
-				ApplyOverrideToLogFontA(target, false);
 			}
 			if (sg_unlockFontSelection && lpProc)
 			{
@@ -843,10 +841,6 @@
 			{
 				target.lfCharSet = DEFAULT_CHARSET;
 				target.lfFaceName[0] = L'\0';
-			}
-			else
-			{
-				ApplyOverrideToLogFontW(target, false);
 			}
 			if (sg_unlockFontSelection && lpProc)
 			{
@@ -1113,6 +1107,8 @@
 		static pEnumFontsW rawEnumFontsW = EnumFontsW;
 		static pEnumFontFamiliesA rawEnumFontFamiliesA = EnumFontFamiliesA;
 		static pEnumFontFamiliesW rawEnumFontFamiliesW = EnumFontFamiliesW;
+		static pChooseFontA rawChooseFontA = nullptr;
+		static pChooseFontW rawChooseFontW = nullptr;
 		static pGetCharWidthFloatA rawGetCharWidthFloatA = GetCharWidthFloatA;
 		static pGetCharWidthFloatW rawGetCharWidthFloatW = GetCharWidthFloatW;
 		static pGetCharWidthI rawGetCharWidthI = GetCharWidthI;
@@ -1152,6 +1148,8 @@
 		static bool sg_hookedLoadLibraryW = false;
 		static bool sg_hookedLoadLibraryExW = false;
 		static bool sg_hookedDWriteCreateTextFormat = false;
+		static bool sg_hookedChooseFontA = false;
+		static bool sg_hookedChooseFontW = false;
 
 		int WINAPI newGetObjectA(HANDLE h, int c, LPVOID pv)
 		{
@@ -1568,19 +1566,7 @@
 
 		int WINAPI newEnumFontsA(HDC hdc, LPCSTR lpFaceName, FONTENUMPROCA lpProc, LPARAM lParam)
 		{
-			HFONT hOld = nullptr;
-			HFONT hNew = ReplaceHdcFont(hdc, &hOld);
-			LPCSTR useFaceName = lpFaceName;
-			bool skipOverride = false;
-			std::string forcedName = GetForcedFontNameAForRequest(lpFaceName, skipOverride);
-			if (sg_unlockFontSelection)
-			{
-				useFaceName = nullptr;
-			}
-			else if (!forcedName.empty())
-			{
-				useFaceName = forcedName.c_str();
-			}
+			LPCSTR useFaceName = sg_unlockFontSelection ? nullptr : lpFaceName;
 			int ret = 0;
 			if (sg_unlockFontSelection && lpProc)
 			{
@@ -1593,25 +1579,12 @@
 			{
 				ret = rawEnumFontsA(hdc, useFaceName, lpProc, lParam);
 			}
-			RestoreHdcFont(hdc, hOld, hNew);
 			return ret;
 		}
 
 		int WINAPI newEnumFontsW(HDC hdc, LPCWSTR lpFaceName, FONTENUMPROCW lpProc, LPARAM lParam)
 		{
-			HFONT hOld = nullptr;
-			HFONT hNew = ReplaceHdcFont(hdc, &hOld);
-			LPCWSTR useFaceName = lpFaceName;
-			bool skipOverride = false;
-			if (sg_unlockFontSelection)
-			{
-				useFaceName = nullptr;
-			}
-			wchar_t forcedFaceName[LF_FACESIZE] = {};
-			if (!sg_unlockFontSelection && TryGetForcedFontNameWForRequest(lpFaceName, forcedFaceName, skipOverride))
-			{
-				useFaceName = forcedFaceName;
-			}
+			LPCWSTR useFaceName = sg_unlockFontSelection ? nullptr : lpFaceName;
 			int ret = 0;
 			if (sg_unlockFontSelection && lpProc)
 			{
@@ -1624,25 +1597,12 @@
 			{
 				ret = rawEnumFontsW(hdc, useFaceName, lpProc, lParam);
 			}
-			RestoreHdcFont(hdc, hOld, hNew);
 			return ret;
 		}
 
 		int WINAPI newEnumFontFamiliesA(HDC hdc, LPCSTR lpFaceName, FONTENUMPROCA lpProc, LPARAM lParam)
 		{
-			HFONT hOld = nullptr;
-			HFONT hNew = ReplaceHdcFont(hdc, &hOld);
-			LPCSTR useFaceName = lpFaceName;
-			bool skipOverride = false;
-			std::string forcedName = GetForcedFontNameAForRequest(lpFaceName, skipOverride);
-			if (sg_unlockFontSelection)
-			{
-				useFaceName = nullptr;
-			}
-			else if (!forcedName.empty())
-			{
-				useFaceName = forcedName.c_str();
-			}
+			LPCSTR useFaceName = sg_unlockFontSelection ? nullptr : lpFaceName;
 			int ret = 0;
 			if (sg_unlockFontSelection && lpProc)
 			{
@@ -1655,25 +1615,12 @@
 			{
 				ret = rawEnumFontFamiliesA(hdc, useFaceName, lpProc, lParam);
 			}
-			RestoreHdcFont(hdc, hOld, hNew);
 			return ret;
 		}
 
 		int WINAPI newEnumFontFamiliesW(HDC hdc, LPCWSTR lpFaceName, FONTENUMPROCW lpProc, LPARAM lParam)
 		{
-			HFONT hOld = nullptr;
-			HFONT hNew = ReplaceHdcFont(hdc, &hOld);
-			LPCWSTR useFaceName = lpFaceName;
-			bool skipOverride = false;
-			if (sg_unlockFontSelection)
-			{
-				useFaceName = nullptr;
-			}
-			wchar_t forcedFaceName[LF_FACESIZE] = {};
-			if (!sg_unlockFontSelection && TryGetForcedFontNameWForRequest(lpFaceName, forcedFaceName, skipOverride))
-			{
-				useFaceName = forcedFaceName;
-			}
+			LPCWSTR useFaceName = sg_unlockFontSelection ? nullptr : lpFaceName;
 			int ret = 0;
 			if (sg_unlockFontSelection && lpProc)
 			{
@@ -1686,7 +1633,64 @@
 			{
 				ret = rawEnumFontFamiliesW(hdc, useFaceName, lpProc, lParam);
 			}
-			RestoreHdcFont(hdc, hOld, hNew);
+			return ret;
+		}
+
+		BOOL WINAPI newChooseFontA(LPCHOOSEFONTA lpcf)
+		{
+			if (!rawChooseFontA || !lpcf || !sg_unlockFontSelection)
+			{
+				return rawChooseFontA ? rawChooseFontA(lpcf) : FALSE;
+			}
+
+			CHOOSEFONTA local = *lpcf;
+			LOGFONTA localLogFont = {};
+			LPLOGFONTA originalLogFont = local.lpLogFont;
+			if (originalLogFont)
+			{
+				localLogFont = *originalLogFont;
+				localLogFont.lfCharSet = DEFAULT_CHARSET;
+				localLogFont.lfFaceName[0] = '\0';
+				local.lpLogFont = &localLogFont;
+			}
+			local.Flags &= ~(CF_SELECTSCRIPT | CF_SCRIPTSONLY);
+
+			BOOL ret = rawChooseFontA(&local);
+			if (originalLogFont)
+			{
+				*originalLogFont = localLogFont;
+			}
+			local.lpLogFont = originalLogFont;
+			*lpcf = local;
+			return ret;
+		}
+
+		BOOL WINAPI newChooseFontW(LPCHOOSEFONTW lpcf)
+		{
+			if (!rawChooseFontW || !lpcf || !sg_unlockFontSelection)
+			{
+				return rawChooseFontW ? rawChooseFontW(lpcf) : FALSE;
+			}
+
+			CHOOSEFONTW local = *lpcf;
+			LOGFONTW localLogFont = {};
+			LPLOGFONTW originalLogFont = local.lpLogFont;
+			if (originalLogFont)
+			{
+				localLogFont = *originalLogFont;
+				localLogFont.lfCharSet = DEFAULT_CHARSET;
+				localLogFont.lfFaceName[0] = L'\0';
+				local.lpLogFont = &localLogFont;
+			}
+			local.Flags &= ~(CF_SELECTSCRIPT | CF_SCRIPTSONLY);
+
+			BOOL ret = rawChooseFontW(&local);
+			if (originalLogFont)
+			{
+				*originalLogFont = localLogFont;
+			}
+			local.lpLogFont = originalLogFont;
+			*lpcf = local;
 			return ret;
 		}
 
@@ -1984,77 +1988,145 @@
 			}
 		}
 
+		static bool AreGdipBuffersEqual(const wchar_t* source, int sourceLength, const std::wstring& mapped)
+		{
+			return source != nullptr
+				&& sourceLength > 0
+				&& mapped.size() == static_cast<size_t>(sourceLength)
+				&& wmemcmp(source, mapped.c_str(), static_cast<size_t>(sourceLength)) == 0;
+		}
+
+		struct GdipMappedTextContext
+		{
+			const wchar_t* apiName;
+			const wchar_t* source;
+			int length;
+			bool driverText;
+			std::wstring* mapped;
+			int sourceLength;
+			bool changed;
+		};
+
+		static bool ExecutePrepareMappedGdipText(void* rawContext)
+		{
+			GdipMappedTextContext* context = reinterpret_cast<GdipMappedTextContext*>(rawContext);
+			if (!context || !context->source || !context->mapped)
+			{
+				return false;
+			}
+
+			context->sourceLength = context->length < 0 ? (int)wcslen(context->source) : context->length;
+			if (context->sourceLength <= 0)
+			{
+				context->changed = false;
+				return true;
+			}
+
+			*context->mapped = context->driverText
+				? PrepareGdipGlyphStageDriverText(reinterpret_cast<const UINT16*>(context->source), context->length)
+				: PrepareGdipGlyphStageText(context->source, context->length);
+			LogGdipGlyphStageDecision(context->apiName, context->source, context->sourceLength, *context->mapped);
+			context->changed = !context->mapped->empty() && !AreGdipBuffersEqual(context->source, context->sourceLength, *context->mapped);
+			return true;
+		}
+
+		static bool InvokeSehGuardedBool(bool (*callback)(void*), void* context)
+		{
+			__try
+			{
+				return callback != nullptr && callback(context);
+			}
+			__except (EXCEPTION_EXECUTE_HANDLER)
+			{
+				return false;
+			}
+		}
+
+		static bool TryPrepareMappedGdipText(const wchar_t* apiName, const wchar_t* source, int length, bool driverText, std::wstring& mapped, int& sourceLength)
+		{
+			mapped.clear();
+			sourceLength = 0;
+			if (!IsCnJpMapEnabled() || !source)
+			{
+				return false;
+			}
+
+			GdipMappedTextContext context =
+			{
+				apiName,
+				source,
+				length,
+				driverText,
+				&mapped,
+				0,
+				false,
+			};
+
+			if (!InvokeSehGuardedBool(ExecutePrepareMappedGdipText, &context))
+			{
+				LogMessage(LogLevel::Warn,
+					L"GDI+Glyph(%s): mapping path raised SEH, fallback to raw call",
+					apiName ? apiName : L"(unknown)");
+				mapped.clear();
+				sourceLength = 0;
+				return false;
+			}
+
+			sourceLength = context.sourceLength;
+			return context.changed;
+		}
+
 		int WINAPI newGdipDrawString(void* graphics, const WCHAR* string, int length, const void* font, const void* layoutRect, const void* stringFormat, const void* brush)
 		{
-			if (IsCnJpMapEnabled())
+			std::wstring mapped;
+			int sourceLength = 0;
+			if (TryPrepareMappedGdipText(L"GdipDrawString", string, length, false, mapped, sourceLength))
 			{
-				std::wstring mapped = PrepareGdipGlyphStageText(string, length);
-				int sourceLength = length < 0 ? (string ? (int)wcslen(string) : 0) : length;
-				LogGdipGlyphStageDecision(L"GdipDrawString", string, sourceLength, mapped);
-				if (sourceLength > 0 && !mapped.empty() && mapped != std::wstring(string, sourceLength))
-				{
-					return rawGdipDrawString(graphics, mapped.c_str(), (int)mapped.length(), font, layoutRect, stringFormat, brush);
-				}
+				return rawGdipDrawString(graphics, mapped.c_str(), (int)mapped.length(), font, layoutRect, stringFormat, brush);
 			}
 			return rawGdipDrawString(graphics, string, length, font, layoutRect, stringFormat, brush);
 		}
 
 		int WINAPI newGdipDrawDriverString(void* graphics, const UINT16* text, int length, const void* font, const void* brush, const void* positions, int flags, const void* matrix)
 		{
-			if (IsCnJpMapEnabled())
+			std::wstring mapped;
+			int sourceLength = 0;
+			if (TryPrepareMappedGdipText(L"GdipDrawDriverString", reinterpret_cast<const wchar_t*>(text), length, true, mapped, sourceLength))
 			{
-				std::wstring mapped = PrepareGdipGlyphStageDriverText(text, length);
-				int sourceLength = length < 0 ? (text ? (int)wcslen(reinterpret_cast<const wchar_t*>(text)) : 0) : length;
-				LogGdipGlyphStageDecision(L"GdipDrawDriverString", reinterpret_cast<const wchar_t*>(text), sourceLength, mapped);
-				if (sourceLength > 0 && !mapped.empty() && mapped != std::wstring(reinterpret_cast<const wchar_t*>(text), sourceLength))
-				{
-					return rawGdipDrawDriverString(graphics, reinterpret_cast<const UINT16*>(mapped.c_str()), (int)mapped.length(), font, brush, positions, flags, matrix);
-				}
+				return rawGdipDrawDriverString(graphics, reinterpret_cast<const UINT16*>(mapped.c_str()), (int)mapped.length(), font, brush, positions, flags, matrix);
 			}
 			return rawGdipDrawDriverString(graphics, text, length, font, brush, positions, flags, matrix);
 		}
 
 		int WINAPI newGdipMeasureString(void* graphics, const WCHAR* string, INT length, const void* font, const void* layoutRect, const void* stringFormat, void* boundingBox, INT* codepointsFitted, INT* linesFilled)
 		{
-			if (IsCnJpMapEnabled())
+			std::wstring mapped;
+			int sourceLength = 0;
+			if (TryPrepareMappedGdipText(L"GdipMeasureString", string, length, false, mapped, sourceLength))
 			{
-				std::wstring mapped = PrepareGdipGlyphStageText(string, length);
-				int sourceLength = length < 0 ? (string ? (int)wcslen(string) : 0) : length;
-				LogGdipGlyphStageDecision(L"GdipMeasureString", string, sourceLength, mapped);
-				if (sourceLength > 0 && !mapped.empty() && mapped != std::wstring(string, sourceLength))
-				{
-					return rawGdipMeasureString(graphics, mapped.c_str(), (INT)mapped.length(), font, layoutRect, stringFormat, boundingBox, codepointsFitted, linesFilled);
-				}
+				return rawGdipMeasureString(graphics, mapped.c_str(), (INT)mapped.length(), font, layoutRect, stringFormat, boundingBox, codepointsFitted, linesFilled);
 			}
 			return rawGdipMeasureString(graphics, string, length, font, layoutRect, stringFormat, boundingBox, codepointsFitted, linesFilled);
 		}
 
 		int WINAPI newGdipMeasureCharacterRanges(void* graphics, const WCHAR* string, INT length, const void* font, const void* layoutRect, const void* stringFormat, INT regionCount, void** regions)
 		{
-			if (IsCnJpMapEnabled())
+			std::wstring mapped;
+			int sourceLength = 0;
+			if (TryPrepareMappedGdipText(L"GdipMeasureCharacterRanges", string, length, false, mapped, sourceLength))
 			{
-				std::wstring mapped = PrepareGdipGlyphStageText(string, length);
-				int sourceLength = length < 0 ? (string ? (int)wcslen(string) : 0) : length;
-				LogGdipGlyphStageDecision(L"GdipMeasureCharacterRanges", string, sourceLength, mapped);
-				if (sourceLength > 0 && !mapped.empty() && mapped != std::wstring(string, sourceLength))
-				{
-					return rawGdipMeasureCharacterRanges(graphics, mapped.c_str(), (INT)mapped.length(), font, layoutRect, stringFormat, regionCount, regions);
-				}
+				return rawGdipMeasureCharacterRanges(graphics, mapped.c_str(), (INT)mapped.length(), font, layoutRect, stringFormat, regionCount, regions);
 			}
 			return rawGdipMeasureCharacterRanges(graphics, string, length, font, layoutRect, stringFormat, regionCount, regions);
 		}
 
 		int WINAPI newGdipMeasureDriverString(void* graphics, const UINT16* text, INT length, const void* font, const void* positions, INT flags, const void* matrix, void* boundingBox)
 		{
-			if (IsCnJpMapEnabled())
+			std::wstring mapped;
+			int sourceLength = 0;
+			if (TryPrepareMappedGdipText(L"GdipMeasureDriverString", reinterpret_cast<const wchar_t*>(text), length, true, mapped, sourceLength))
 			{
-				std::wstring mapped = PrepareGdipGlyphStageDriverText(text, length);
-				int sourceLength = length < 0 ? (text ? (int)wcslen(reinterpret_cast<const wchar_t*>(text)) : 0) : length;
-				LogGdipGlyphStageDecision(L"GdipMeasureDriverString", reinterpret_cast<const wchar_t*>(text), sourceLength, mapped);
-				if (sourceLength > 0 && !mapped.empty() && mapped != std::wstring(reinterpret_cast<const wchar_t*>(text), sourceLength))
-				{
-					return rawGdipMeasureDriverString(graphics, reinterpret_cast<const UINT16*>(mapped.c_str()), (INT)mapped.length(), font, positions, flags, matrix, boundingBox);
-				}
+				return rawGdipMeasureDriverString(graphics, reinterpret_cast<const UINT16*>(mapped.c_str()), (INT)mapped.length(), font, positions, flags, matrix, boundingBox);
 			}
 			return rawGdipMeasureDriverString(graphics, text, length, font, positions, flags, matrix, boundingBox);
 		}
@@ -2067,7 +2139,8 @@
 			}
 			const bool shouldHookDWrite = wcsstr(moduleName, L"dwrite") || wcsstr(moduleName, L"DWRITE");
 			const bool shouldHookGdiplus = wcsstr(moduleName, L"gdiplus") || wcsstr(moduleName, L"GDIPLUS");
-			if (!shouldHookDWrite && !shouldHookGdiplus)
+			const bool shouldHookComdlg = sg_unlockFontSelection && (wcsstr(moduleName, L"comdlg32") || wcsstr(moduleName, L"COMDLG32"));
+			if (!shouldHookDWrite && !shouldHookGdiplus && !shouldHookComdlg)
 			{
 				return;
 			}
@@ -2092,6 +2165,11 @@
 				HookGdipMeasureString();
 				HookGdipMeasureCharacterRanges();
 				HookGdipMeasureDriverString();
+			}
+			if (shouldHookComdlg)
+			{
+				HookChooseFontA();
+				HookChooseFontW();
 			}
 
 			if (detourBatchStarted && !EndDetourBatch(L"Late-loaded font detour batch"))
@@ -2282,6 +2360,48 @@
 		{
 			sg_unlockFontSelection = unlockSelection;
 			return !TryDetourAttach(&rawEnumFontFamiliesW, newEnumFontFamiliesW);
+		}
+
+		bool HookChooseFontA()
+		{
+			if (sg_hookedChooseFontA)
+			{
+				return false;
+			}
+			HMODULE hComdlg = GetModuleHandleW(L"comdlg32.dll");
+			if (!hComdlg)
+			{
+				return false;
+			}
+			rawChooseFontA = (pChooseFontA)GetProcAddress(hComdlg, "ChooseFontA");
+			if (!rawChooseFontA)
+			{
+				return false;
+			}
+			bool failed = !TryDetourAttach(&rawChooseFontA, newChooseFontA);
+			sg_hookedChooseFontA = !failed;
+			return failed;
+		}
+
+		bool HookChooseFontW()
+		{
+			if (sg_hookedChooseFontW)
+			{
+				return false;
+			}
+			HMODULE hComdlg = GetModuleHandleW(L"comdlg32.dll");
+			if (!hComdlg)
+			{
+				return false;
+			}
+			rawChooseFontW = (pChooseFontW)GetProcAddress(hComdlg, "ChooseFontW");
+			if (!rawChooseFontW)
+			{
+				return false;
+			}
+			bool failed = !TryDetourAttach(&rawChooseFontW, newChooseFontW);
+			sg_hookedChooseFontW = !failed;
+			return failed;
 		}
 
 		bool HookGetCharWidthFloatA()

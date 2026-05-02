@@ -74,6 +74,8 @@ namespace Rut
 		bool HookEnumFontsW(bool unlockSelection);
 		bool HookEnumFontFamiliesA(bool unlockSelection);
 		bool HookEnumFontFamiliesW(bool unlockSelection);
+		bool HookChooseFontA();
+		bool HookChooseFontW();
 		bool HookGetCharWidthFloatA();
 		bool HookGetCharWidthFloatW();
 		bool HookGetCharWidthI();

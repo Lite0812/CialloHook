@@ -4,6 +4,7 @@
 #include <cstdarg>
 #include <string>
 
+#include "../../RuntimeCore/hook/Hook.h"
 #include "../../RuntimeCore/hook/Hook_API.h"
 #include "Proxy.h"
 #include "../core/hook_manager.h"
@@ -452,7 +453,10 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID)
 	case DLL_PROCESS_DETACH:
 		InterlockedExchange(&sg_isProcessDetaching, 1);
 		Rut::HookX::SetHookRuntimeShuttingDown(true);
-		Rut::HookX::UnhookFileAPIs();
+		{
+			Rut::HookX::ScopedDetourErrorDialogSuppression suppressDetourErrorDialog;
+			Rut::HookX::UnhookFileAPIs();
+		}
 		CialloHook::HookManager::CleanupLocaleEmulatorStagedFilesOnShutdown();
 		CialloHook::HookModules::CleanupLoadedFontTempFiles();
 		Rut::HookX::CleanupCustomPakCacheOnShutdown();

@@ -162,6 +162,34 @@ namespace CialloHook
 		return result;
 	}
 
+	static std::wstring UnwrapQuotedRuleValue(const std::wstring& rawValue)
+	{
+		if (rawValue.size() < 2 || rawValue.front() != L'"' || rawValue.back() != L'"')
+		{
+			return rawValue;
+		}
+
+		std::wstring result;
+		result.reserve(rawValue.size() - 2);
+		for (size_t i = 1; i + 1 < rawValue.size(); ++i)
+		{
+			wchar_t ch = rawValue[i];
+			if (ch == L'"' && i + 2 < rawValue.size() && rawValue[i + 1] == L'"')
+			{
+				result.push_back(L'"');
+				++i;
+				continue;
+			}
+			result.push_back(ch);
+		}
+		return result;
+	}
+
+	static std::wstring DecodeRuleTextValue(const std::wstring& rawValue)
+	{
+		return DecodeEscapedControlChars(UnwrapQuotedRuleValue(rawValue));
+	}
+
 	static bool GetBoolOrDefault(ConfigReadContext& context, const wchar_t* section, const wchar_t* key, bool fallback)
 	{
 		if (!context.ini.Has(section, key))
@@ -621,8 +649,8 @@ namespace CialloHook
 					std::wstring replacementKey = L"Replacement_" + std::to_wstring(i);
 					if (context.ini.Has(L"TextReplace", originalKey) && context.ini.Has(L"TextReplace", replacementKey))
 					{
-						std::wstring original = DecodeEscapedControlChars((std::wstring)context.ini[L"TextReplace"][originalKey]);
-						std::wstring replacement = DecodeEscapedControlChars((std::wstring)context.ini[L"TextReplace"][replacementKey]);
+						std::wstring original = DecodeRuleTextValue((std::wstring)context.ini[L"TextReplace"][originalKey]);
+						std::wstring replacement = DecodeRuleTextValue((std::wstring)context.ini[L"TextReplace"][replacementKey]);
 						settings.textReplace.rules.emplace_back(original, replacement);
 					}
 				}
@@ -680,8 +708,8 @@ namespace CialloHook
 					std::wstring newKey = L"New_" + std::to_wstring(i);
 					if (context.ini.Has(L"WindowTitle", originalKey) && context.ini.Has(L"WindowTitle", newKey))
 					{
-						std::wstring original = DecodeEscapedControlChars((std::wstring)context.ini[L"WindowTitle"][originalKey]);
-						std::wstring replacement = DecodeEscapedControlChars((std::wstring)context.ini[L"WindowTitle"][newKey]);
+						std::wstring original = DecodeRuleTextValue((std::wstring)context.ini[L"WindowTitle"][originalKey]);
+						std::wstring replacement = DecodeRuleTextValue((std::wstring)context.ini[L"WindowTitle"][newKey]);
 						if (!original.empty() && !replacement.empty())
 						{
 							settings.windowTitle.rules.emplace_back(original, replacement);
@@ -693,8 +721,8 @@ namespace CialloHook
 				&& context.ini.Has(L"WindowTitle", L"OriginalTitle")
 				&& context.ini.Has(L"WindowTitle", L"NewTitle"))
 			{
-				std::wstring original = DecodeEscapedControlChars((std::wstring)context.ini[L"WindowTitle"][L"OriginalTitle"]);
-				std::wstring replacement = DecodeEscapedControlChars((std::wstring)context.ini[L"WindowTitle"][L"NewTitle"]);
+				std::wstring original = DecodeRuleTextValue((std::wstring)context.ini[L"WindowTitle"][L"OriginalTitle"]);
+				std::wstring replacement = DecodeRuleTextValue((std::wstring)context.ini[L"WindowTitle"][L"NewTitle"]);
 				if (!original.empty() && !replacement.empty())
 				{
 					settings.windowTitle.rules.emplace_back(original, replacement);
@@ -703,7 +731,7 @@ namespace CialloHook
 			if (settings.windowTitle.rules.empty()
 				&& context.ini.Has(L"WindowTitle", L"Title"))
 			{
-				std::wstring title = DecodeEscapedControlChars((std::wstring)context.ini[L"WindowTitle"][L"Title"]);
+				std::wstring title = DecodeRuleTextValue((std::wstring)context.ini[L"WindowTitle"][L"Title"]);
 				if (!title.empty())
 				{
 					settings.windowTitle.rules.emplace_back(L"*", title);
@@ -712,7 +740,7 @@ namespace CialloHook
 			if (settings.windowTitle.rules.empty()
 				&& context.ini.Has(L"Window", L"Title"))
 			{
-				std::wstring title = DecodeEscapedControlChars((std::wstring)context.ini[L"Window"][L"Title"]);
+				std::wstring title = DecodeRuleTextValue((std::wstring)context.ini[L"Window"][L"Title"]);
 				if (!title.empty())
 				{
 					settings.windowTitle.rules.emplace_back(L"*", title);

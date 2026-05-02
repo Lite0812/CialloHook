@@ -1,9 +1,14 @@
 #pragma once
 #include <Windows.h>
+#include <commdlg.h>
 #include <shlobj_core.h>
 
 
 typedef INT(WINAPI* pMessageBoxA)(HWND hWnd, LPCSTR lpText, LPCSTR lpCaption, UINT uType);
+
+typedef BOOL(WINAPI* pChooseFontA)(LPCHOOSEFONTA lpcf);
+
+typedef BOOL(WINAPI* pChooseFontW)(LPCHOOSEFONTW lpcf);
 
 typedef HFONT(WINAPI* pCreateFontA)(INT cHeight, INT cWidth, INT cEscapement, INT cOrientation, INT cWeight, DWORD bItalic, DWORD bUnderline, DWORD bStrikeOut, DWORD iCharSet, DWORD iOutPrecision, DWORD iClipPrecision, DWORD iQuality, DWORD iPitchAndFamily, LPCSTR pszFaceName);
 
