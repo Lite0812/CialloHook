@@ -5,29 +5,39 @@
 它主要用于：
 
 - 替换字体、修复乱码、调整字形和字距
-- 文本替换、窗口标题替换、启动提示
+- 文本替换、窗口标题替换、启动提示、启动图片动画
 - 代码页伪装、Locale Emulator 转区
-- 挂载补丁目录、补丁包、目录重定向、文件伪装
-- 兼容部分 kirikiri / Waffle / MED / MAJIRO 场景
+- 挂载补丁目录、补丁包、目录重定向、文件伪装、虚拟注册表
+- 兼容 kirikiri / Waffle / MED / MAJIRO / Siglus / RioShiina 等引擎场景
 
 ## 功能特性
 
-- **字体 Hook**：支持系统字体、外部字体文件、字符集伪装、定向字体重定向
-- **文本 Hook**：支持 `TextOut` / `DrawText` 等常见绘制链路的文本替换
+- **字体 Hook**：支持系统字体、外部字体文件、字符集伪装、定向字体重定向、跳过指定字体
+- **字形微调**：支持字体缩放、字距、字重、宽高比、字形偏移、度量补偿等精细调整
+- **文本 Hook**：覆盖 `TextOut` / `DrawText` / `ExtTextOut` 及 UI 控件、菜单、对话框等完整文本链路
 - **窗口处理**：支持标题替换和启动时原生提示框
-- **资源挂载**：支持补丁目录、补丁包、自定义 PAK / VFS
-- **环境伪装**：支持代码页伪装和 Locale Emulator 转区
+- **启动图片**：支持 GDI+ 图片弹窗，6 种入场/退场动画，可通过补丁目录或封包加载
+- **资源挂载**：支持补丁目录、补丁包（cpk）、自定义 PAK / VFS、链式归档名
+- **环境伪装**：支持代码页伪装、Locale Emulator 转区、UI 语言伪装、时区伪装
 - **双加载模式**：支持 `proxy` 代理模式和 `loader` 启动器模式
-- **配置驱动**：绝大部分行为都通过 `ini` 控制
-- **日志排障**：支持文件日志和控制台日志
+- **启动控制**：支持延迟挂载、入口点挂载、GUI 就绪等待、窗口门控
+- **注册表引导**：支持虚拟注册表注入和临时真实注册表引导（进程退出自动回滚）
+- **RioShiina 引擎**：支持资源覆盖、WARC 解包、注册表/DVD 检测自动处理
+- **引擎兼容**：支持 kirikiri xp3 补丁链、krkr bootstrap 绕过、krkr cxdec 桥接、Siglus 密钥提取
+- **配置驱动**：绝大部分行为都通过 `ini` 控制，同时支持 `built-in` 内嵌配置
+- **日志排障**：支持文件日志、控制台日志和详细调试日志
 
 ## 适用场景
 
 - 日文游戏在中文系统下乱码、缺字、字重不对、字宽异常
 - 汉化补丁需要替换字体，但不想回封资源
 - 想直接在运行时替换文本或窗口标题
+- 启动时展示补丁声明、Logo 动画等图片弹窗
 - 需要把补丁目录、`xp3`、`cpk` 或其他补丁资源接到游戏读取链
 - 需要伪装区域、代码页或时区，绕过部分地区依赖问题
+- 需要临时写入注册表项但不想残留系统污染
+- RioShiina 引擎游戏需要资源覆盖或 WARC 解包
+- SiglusEngine 游戏需要提取 XOR 密钥
 
 ## 文件说明
 
@@ -36,6 +46,8 @@
 - `CialloHook.ini`：主配置文件
 - `version.ini` / `winmm.ini`：给代理名预留的同内容配置
 - `src/CialloHook/config/config_source.h`：编译期配置来源开关，可切换 `ini` 或内置硬编码配置
+- `src/CialloHook/hooks/rio_shiina_hooks.cpp` / `.h`：RioShiina 引擎资源覆盖与解包支持
+- `src/CialloHook/config/CialloHook_Example.ini`：完整带注释配置示例
 - `CialloLauncher.exe`：启动器模式入口
 - `LoaderDll.dll` / `LocaleEmulator.dll`：部分模式和转区功能所需依赖
 - `subs_cn_jp.json`：日繁到简中映射示例文件
@@ -193,7 +205,55 @@ RedirectFromFont_0 = MS UI Gothic
 RedirectToFont_0 = Microsoft YaHei
 ```
 
-### 4. 文本替换
+### 4. 跳过某些原始字体
+
+```ini
+[CialloHook]
+SkipFontCount = 1
+SkipFontName_0 = MS Gothic
+```
+
+### 5. 字形微调
+
+如果字体替换后大小、间距、字重不合适，可以用以下选项精细调整：
+
+```ini
+[CialloHook]
+FontScale = 1.2          ; 整体缩放，1.0 为不变
+FontSpacingScale = 1.1   ; 字间距缩放
+FontWeight = 700         ; 字重，0=不改，400=常规，700=粗体
+GlyphAspectRatio = 1.08  ; 字形宽高比，>1 更宽，<1 更窄
+GlyphOffsetX = 1         ; 字形 X 偏移（像素），正数右移
+GlyphOffsetY = -1        ; 字形 Y 偏移（像素），正数上移
+MetricsOffsetLeft = 1    ; 左侧度量补偿
+MetricsOffsetRight = -1  ; 右侧度量补偿
+MetricsOffsetTop = 1     ; 顶部度量补偿
+MetricsOffsetBottom = -1 ; 底部度量补偿
+```
+
+说明：
+
+- `FontScale` 保留各处相对大小关系，推荐优先使用
+- `FontHeight` / `FontWidth` 非 0 时优先于 `FontScale`，适合需要固定大小的场景
+- 度量补偿适合微调字间距过紧或过松的情况
+
+### 6. 字符集伪装
+
+当游戏请求特定字符集的字体时，仅对匹配的来源字符集做伪装替换：
+
+```ini
+[CialloHook]
+EnableCharsetSpoof = true
+SpoofFromCharset = 0x80   ; SHIFTJIS_CHARSET（日文）
+SpoofToCharset = 0x01     ; DEFAULT_CHARSET
+```
+
+与直接设置 `Charset` 的区别：
+
+- `Charset` 非 0：无条件强制覆盖为指定字符集
+- `EnableCharsetSpoof`：仅当来源字符集命中时才替换，更精准
+
+### 7. 文本替换
 
 ```ini
 [TextReplace]
@@ -204,7 +264,7 @@ Original_0 = こんにちは
 Replacement_0 = 你好
 ```
 
-### 5. 启用日繁映射
+### 8. 启用日繁映射
 
 这项功能适合游戏只支持 CP932 编码的场景。
 
@@ -248,7 +308,7 @@ CnJpMapReadEncoding = 932
 - 当游戏要渲染 `國` 时，改取 `国` 的字形
 - 当游戏要渲染 `學` 时，改取 `学` 的字形
 
-### 6. 文件补丁目录与封包
+### 9. 文件补丁目录与封包
 
 `[FilePatch]` 用来让“补丁文件优先于原始文件”。
 
@@ -302,7 +362,7 @@ EnableLog = false
 2. 确认路径结构正确后再封成 `patch.cpk`
 3. 发布时默认开启 `CustomPakEnable = true`
 
-### 7. CialloPAK_tool.py / CialloPAK_tool.exe
+### 10. CialloPAK_tool.py / CialloPAK_tool.exe
 
 如果你准备把补丁目录封成单个 `cpk` 文件，可以直接使用：
 
@@ -350,7 +410,7 @@ CialloPAK_tool.exe pack --input patch --pak patch.cpk --manifest patch_manifest.
 - 推荐先确认 `patch\` 目录结构正确，再封成 `cpk` 发布
 - 对接 `CialloHook.ini` 时，把生成的 `patch.cpk` 写到 `CustomPakName_i` 即可
 
-### 8. 启用代码页伪装
+### 11. 启用代码页伪装
 
 ```ini
 [CodePage]
@@ -359,7 +419,7 @@ FromCodePage = 932
 ToCodePage = 936
 ```
 
-### 9. 启用 Locale Emulator 转区
+### 12. 启用 Locale Emulator 转区
 
 ```ini
 [LocaleEmulator]
@@ -375,21 +435,184 @@ Timezone = Tokyo Standard Time
 - `LoaderDll.dll`
 - `LocaleEmulator.dll`
 
+### 13. 启动图片弹窗
+
+在游戏启动时弹出一个带动画效果的图片窗口，适合展示补丁声明、Logo、免责说明等。
+
+```ini
+[SplashImage]
+Enable = true
+ImageFile = splash.png
+Width = 800
+Height = 600
+EntryEffect = 1    ; 1=淡入 2=旋转 3=破碎 4=缩放 5=百叶窗 6=像素化
+ExitEffect = 1     ; 同上
+EntryMs = 1200
+HoldMs = 1800
+ExitMs = 1500
+Position = 1       ; 1=居中 2=左上 3=右上 4=左下 5=右下
+InteractionMode = 0 ; 0=无交互 1=可拖动 2=点击消失
+```
+
+说明：
+
+- 图片文件会在补丁目录 → cpk 封包 → 游戏根目录中按顺序查找
+- 入场和退场效果可以自由搭配（6×6 = 36 种组合）
+- `DurationMs` 为 0 时自动按入场+保持+退场三段之和计算
+- 找不到图片文件时静默跳过，不影响游戏启动
+
+### 14. RioShiina 引擎支持
+
+针对 RioShiina 引擎（如 `椎名里緒` 系列）的资源覆盖与封包处理。
+
+**Mode 1 — 资源覆盖**：用补丁资源替换游戏原始资源文件：
+
+```ini
+[RioShiina]
+Enable = true
+Mode = 1
+PatchCount = 1
+PatchName_0 = unencrypted
+ProcessReg = true
+ProcessDvd = false
+EnableLog = false
+```
+
+**Mode 2 — WARC 解包**：从指定 WARC 封包中提取资源：
+
+```ini
+[RioShiina]
+Enable = true
+Mode = 2
+ArchivesToExtract = data.warc|voice.warc
+ExtractOutputDir = rio_extract
+SkipInvalidFileName = true
+```
+
+说明：
+
+- 当前仅支持 x86 目标
+- Mode 1 会复用 `[FilePatch]` 的补丁目录和 custom CPK 作为补丁来源，查找顺序为 `patch\name → patch.cpk\name → 游戏目录\name`
+- 多个封包用 `|` 分隔，多个 PatchName 按编号越大优先级越高
+- `ProcessReg = true` 自动扫描同目录 ini 里 `椎名里緒*` section 的注册表检测
+- `ProcessDvd = true` 自动处理 DVD 检测，`SpecDvdFileSize = 0` 时仅改写盘符到 `W:\`
+
+### 15. 注册表引导
+
+在进程启动时临时写入真实注册表键值，进程退出时自动回滚清理：
+
+```ini
+[RegistryBootstrap]
+Enable = true
+CleanupOnExit = true
+EnableLog = false
+RuleCount = 2
+Root_0 = HKCU
+Key_0 = Software\Vendor\Game
+ValueName_0 = InstallPath
+Type_0 = SZ
+Data_0 = .\
+Root_1 = HKCU
+Key_1 = Software\Vendor\Game
+ValueName_1 = Type
+Type_1 = DWORD
+Data_1 = 0
+```
+
+说明：
+
+- 当前支持 `SZ`（字符串）和 `DWORD` 两种类型
+- `CleanupOnExit = true` 在进程退出时自动删除本次写入的键值
+- 适合免安装游戏需要读取特定注册表项的场景，比虚拟注册表更直接
+
+### 16. 启动时机控制
+
+控制 Hook 安装时机，适合 Hook 过早导致不生效或冲突的场景：
+
+```ini
+[StartupTiming]
+AttachMode = delay      ; immediate / delay / entrypoint
+DelayMs = 1000          ; 仅 AttachMode = delay 时有效
+WaitForGuiReady = false
+EnableStartupWindowGate = false
+```
+
+说明：
+
+- `immediate`：立即挂钩（默认行为）
+- `delay`：等待 `DelayMs` 毫秒后再挂钩，建议从 500~2000 试起
+- `entrypoint`：在 EXE 入口点首次执行时挂钩
+- `WaitForGuiReady`：等待 user32/gdi32 就绪后再挂钩
+- `EnableStartupWindowGate`：延迟模式下先隐藏早期窗口，挂完再放行
+
+### 17. krkr 引擎增强
+
+krkirikiri 引擎的额外兼容补丁：
+
+```ini
+[GLOBAL]
+EnableKrkrPatch = true
+KrkrBootstrapBypass = true
+EnableKrkrCxdecBridge = true
+KrkrPatchName = unencrypted
+```
+
+说明：
+
+- `KrkrBootstrapBypass`：应用 FuckBootStrap 风格的 x86 字节特征补丁，绕过启动校验
+- `EnableKrkrCxdecBridge`：让 cxdec 场景也能命中现有的补丁目录 / xp3 / custom pak 路径
+- 支持链式归档名如 `patch.cpk>inner.xp3`，用于读取 cpk 内嵌 xp3
+
+### 18. Siglus 密钥提取
+
+自动提取 SiglusEngine 的 16 字节 XOR 密钥：
+
+```ini
+[SiglusKeyExtract]
+Enable = true
+GameexePath = Gameexe.dat
+KeyOutputPath = siglus_key.txt
+ShowMessageBox = true
+DebugMode = false
+```
+
+说明：
+
+- 仅 SiglusEngine 游戏有效
+- 监控 `Gameexe.dat` 读取过程，在解密后的关键位置抓取密钥
+- 密钥输出到 `KeyOutputPath` 指定的文件
+
+### 19. Waffle 引擎兼容
+
+```ini
+[GLOBAL]
+EnableWafflePatch = true
+WaffleFixGetTextCrash = true
+```
+
+说明：
+
+- 修复部分 Waffle 游戏在 `GetTextExtentPoint32A` 处理制表符时的文本崩溃
+
 ## 主要配置段
 
 `CialloHook.ini` 常用配置段如下：
 
-- `[CialloHook]`：字体、字符集、字形调整、字体映射
-- `[TextReplace]`：文本替换
-- `[CialloHook]` 中的 `EnableCnJpMap` / `CnJpMapJson`：日繁映射
+- `[CialloHook]`：字体、字符集、字形调整、字体映射、日繁映射
+- `[TextReplace]`：文本替换（覆盖完整 GDI 文本及 UI 控件链路）
 - `[WindowTitle]`：窗口标题替换
 - `[StartupMessage]`：启动提示
+- `[SplashImage]`：启动图片弹窗及动画
+- `[StartupTiming]`：Hook 安装时机控制
+- `[SiglusKeyExtract]`：SiglusEngine 密钥提取
+- `[RioShiina]`：RioShiina 引擎资源覆盖与解包
 - `[CodePage]`：代码页伪装
 - `[FilePatch]`：补丁目录、补丁包、自定义 VFS
 - `[FileSpoof]`：伪装文件或目录不存在
 - `[DirectoryRedirect]`：目录重定向
-- `[Registry]`：注册表重定向
-- `[GLOBAL]`：引擎兼容项
+- `[Registry]`：虚拟注册表注入
+- `[RegistryBootstrap]`：临时真实注册表引导（退出自动回滚）
+- `[GLOBAL]`：引擎兼容项（krkr / Waffle / MED / MAJIRO）
 - `[LocaleEmulator]`：转区参数
 - `[LoadMode]`：加载方式
 - `[CialloLauncher]`：启动器设置
@@ -495,5 +718,6 @@ out/bin/x64/Release/
 - `Nepgear-main`：为部分 Hook 思路、补丁组织方式和兼容处理提供了参考
 - `CELICA_HOOK-master`：为部分字体 / 文本 Hook 与实战补丁方案提供了参考
 - `GalPatch-main`：为补丁封装、分发形式和工程整理方式提供了参考
+- `RioShiinaTools-master`：为 RioShiina 引擎的 WARC 资源读取与解包方案提供了参考
 
 
