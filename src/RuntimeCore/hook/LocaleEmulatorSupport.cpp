@@ -12,6 +12,15 @@ namespace Rut
 {
 	namespace HookX
 	{
+		struct REG_TZI_FORMAT
+		{
+			int32_t Bias;
+			int32_t StandardBias;
+			int32_t DaylightBias;
+			SYSTEMTIME StandardDate;
+			SYSTEMTIME DaylightDate;
+		};
+
 		static bool IsAbsolutePath(const std::wstring& path)
 		{
 			if (path.size() >= 2 && path[1] == L':')
@@ -135,6 +144,88 @@ namespace Rut
 						resolvedPath = absCandidate;
 						return true;
 					}
+				}
+			}
+			return false;
+		}
+
+		bool PopulateLocaleEmulatorTimeZone(
+			const std::wstring& timezone,
+			wchar_t* standardName,
+			size_t standardNameCount,
+			wchar_t* daylightName,
+			size_t daylightNameCount,
+			int32_t& bias,
+			int32_t& standardBias,
+			int32_t& daylightBias)
+		{
+			bias = 0;
+			standardBias = 0;
+			daylightBias = 0;
+			if (!standardName || standardNameCount == 0 || !daylightName || daylightNameCount == 0)
+			{
+				return false;
+			}
+
+			standardName[0] = L'\0';
+			daylightName[0] = L'\0';
+			wcsncpy_s(standardName, standardNameCount, timezone.c_str(), _TRUNCATE);
+			wcsncpy_s(daylightName, daylightNameCount, timezone.c_str(), _TRUNCATE);
+
+			HKEY hTimeZone = nullptr;
+			std::wstring keyPath = L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Time Zones\\";
+			keyPath += timezone;
+			if (RegOpenKeyW(HKEY_LOCAL_MACHINE, keyPath.c_str(), &hTimeZone) != ERROR_SUCCESS)
+			{
+				return false;
+			}
+
+			bool populated = false;
+			DWORD bufferSize = static_cast<DWORD>(standardNameCount * sizeof(wchar_t));
+			if (RegGetValueW(hTimeZone, nullptr, L"Std", RRF_RT_REG_SZ, nullptr, standardName, &bufferSize) == ERROR_SUCCESS)
+			{
+				populated = true;
+			}
+
+			bufferSize = static_cast<DWORD>(daylightNameCount * sizeof(wchar_t));
+			if (RegGetValueW(hTimeZone, nullptr, L"Dlt", RRF_RT_REG_SZ, nullptr, daylightName, &bufferSize) == ERROR_SUCCESS)
+			{
+				populated = true;
+			}
+
+			REG_TZI_FORMAT regTzi = {};
+			bufferSize = sizeof(regTzi);
+			if (RegGetValueW(hTimeZone, nullptr, L"TZI", RRF_RT_REG_BINARY, nullptr, &regTzi, &bufferSize) == ERROR_SUCCESS)
+			{
+				bias = regTzi.Bias;
+				standardBias = regTzi.StandardBias;
+				daylightBias = regTzi.DaylightBias;
+				populated = true;
+			}
+
+			RegCloseKey(hTimeZone);
+			return populated;
+		}
+
+		bool TryResolveLocalLocaleEmulatorDependency(
+			const std::wstring& baseDir,
+			const wchar_t* fileName,
+			std::wstring& resolvedPath)
+		{
+			resolvedPath.clear();
+			if (!fileName || fileName[0] == L'\0')
+			{
+				return false;
+			}
+
+			std::vector<std::wstring> candidates = BuildLocaleEmulatorDependencyCandidates(fileName);
+			for (const std::wstring& candidate : candidates)
+			{
+				std::wstring absCandidate = ToBaseAbsolutePath(baseDir, candidate);
+				if (IsFileExists(absCandidate))
+				{
+					resolvedPath = absCandidate;
+					return true;
 				}
 			}
 			return false;
@@ -490,12 +581,27 @@ namespace Rut
 			bool& usedCustomPak,
 			bool& foundConfiguredCandidate,
 			std::vector<std::wstring>& preparedPaths,
-			std::vector<std::wstring>* runtimeSearchDirs)
+			std::vector<std::wstring>* runtimeSearchDirs,
+			bool* foundLocaleCandidate)
 		{
 			usedConfiguredOverride = false;
 			usedCustomPak = false;
 			foundConfiguredCandidate = false;
 			preparedPaths.clear();
+
+			HMODULE localLoaderDll = nullptr;
+			if (options.preferLocalLoader)
+			{
+				localLoaderDll = LoadLibraryW(L"LoaderDll.dll");
+				if (localLoaderDll && runtimeSearchDirs)
+				{
+					wchar_t localLoaderPath[MAX_PATH] = {};
+					if (GetModuleFileNameW(localLoaderDll, localLoaderPath, MAX_PATH))
+					{
+						AppendUniquePath(*runtimeSearchDirs, GetDirectoryPath(localLoaderPath));
+					}
+				}
+			}
 
 			std::wstring localeDllPath;
 			bool localeFromCustomPak = false;
@@ -519,6 +625,16 @@ namespace Rut
 				{
 					usedConfiguredOverride = true;
 				}
+			}
+			if (foundLocaleCandidate)
+			{
+				*foundLocaleCandidate = localeCandidateFound;
+			}
+
+			if (localLoaderDll)
+			{
+				foundConfiguredCandidate = localeCandidateFound;
+				return localLoaderDll;
 			}
 
 			std::wstring loaderPath;

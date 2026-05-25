@@ -1,4 +1,4 @@
-		//*********Font File Loading*********
+﻿		//*********Font File Loading*********
 
 		bool LoadFontFromFile(const wchar_t* wpFontFilePath, bool showError)
 		{
@@ -54,6 +54,8 @@
 		static int sg_iMetricsOffsetTop = 0;
 		static int sg_iMetricsOffsetBottom = 0;
 		static thread_local int sg_fontCreateNesting = 0;
+		static thread_local int sg_hdcFontReplacementNesting = 0;
+		static thread_local int sg_dwriteHookNesting = 0;
 		struct FontCreateNestingScope
 		{
 			FontCreateNestingScope()
@@ -63,6 +65,39 @@
 			~FontCreateNestingScope()
 			{
 				--sg_fontCreateNesting;
+			}
+		};
+		struct HdcFontReplacementScope
+		{
+			bool active = true;
+			HdcFontReplacementScope()
+			{
+				++sg_hdcFontReplacementNesting;
+			}
+			void release()
+			{
+				active = false;
+			}
+			~HdcFontReplacementScope()
+			{
+				if (active && sg_hdcFontReplacementNesting > 0)
+				{
+					--sg_hdcFontReplacementNesting;
+				}
+			}
+		};
+		struct DWriteHookNestingScope
+		{
+			DWriteHookNestingScope()
+			{
+				++sg_dwriteHookNesting;
+			}
+			~DWriteHookNestingScope()
+			{
+				if (sg_dwriteHookNesting > 0)
+				{
+					--sg_dwriteHookNesting;
+				}
 			}
 		};
 		static SRWLOCK sg_scaledFontHandlesLock = SRWLOCK_INIT;
@@ -114,24 +149,96 @@
 					}
 				}
 				buffer[LF_FACESIZE - 1] = L'\0';
+				return buffer[0] != L'\0';
 			}
 			__except (EXCEPTION_EXECUTE_HANDLER)
 			{
 				buffer[0] = L'\0';
 				return false;
 			}
-			buffer[0] = L'\0';
-			return false;
 		}
+		static bool TryCopyAnsiFaceName(const char* source, char (&buffer)[LF_FACESIZE])
+		{
+			buffer[0] = '\0';
+			if (!source)
+			{
+				return false;
+			}
+			__try
+			{
+				for (size_t i = 0; i < LF_FACESIZE - 1; ++i)
+				{
+					char ch = source[i];
+					buffer[i] = ch;
+					if (ch == '\0')
+					{
+						return i != 0;
+					}
+				}
+				buffer[LF_FACESIZE - 1] = '\0';
+				return buffer[0] != '\0';
+			}
+			__except (EXCEPTION_EXECUTE_HANDLER)
+			{
+				buffer[0] = '\0';
+				return false;
+			}
+		}
+		static bool TryCopyLogFontA(const LOGFONTA* source, LOGFONTA& local)
+		{
+			if (!source)
+			{
+				return false;
+			}
+			__try
+			{
+				local = *source;
+				return true;
+			}
+			__except (EXCEPTION_EXECUTE_HANDLER)
+			{
+				return false;
+			}
+		}
+		static bool TryCopyLogFontW(const LOGFONTW* source, LOGFONTW& local)
+		{
+			if (!source)
+			{
+				return false;
+			}
+			__try
+			{
+				local = *source;
+				return true;
+			}
+			__except (EXCEPTION_EXECUTE_HANDLER)
+			{
+				return false;
+			}
+		}
+		static bool IsSimpleWideSpace(wchar_t ch)
+		{
+			return ch == L' ' || ch == L'\r' || ch == L'\n' || ch == L'\t';
+		}
+
+		static wchar_t ToSimpleFontRuleUpper(wchar_t ch)
+		{
+			if (ch >= L'a' && ch <= L'z')
+			{
+				return ch - (L'a' - L'A');
+			}
+			return ch;
+		}
+
 		static std::wstring TrimWideCopy(std::wstring value)
 		{
 			size_t begin = 0;
-			while (begin < value.size() && iswspace(static_cast<wint_t>(value[begin])) != 0)
+			while (begin < value.size() && IsSimpleWideSpace(value[begin]))
 			{
 				++begin;
 			}
 			size_t end = value.size();
-			while (end > begin && iswspace(static_cast<wint_t>(value[end - 1])) != 0)
+			while (end > begin && IsSimpleWideSpace(value[end - 1]))
 			{
 				--end;
 			}
@@ -140,15 +247,20 @@
 		static std::wstring NormalizeFontRuleKey(std::wstring value)
 		{
 			value = TrimWideCopy(std::move(value));
-			if (!value.empty())
+			for (wchar_t& ch : value)
 			{
-				CharUpperBuffW(&value[0], (DWORD)value.size());
+				ch = ToSimpleFontRuleUpper(ch);
 			}
 			return value;
 		}
 		static std::wstring NormalizeFontRuleKey(const wchar_t* value)
 		{
-			return NormalizeFontRuleKey(value ? std::wstring(value) : std::wstring());
+			wchar_t faceName[LF_FACESIZE] = {};
+			if (!TryCopyWideFaceName(value, faceName))
+			{
+				return std::wstring();
+			}
+			return NormalizeFontRuleKey(std::wstring(faceName));
 		}
 		static bool IsSkipFontRuleMatch(const std::wstring& requestedKey)
 		{
@@ -169,6 +281,10 @@
 		{
 			buffer[0] = L'\0';
 			skipOverride = false;
+			if (sg_skipFontRuleKeys.empty() && sg_fontRedirectRules.empty())
+			{
+				return false;
+			}
 			std::wstring requestedKey = NormalizeFontRuleKey(requestedFaceName);
 			if (requestedKey.empty())
 			{
@@ -192,15 +308,23 @@
 		{
 			return TryCopyWideFaceName(sg_lpFontNameW, buffer);
 		}
+		static bool HasFontOverrideRules()
+		{
+			return !sg_skipFontRuleKeys.empty() || !sg_fontRedirectRules.empty();
+		}
 		static bool TryGetForcedFontNameWForRequest(const wchar_t* requestedFaceName, wchar_t (&buffer)[LF_FACESIZE], bool& skipOverride)
 		{
-			if (TryResolveRedirectFontNameW(requestedFaceName, buffer, skipOverride))
+			skipOverride = false;
+			if (HasFontOverrideRules())
 			{
-				return true;
-			}
-			if (skipOverride)
-			{
-				return false;
+				if (TryResolveRedirectFontNameW(requestedFaceName, buffer, skipOverride))
+				{
+					return true;
+				}
+				if (skipOverride)
+				{
+					return false;
+				}
 			}
 			return TryGetForcedFontNameW(buffer);
 		}
@@ -517,8 +641,8 @@
 		}
 		static pCreateFontA rawCreateFontA = CreateFontA;
 		
-		HFONT WINAPI newCreateFontA(INT cHeight, INT cWidth, INT cEscapement, INT cOrientation, INT cWeight, DWORD bItalic, DWORD bUnderline, DWORD bStrikeOut, DWORD iCharSet, DWORD iOutPrecision, DWORD iClipPrecision, DWORD iQuality, DWORD iPitchAndFamily, LPCSTR pszFaceName)
-		{
+		HFONT WINAPI newCreateFontA_SehImpl(INT cHeight, INT cWidth, INT cEscapement, INT cOrientation, INT cWeight, DWORD bItalic, DWORD bUnderline, DWORD bStrikeOut, DWORD iCharSet, DWORD iOutPrecision, DWORD iClipPrecision, DWORD iQuality, DWORD iPitchAndFamily, LPCSTR pszFaceName)
+{
 			if (sg_fontCreateNesting > 0)
 			{
 				return rawCreateFontA(cHeight, cWidth, cEscapement, cOrientation, cWeight, bItalic, bUnderline, bStrikeOut, iCharSet, iOutPrecision, iClipPrecision, iQuality, iPitchAndFamily, pszFaceName);
@@ -526,8 +650,11 @@
 			FontCreateNestingScope scope;
 			bool skipOverride = false;
 			std::string redirectFaceName;
+			char requestedFaceName[LF_FACESIZE] = {};
 			wchar_t redirectedFaceNameW[LF_FACESIZE] = {};
-			if (TryResolveRedirectFontNameW(AnsiToWide(pszFaceName).c_str(), redirectedFaceNameW, skipOverride))
+			if (HasFontOverrideRules()
+				&& TryCopyAnsiFaceName(pszFaceName, requestedFaceName)
+				&& TryResolveRedirectFontNameW(AnsiToWide(requestedFaceName).c_str(), redirectedFaceNameW, skipOverride))
 			{
 				redirectFaceName = WideFaceNameToAnsi(redirectedFaceNameW);
 			}
@@ -561,6 +688,12 @@
 			}
 			return hFont;
 		}
+		HFONT WINAPI newCreateFontA(INT cHeight, INT cWidth, INT cEscapement, INT cOrientation, INT cWeight, DWORD bItalic, DWORD bUnderline, DWORD bStrikeOut, DWORD iCharSet, DWORD iOutPrecision, DWORD iClipPrecision, DWORD iQuality, DWORD iPitchAndFamily, LPCSTR pszFaceName)
+		{
+			__try { return newCreateFontA_SehImpl(cHeight, cWidth, cEscapement, cOrientation, cWeight, bItalic, bUnderline, bStrikeOut, iCharSet, iOutPrecision, iClipPrecision, iQuality, iPitchAndFamily, pszFaceName); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawCreateFontA(cHeight, cWidth, cEscapement, cOrientation, cWeight, bItalic, bUnderline, bStrikeOut, iCharSet, iOutPrecision, iClipPrecision, iQuality, iPitchAndFamily, pszFaceName); }
+		}
+
 
 		bool HookCreateFontA(const uint32_t uiCharSet, bool enableCharsetSpoof, uint32_t spoofFromCharSet, uint32_t spoofToCharSet, const char* cpFontName, int iHeight, int iWidth, int iWeight, float fScale, float fSpacingScale, float fGlyphAspectRatio, int iGlyphOffsetX, int iGlyphOffsetY, int iMetricsOffsetLeft, int iMetricsOffsetRight, int iMetricsOffsetTop, int iMetricsOffsetBottom)
 		{
@@ -573,21 +706,25 @@
 
 		//*********Start Hook CreateFontIndirectA*******
 		static pCreateFontIndirectA rawCreateFontIndirectA = CreateFontIndirectA;
-		HFONT WINAPI newCreateFontIndirectA(LOGFONTA* lplf)
-		{
+		HFONT WINAPI newCreateFontIndirectA_SehImpl(LOGFONTA* lplf)
+{
 			if (sg_fontCreateNesting > 0)
 			{
 				return rawCreateFontIndirectA(lplf);
 			}
 			FontCreateNestingScope scope;
-			if (!lplf)
+			LOGFONTA local = {};
+			if (!TryCopyLogFontA(lplf, local))
 			{
 				return rawCreateFontIndirectA(lplf);
 			}
 			bool skipOverride = false;
 			std::string forcedFaceName;
+			char requestedFaceName[LF_FACESIZE] = {};
 			wchar_t redirectedFaceNameW[LF_FACESIZE] = {};
-			if (TryResolveRedirectFontNameW(AnsiToWide(lplf->lfFaceName).c_str(), redirectedFaceNameW, skipOverride))
+			if (HasFontOverrideRules()
+				&& TryCopyAnsiFaceName(local.lfFaceName, requestedFaceName)
+				&& TryResolveRedirectFontNameW(AnsiToWide(requestedFaceName).c_str(), redirectedFaceNameW, skipOverride))
 			{
 				forcedFaceName = WideFaceNameToAnsi(redirectedFaceNameW);
 			}
@@ -595,7 +732,6 @@
 			{
 				return rawCreateFontIndirectA(lplf);
 			}
-			LOGFONTA local = *lplf;
 			// Font size scaling: fixed value first, otherwise apply scale
 			if (sg_iFontHeight) {
 				local.lfHeight = sg_iFontHeight;
@@ -622,6 +758,12 @@
 			}
 			return hFont;
 		}
+		HFONT WINAPI newCreateFontIndirectA(LOGFONTA* lplf)
+		{
+			__try { return newCreateFontIndirectA_SehImpl(lplf); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawCreateFontIndirectA(lplf); }
+		}
+
 
 		bool HookCreateFontIndirectA(const uint32_t uiCharSet, bool enableCharsetSpoof, uint32_t spoofFromCharSet, uint32_t spoofToCharSet, const char* cpFontName, int iHeight, int iWidth, int iWeight, float fScale, float fSpacingScale, float fGlyphAspectRatio, int iGlyphOffsetX, int iGlyphOffsetY, int iMetricsOffsetLeft, int iMetricsOffsetRight, int iMetricsOffsetTop, int iMetricsOffsetBottom)
 		{
@@ -633,8 +775,8 @@
 
 		//*********Start Hook CreateFontW*******
 		static pCreateFontW rawCreateFontW = CreateFontW;
-		HFONT WINAPI newCreateFontW(INT cHeight, INT cWidth, INT cEscapement, INT cOrientation, INT cWeight, DWORD bItalic, DWORD bUnderline, DWORD bStrikeOut, DWORD iCharSet, DWORD iOutPrecision, DWORD iClipPrecision, DWORD iQuality, DWORD iPitchAndFamily, LPCWSTR pszFaceName)
-		{
+		HFONT WINAPI newCreateFontW_SehImpl(INT cHeight, INT cWidth, INT cEscapement, INT cOrientation, INT cWeight, DWORD bItalic, DWORD bUnderline, DWORD bStrikeOut, DWORD iCharSet, DWORD iOutPrecision, DWORD iClipPrecision, DWORD iQuality, DWORD iPitchAndFamily, LPCWSTR pszFaceName)
+{
 			if (sg_fontCreateNesting > 0)
 			{
 				return rawCreateFontW(cHeight, cWidth, cEscapement, cOrientation, cWeight, bItalic, bUnderline, bStrikeOut, iCharSet, iOutPrecision, iClipPrecision, iQuality, iPitchAndFamily, pszFaceName);
@@ -669,6 +811,12 @@
 			}
 			return hFont;
 		}
+		HFONT WINAPI newCreateFontW(INT cHeight, INT cWidth, INT cEscapement, INT cOrientation, INT cWeight, DWORD bItalic, DWORD bUnderline, DWORD bStrikeOut, DWORD iCharSet, DWORD iOutPrecision, DWORD iClipPrecision, DWORD iQuality, DWORD iPitchAndFamily, LPCWSTR pszFaceName)
+		{
+			__try { return newCreateFontW_SehImpl(cHeight, cWidth, cEscapement, cOrientation, cWeight, bItalic, bUnderline, bStrikeOut, iCharSet, iOutPrecision, iClipPrecision, iQuality, iPitchAndFamily, pszFaceName); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawCreateFontW(cHeight, cWidth, cEscapement, cOrientation, cWeight, bItalic, bUnderline, bStrikeOut, iCharSet, iOutPrecision, iClipPrecision, iQuality, iPitchAndFamily, pszFaceName); }
+		}
+
 
 		bool HookCreateFontW(const uint32_t uiCharSet, bool enableCharsetSpoof, uint32_t spoofFromCharSet, uint32_t spoofToCharSet, const wchar_t* wpFontName, int iHeight, int iWidth, int iWeight, float fScale, float fSpacingScale, float fGlyphAspectRatio, int iGlyphOffsetX, int iGlyphOffsetY, int iMetricsOffsetLeft, int iMetricsOffsetRight, int iMetricsOffsetTop, int iMetricsOffsetBottom)
 		{
@@ -681,25 +829,25 @@
 
 		//*********Start Hook CreateFontIndirectW*******
 		static pCreateFontIndirectW rawCreateFontIndirectW = CreateFontIndirectW;
-		HFONT WINAPI newCreateFontIndirectW(LOGFONTW* lplf)
-		{
+		HFONT WINAPI newCreateFontIndirectW_SehImpl(LOGFONTW* lplf)
+{
 			if (sg_fontCreateNesting > 0)
 			{
 				return rawCreateFontIndirectW(lplf);
 			}
 			FontCreateNestingScope scope;
-			if (!lplf)
+			LOGFONTW local = {};
+			if (!TryCopyLogFontW(lplf, local))
 			{
 				return rawCreateFontIndirectW(lplf);
 			}
 			bool skipOverride = false;
 			wchar_t forcedFaceName[LF_FACESIZE] = {};
-			bool hasForcedFaceName = TryGetForcedFontNameWForRequest(lplf->lfFaceName, forcedFaceName, skipOverride);
+			bool hasForcedFaceName = TryGetForcedFontNameWForRequest(local.lfFaceName, forcedFaceName, skipOverride);
 			if (skipOverride)
 			{
 				return rawCreateFontIndirectW(lplf);
 			}
-			LOGFONTW local = *lplf;
 			// Font size scaling: fixed value first, otherwise apply scale
 			if (sg_iFontHeight) {
 				local.lfHeight = sg_iFontHeight;
@@ -722,6 +870,12 @@
 			}
 			return hFont;
 		}
+		HFONT WINAPI newCreateFontIndirectW(LOGFONTW* lplf)
+		{
+			__try { return newCreateFontIndirectW_SehImpl(lplf); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawCreateFontIndirectW(lplf); }
+		}
+
 
 		bool HookCreateFontIndirectW(const uint32_t uiCharSet, bool enableCharsetSpoof, uint32_t spoofFromCharSet, uint32_t spoofToCharSet, const wchar_t* wpFontName, int iHeight, int iWidth, int iWeight, float fScale, float fSpacingScale, float fGlyphAspectRatio, int iGlyphOffsetX, int iGlyphOffsetY, int iMetricsOffsetLeft, int iMetricsOffsetRight, int iMetricsOffsetTop, int iMetricsOffsetBottom)
 		{
@@ -734,82 +888,30 @@
 		static bool sg_unlockFontSelection = false;
 		static pEnumFontFamiliesExA rawEnumFontFamiliesExA = EnumFontFamiliesExA;
 		static pEnumFontFamiliesExW rawEnumFontFamiliesExW = EnumFontFamiliesExW;
-		struct EnumFontDedupContextA
+		static bool HasPositiveTextMetrics(const TEXTMETRICA* lpntme)
 		{
-			pFONTENUMPROCA callback = nullptr;
-			LPARAM originalLParam = 0;
-			std::unordered_set<std::string> seenFaceNames;
-
-			EnumFontDedupContextA()
+			if (!lpntme)
 			{
-				seenFaceNames.reserve(256);
+				return true;
 			}
-		};
-		struct EnumFontDedupContextW
-		{
-			pFONTENUMPROCW callback = nullptr;
-			LPARAM originalLParam = 0;
-			std::unordered_set<std::wstring> seenFaceNames;
-
-			EnumFontDedupContextW()
-			{
-				seenFaceNames.reserve(256);
-			}
-		};
-		static std::string NormalizeEnumFaceNameA(const LOGFONTA* lpelfe)
-		{
-			if (!lpelfe || lpelfe->lfFaceName[0] == '\0')
-			{
-				return {};
-			}
-			std::string faceName(lpelfe->lfFaceName);
-			if (!faceName.empty())
-			{
-				CharUpperBuffA(&faceName[0], (DWORD)faceName.size());
-			}
-			return faceName;
+			return lpntme->tmHeight > 0
+				&& (lpntme->tmAscent + lpntme->tmDescent) > 0
+				&& lpntme->tmAveCharWidth > 0
+				&& lpntme->tmMaxCharWidth > 0;
 		}
-		static std::wstring NormalizeEnumFaceNameW(const LOGFONTW* lpelfe)
+		static bool HasPositiveTextMetrics(const TEXTMETRICW* lpntme)
 		{
-			if (!lpelfe || lpelfe->lfFaceName[0] == L'\0')
+			if (!lpntme)
 			{
-				return L"";
+				return true;
 			}
-			std::wstring faceName(lpelfe->lfFaceName);
-			CharUpperBuffW(&faceName[0], (DWORD)faceName.size());
-			return faceName;
+			return lpntme->tmHeight > 0
+				&& (lpntme->tmAscent + lpntme->tmDescent) > 0
+				&& lpntme->tmAveCharWidth > 0
+				&& lpntme->tmMaxCharWidth > 0;
 		}
-		static int CALLBACK EnumFontDedupProcA(const LOGFONTA* lpelfe, const TEXTMETRICA* lpntme, DWORD fontType, LPARAM lParam)
-		{
-			EnumFontDedupContextA* context = reinterpret_cast<EnumFontDedupContextA*>(lParam);
-			if (!context || !context->callback)
-			{
-				return 1;
-			}
-			std::string faceName = NormalizeEnumFaceNameA(lpelfe);
-			if (!faceName.empty() && !context->seenFaceNames.insert(std::move(faceName)).second)
-			{
-				return 1;
-			}
-			return context->callback(lpelfe, lpntme, fontType, context->originalLParam);
-		}
-		static int CALLBACK EnumFontDedupProcW(const LOGFONTW* lpelfe, const TEXTMETRICW* lpntme, DWORD fontType, LPARAM lParam)
-		{
-			EnumFontDedupContextW* context = reinterpret_cast<EnumFontDedupContextW*>(lParam);
-			if (!context || !context->callback)
-			{
-				return 1;
-			}
-			std::wstring faceName = NormalizeEnumFaceNameW(lpelfe);
-			if (!faceName.empty() && !context->seenFaceNames.insert(std::move(faceName)).second)
-			{
-				return 1;
-			}
-			return context->callback(lpelfe, lpntme, fontType, context->originalLParam);
-		}
-
-		int WINAPI newEnumFontFamiliesExA(HDC hdc, LPLOGFONTA lpLogfont, pFONTENUMPROCA lpProc, LPARAM lParam, DWORD dwFlags)
-		{
+		int WINAPI newEnumFontFamiliesExA_SehImpl(HDC hdc, LPLOGFONTA lpLogfont, pFONTENUMPROCA lpProc, LPARAM lParam, DWORD dwFlags)
+{
 			LOGFONTA target = {};
 			if (lpLogfont)
 			{
@@ -820,18 +922,17 @@
 				target.lfCharSet = DEFAULT_CHARSET;
 				target.lfFaceName[0] = '\0';
 			}
-			if (sg_unlockFontSelection && lpProc)
-			{
-				EnumFontDedupContextA context = {};
-				context.callback = lpProc;
-				context.originalLParam = lParam;
-				return rawEnumFontFamiliesExA(hdc, &target, EnumFontDedupProcA, reinterpret_cast<LPARAM>(&context), dwFlags);
-			}
 			return rawEnumFontFamiliesExA(hdc, &target, lpProc, lParam, dwFlags);
 		}
-
-		int WINAPI newEnumFontFamiliesExW(HDC hdc, LPLOGFONTW lpLogfont, pFONTENUMPROCW lpProc, LPARAM lParam, DWORD dwFlags)
+		int WINAPI newEnumFontFamiliesExA(HDC hdc, LPLOGFONTA lpLogfont, pFONTENUMPROCA lpProc, LPARAM lParam, DWORD dwFlags)
 		{
+			__try { return newEnumFontFamiliesExA_SehImpl(hdc, lpLogfont, lpProc, lParam, dwFlags); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawEnumFontFamiliesExA(hdc, lpLogfont, lpProc, lParam, dwFlags); }
+		}
+
+
+		int WINAPI newEnumFontFamiliesExW_SehImpl(HDC hdc, LPLOGFONTW lpLogfont, pFONTENUMPROCW lpProc, LPARAM lParam, DWORD dwFlags)
+{
 			LOGFONTW target = {};
 			if (lpLogfont)
 			{
@@ -842,15 +943,14 @@
 				target.lfCharSet = DEFAULT_CHARSET;
 				target.lfFaceName[0] = L'\0';
 			}
-			if (sg_unlockFontSelection && lpProc)
-			{
-				EnumFontDedupContextW context = {};
-				context.callback = lpProc;
-				context.originalLParam = lParam;
-				return rawEnumFontFamiliesExW(hdc, &target, EnumFontDedupProcW, reinterpret_cast<LPARAM>(&context), dwFlags);
-			}
 			return rawEnumFontFamiliesExW(hdc, &target, lpProc, lParam, dwFlags);
 		}
+		int WINAPI newEnumFontFamiliesExW(HDC hdc, LPLOGFONTW lpLogfont, pFONTENUMPROCW lpProc, LPARAM lParam, DWORD dwFlags)
+		{
+			__try { return newEnumFontFamiliesExW_SehImpl(hdc, lpLogfont, lpProc, lParam, dwFlags); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawEnumFontFamiliesExW(hdc, lpLogfont, lpProc, lParam, dwFlags); }
+		}
+
 
 		bool HookEnumFontFamiliesExA(bool unlockSelection)
 		{
@@ -926,15 +1026,18 @@
 			bool skipOverride = false;
 			std::string forcedFaceName;
 			wchar_t redirectedFaceNameW[LF_FACESIZE] = {};
-			if (TryResolveRedirectFontNameW(AnsiToWide(lf.lfFaceName).c_str(), redirectedFaceNameW, skipOverride))
+			if (HasFontOverrideRules())
 			{
-				forcedFaceName = WideFaceNameToAnsi(redirectedFaceNameW);
+				if (TryResolveRedirectFontNameW(AnsiToWide(lf.lfFaceName).c_str(), redirectedFaceNameW, skipOverride))
+				{
+					forcedFaceName = WideFaceNameToAnsi(redirectedFaceNameW);
+				}
+				else if (skipOverride)
+				{
+					return false;
+				}
 			}
-			else if (skipOverride)
-			{
-				return false;
-			}
-			else
+			if (forcedFaceName.empty())
 			{
 				forcedFaceName = GetForcedFontNameA();
 			}
@@ -997,34 +1100,42 @@
 		static std::string GetForcedFontNameAForRequest(const char* requestedFaceName, bool& skipOverride)
 		{
 			skipOverride = false;
-			wchar_t redirectedFaceNameW[LF_FACESIZE] = {};
-			if (TryResolveRedirectFontNameW(AnsiToWide(requestedFaceName).c_str(), redirectedFaceNameW, skipOverride))
+			if (HasFontOverrideRules())
 			{
-				return WideFaceNameToAnsi(redirectedFaceNameW);
-			}
-			if (skipOverride)
-			{
-				return "";
+				wchar_t redirectedFaceNameW[LF_FACESIZE] = {};
+				if (TryResolveRedirectFontNameW(AnsiToWide(requestedFaceName).c_str(), redirectedFaceNameW, skipOverride))
+				{
+					return WideFaceNameToAnsi(redirectedFaceNameW);
+				}
+				if (skipOverride)
+				{
+					return "";
+				}
 			}
 			return GetForcedFontNameA();
 		}
+
+		static pGetObjectA rawGetObjectA = GetObjectA;
+		static pGetObjectW rawGetObjectW = GetObjectW;
+
 		static HFONT ReplaceHdcFont(HDC hdc, HFONT* pOldFont)
 		{
 			if (pOldFont)
 			{
 				*pOldFont = nullptr;
 			}
-			if (!hdc)
+			if (!hdc || sg_hdcFontReplacementNesting > 0)
 			{
 				return nullptr;
 			}
+			HdcFontReplacementScope replacementScope;
 			HFONT hCurFont = (HFONT)GetCurrentObject(hdc, OBJ_FONT);
 			if (!hCurFont)
 			{
 				return nullptr;
 			}
 			LOGFONTW lf = {};
-			if (GetObjectW(hCurFont, sizeof(lf), &lf) == 0)
+			if (rawGetObjectW(hCurFont, sizeof(lf), &lf) == 0)
 			{
 				return nullptr;
 			}
@@ -1038,14 +1149,21 @@
 			{
 				return nullptr;
 			}
+			HGDIOBJ oldObject = rawSelectObject(hdc, hNewFont);
+			if (!oldObject || oldObject == HGDI_ERROR)
+			{
+				DeleteObject(hNewFont);
+				return nullptr;
+			}
 			if (applySizeScale && IsAnyFontSizeOverrideEnabled())
 			{
 				MarkFontHandleScaled(hNewFont);
 			}
 			if (pOldFont)
 			{
-				*pOldFont = (HFONT)rawSelectObject(hdc, hNewFont);
+				*pOldFont = (HFONT)oldObject;
 			}
+			replacementScope.release();
 			return hNewFont;
 		}
 
@@ -1055,15 +1173,17 @@
 			{
 				return;
 			}
-			if (hOldFont)
+			if (hOldFont && (HGDIOBJ)hOldFont != HGDI_ERROR)
 			{
 				rawSelectObject(hdc, hOldFont);
 			}
 			DeleteObject(hNewFont);
+			if (sg_hdcFontReplacementNesting > 0)
+			{
+				--sg_hdcFontReplacementNesting;
+			}
 		}
 
-		static pGetObjectA rawGetObjectA = GetObjectA;
-		static pGetObjectW rawGetObjectW = GetObjectW;
 		static bool TryGetCurrentHdcLogFontW(HDC hdc, LOGFONTW& lf)
 		{
 			if (!hdc)
@@ -1081,6 +1201,68 @@
 		static pGetTextFaceW rawGetTextFaceW = GetTextFaceW;
 		static pGetTextMetricsA rawGetTextMetricsA = GetTextMetricsA;
 		static pGetTextMetricsW rawGetTextMetricsW = GetTextMetricsW;
+		static bool IsSafeChooseFontResultA(const LOGFONTA* logFont)
+		{
+			if (!logFont)
+			{
+				return true;
+			}
+			HDC hdc = CreateCompatibleDC(nullptr);
+			if (!hdc)
+			{
+				return true;
+			}
+			HFONT hFont = rawCreateFontIndirectA(logFont);
+			if (!hFont)
+			{
+				DeleteDC(hdc);
+				return false;
+			}
+			HGDIOBJ oldObject = rawSelectObject(hdc, hFont);
+			if (!oldObject || oldObject == HGDI_ERROR)
+			{
+				DeleteObject(hFont);
+				DeleteDC(hdc);
+				return false;
+			}
+			TEXTMETRICA metrics = {};
+			BOOL ok = rawGetTextMetricsA(hdc, &metrics);
+			rawSelectObject(hdc, oldObject);
+			DeleteObject(hFont);
+			DeleteDC(hdc);
+			return ok && HasPositiveTextMetrics(&metrics);
+		}
+		static bool IsSafeChooseFontResultW(const LOGFONTW* logFont)
+		{
+			if (!logFont)
+			{
+				return true;
+			}
+			HDC hdc = CreateCompatibleDC(nullptr);
+			if (!hdc)
+			{
+				return true;
+			}
+			HFONT hFont = rawCreateFontIndirectW(logFont);
+			if (!hFont)
+			{
+				DeleteDC(hdc);
+				return false;
+			}
+			HGDIOBJ oldObject = rawSelectObject(hdc, hFont);
+			if (!oldObject || oldObject == HGDI_ERROR)
+			{
+				DeleteObject(hFont);
+				DeleteDC(hdc);
+				return false;
+			}
+			TEXTMETRICW metrics = {};
+			BOOL ok = rawGetTextMetricsW(hdc, &metrics);
+			rawSelectObject(hdc, oldObject);
+			DeleteObject(hFont);
+			DeleteDC(hdc);
+			return ok && HasPositiveTextMetrics(&metrics);
+		}
 		static pCreateFontIndirectExA rawCreateFontIndirectExA = CreateFontIndirectExA;
 		static pCreateFontIndirectExW rawCreateFontIndirectExW = CreateFontIndirectExW;
 		static pGetCharABCWidthsA rawGetCharABCWidthsA = GetCharABCWidthsA;
@@ -1109,6 +1291,22 @@
 		static pEnumFontFamiliesW rawEnumFontFamiliesW = EnumFontFamiliesW;
 		static pChooseFontA rawChooseFontA = nullptr;
 		static pChooseFontW rawChooseFontW = nullptr;
+		static DWORD UnlockChooseFontFlags(DWORD flags)
+		{
+			flags &= ~(CF_SELECTSCRIPT
+				| CF_SCRIPTSONLY
+				| CF_FIXEDPITCHONLY
+				| CF_TTONLY
+				| CF_SCALABLEONLY
+				| CF_NOVECTORFONTS
+				| CF_NOSIMULATIONS
+				| CF_NOVERTFONTS
+				| CF_WYSIWYG
+				| CF_LIMITSIZE
+				| CF_PRINTERFONTS);
+			flags |= CF_SCREENFONTS;
+			return flags;
+		}
 		static pGetCharWidthFloatA rawGetCharWidthFloatA = GetCharWidthFloatA;
 		static pGetCharWidthFloatW rawGetCharWidthFloatW = GetCharWidthFloatW;
 		static pGetCharWidthI rawGetCharWidthI = GetCharWidthI;
@@ -1121,8 +1319,23 @@
 		static pLoadLibraryW rawLoadLibraryW = LoadLibraryW;
 		static pLoadLibraryExW rawLoadLibraryExW = LoadLibraryExW;
 		static pDWriteCreateFactory rawDWriteCreateFactory = nullptr;
+			static pD2D1CreateFactory rawD2D1CreateFactory = nullptr;
+				static pD2D1CreateDevice rawD2D1CreateDevice = nullptr;
+				static pD2D1CreateDeviceContext rawD2D1CreateDeviceContext = nullptr;
 		static pDWriteFactoryCreateTextFormat rawDWriteFactoryCreateTextFormat = nullptr;
-		static pGdipCreateFontFamilyFromName rawGdipCreateFontFamilyFromName = nullptr;
+			static pDWriteFactoryCreateTextLayout rawDWriteFactoryCreateTextLayout = nullptr;
+			static pDWriteFactoryCreateGdiCompatibleTextLayout rawDWriteFactoryCreateGdiCompatibleTextLayout = nullptr;
+				static pDWriteTextLayoutSetFontFamilyName rawDWriteTextLayoutSetFontFamilyName = nullptr;
+				static pDWriteTextLayoutSetFontSize rawDWriteTextLayoutSetFontSize = nullptr;
+		static pD2D1FactoryCreateHwndRenderTarget rawD2D1FactoryCreateHwndRenderTarget = nullptr;
+			static pD2D1FactoryCreateDxgiSurfaceRenderTarget rawD2D1FactoryCreateDxgiSurfaceRenderTarget = nullptr;
+			static pD2D1FactoryCreateDCRenderTarget rawD2D1FactoryCreateDCRenderTarget = nullptr;
+			static pD2D1FactoryCreateWicBitmapRenderTarget rawD2D1FactoryCreateWicBitmapRenderTarget = nullptr;
+				static pD2D1Factory1CreateDevice rawD2D1Factory1CreateDevice = nullptr;
+				static pD2D1DeviceCreateDeviceContext rawD2D1DeviceCreateDeviceContext = nullptr;
+			static pD2D1RenderTargetDrawText rawD2D1RenderTargetDrawText = nullptr;
+			static pD2D1RenderTargetDrawTextLayout rawD2D1RenderTargetDrawTextLayout = nullptr;
+			static pGdipCreateFontFamilyFromName rawGdipCreateFontFamilyFromName = nullptr;
 		static pGdipCreateFontFromLogfontW rawGdipCreateFontFromLogfontW = nullptr;
 		static pGdipCreateFontFromLogfontA rawGdipCreateFontFromLogfontA = nullptr;
 		static pGdipCreateFontFromHFONT rawGdipCreateFontFromHFONT = nullptr;
@@ -1148,11 +1361,26 @@
 		static bool sg_hookedLoadLibraryW = false;
 		static bool sg_hookedLoadLibraryExW = false;
 		static bool sg_hookedDWriteCreateTextFormat = false;
+		static bool sg_hookedDWriteCreateTextLayout = false;
+			static bool sg_hookedDWriteTextLayoutSetFontFamilyName = false;
+			static bool sg_hookedDWriteTextLayoutSetFontSize = false;
+		static bool sg_hookedDWriteCreateGdiCompatibleTextLayout = false;
+		static bool sg_hookedD2D1CreateFactory = false;
+			static bool sg_hookedD2D1CreateDevice = false;
+			static bool sg_hookedD2D1CreateDeviceContext = false;
+		static bool sg_hookedD2D1FactoryCreateHwndRenderTarget = false;
+		static bool sg_hookedD2D1FactoryCreateDxgiSurfaceRenderTarget = false;
+		static bool sg_hookedD2D1FactoryCreateDCRenderTarget = false;
+		static bool sg_hookedD2D1FactoryCreateWicBitmapRenderTarget = false;
+			static bool sg_hookedD2D1Factory1CreateDevice = false;
+			static bool sg_hookedD2D1DeviceCreateDeviceContext = false;
+		static bool sg_hookedD2D1RenderTargetDrawText = false;
+		static bool sg_hookedD2D1RenderTargetDrawTextLayout = false;
 		static bool sg_hookedChooseFontA = false;
 		static bool sg_hookedChooseFontW = false;
 
-		int WINAPI newGetObjectA(HANDLE h, int c, LPVOID pv)
-		{
+		int WINAPI newGetObjectA_SehImpl(HANDLE h, int c, LPVOID pv)
+{
 			int ret = rawGetObjectA(h, c, pv);
 			if (ret >= (int)sizeof(LOGFONTA) && pv && c >= (int)sizeof(LOGFONTA) && IsFontObjectHandle(h))
 			{
@@ -1161,9 +1389,15 @@
 			}
 			return ret;
 		}
-
-		int WINAPI newGetObjectW(HANDLE h, int c, LPVOID pv)
+		int WINAPI newGetObjectA(HANDLE h, int c, LPVOID pv)
 		{
+			__try { return newGetObjectA_SehImpl(h, c, pv); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetObjectA(h, c, pv); }
+		}
+
+
+		int WINAPI newGetObjectW_SehImpl(HANDLE h, int c, LPVOID pv)
+{
 			int ret = rawGetObjectW(h, c, pv);
 			if (ret >= (int)sizeof(LOGFONTW) && pv && c >= (int)sizeof(LOGFONTW) && IsFontObjectHandle(h))
 			{
@@ -1172,9 +1406,15 @@
 			}
 			return ret;
 		}
-
-		int WINAPI newGetTextFaceA(HDC hdc, int c, LPSTR lpName)
+		int WINAPI newGetObjectW(HANDLE h, int c, LPVOID pv)
 		{
+			__try { return newGetObjectW_SehImpl(h, c, pv); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetObjectW(h, c, pv); }
+		}
+
+
+		int WINAPI newGetTextFaceA_SehImpl(HDC hdc, int c, LPSTR lpName)
+{
 			LOGFONTW currentLf = {};
 			bool skipOverride = false;
 			std::string forced;
@@ -1202,9 +1442,15 @@
 			strncpy_s(lpName, c, forced.c_str(), _TRUNCATE);
 			return (int)strlen(lpName);
 		}
-
-		int WINAPI newGetTextFaceW(HDC hdc, int c, LPWSTR lpName)
+		int WINAPI newGetTextFaceA(HDC hdc, int c, LPSTR lpName)
 		{
+			__try { return newGetTextFaceA_SehImpl(hdc, c, lpName); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetTextFaceA(hdc, c, lpName); }
+		}
+
+
+		int WINAPI newGetTextFaceW_SehImpl(HDC hdc, int c, LPWSTR lpName)
+{
 			LOGFONTW currentLf = {};
 			bool skipOverride = false;
 			wchar_t forcedFaceName[LF_FACESIZE] = {};
@@ -1223,9 +1469,15 @@
 			wcsncpy_s(lpName, c, forcedFaceName, _TRUNCATE);
 			return (int)wcslen(lpName);
 		}
-
-		BOOL WINAPI newGetTextMetricsA(HDC hdc, LPTEXTMETRICA lptm)
+		int WINAPI newGetTextFaceW(HDC hdc, int c, LPWSTR lpName)
 		{
+			__try { return newGetTextFaceW_SehImpl(hdc, c, lpName); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetTextFaceW(hdc, c, lpName); }
+		}
+
+
+		BOOL WINAPI newGetTextMetricsA_SehImpl(HDC hdc, LPTEXTMETRICA lptm)
+{
 			HFONT hOld = nullptr;
 			HFONT hNew = ReplaceHdcFont(hdc, &hOld);
 			BOOL ret = rawGetTextMetricsA(hdc, lptm);
@@ -1237,9 +1489,15 @@
 			}
 			return ret;
 		}
-
-		BOOL WINAPI newGetTextMetricsW(HDC hdc, LPTEXTMETRICW lptm)
+		BOOL WINAPI newGetTextMetricsA(HDC hdc, LPTEXTMETRICA lptm)
 		{
+			__try { return newGetTextMetricsA_SehImpl(hdc, lptm); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetTextMetricsA(hdc, lptm); }
+		}
+
+
+		BOOL WINAPI newGetTextMetricsW_SehImpl(HDC hdc, LPTEXTMETRICW lptm)
+{
 			HFONT hOld = nullptr;
 			HFONT hNew = ReplaceHdcFont(hdc, &hOld);
 			BOOL ret = rawGetTextMetricsW(hdc, lptm);
@@ -1251,9 +1509,15 @@
 			}
 			return ret;
 		}
-
-		HFONT WINAPI newCreateFontIndirectExA(const ENUMLOGFONTEXDVA* penumlfex)
+		BOOL WINAPI newGetTextMetricsW(HDC hdc, LPTEXTMETRICW lptm)
 		{
+			__try { return newGetTextMetricsW_SehImpl(hdc, lptm); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetTextMetricsW(hdc, lptm); }
+		}
+
+
+		HFONT WINAPI newCreateFontIndirectExA_SehImpl(const ENUMLOGFONTEXDVA* penumlfex)
+{
 			if (sg_fontCreateNesting > 0)
 			{
 				return rawCreateFontIndirectExA(penumlfex);
@@ -1272,9 +1536,15 @@
 			}
 			return hFont;
 		}
-
-		HFONT WINAPI newCreateFontIndirectExW(const ENUMLOGFONTEXDVW* penumlfex)
+		HFONT WINAPI newCreateFontIndirectExA(const ENUMLOGFONTEXDVA* penumlfex)
 		{
+			__try { return newCreateFontIndirectExA_SehImpl(penumlfex); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawCreateFontIndirectExA(penumlfex); }
+		}
+
+
+		HFONT WINAPI newCreateFontIndirectExW_SehImpl(const ENUMLOGFONTEXDVW* penumlfex)
+{
 			if (sg_fontCreateNesting > 0)
 			{
 				return rawCreateFontIndirectExW(penumlfex);
@@ -1293,9 +1563,15 @@
 			}
 			return hFont;
 		}
-
-		BOOL WINAPI newGetCharABCWidthsA(HDC hdc, UINT wFirst, UINT wLast, LPABC lpABC)
+		HFONT WINAPI newCreateFontIndirectExW(const ENUMLOGFONTEXDVW* penumlfex)
 		{
+			__try { return newCreateFontIndirectExW_SehImpl(penumlfex); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawCreateFontIndirectExW(penumlfex); }
+		}
+
+
+		BOOL WINAPI newGetCharABCWidthsA_SehImpl(HDC hdc, UINT wFirst, UINT wLast, LPABC lpABC)
+{
 			HFONT hOld = nullptr;
 			HFONT hNew = ReplaceHdcFont(hdc, &hOld);
 			BOOL ret = rawGetCharABCWidthsA(hdc, wFirst, wLast, lpABC);
@@ -1317,9 +1593,15 @@
 			}
 			return ret;
 		}
-
-		BOOL WINAPI newGetCharABCWidthsW(HDC hdc, UINT wFirst, UINT wLast, LPABC lpABC)
+		BOOL WINAPI newGetCharABCWidthsA(HDC hdc, UINT wFirst, UINT wLast, LPABC lpABC)
 		{
+			__try { return newGetCharABCWidthsA_SehImpl(hdc, wFirst, wLast, lpABC); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetCharABCWidthsA(hdc, wFirst, wLast, lpABC); }
+		}
+
+
+		BOOL WINAPI newGetCharABCWidthsW_SehImpl(HDC hdc, UINT wFirst, UINT wLast, LPABC lpABC)
+{
 			HFONT hOld = nullptr;
 			HFONT hNew = ReplaceHdcFont(hdc, &hOld);
 			BOOL ret = rawGetCharABCWidthsW(hdc, wFirst, wLast, lpABC);
@@ -1341,9 +1623,15 @@
 			}
 			return ret;
 		}
-
-		BOOL WINAPI newGetCharABCWidthsFloatA(HDC hdc, UINT iFirst, UINT iLast, LPABCFLOAT lpABC)
+		BOOL WINAPI newGetCharABCWidthsW(HDC hdc, UINT wFirst, UINT wLast, LPABC lpABC)
 		{
+			__try { return newGetCharABCWidthsW_SehImpl(hdc, wFirst, wLast, lpABC); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetCharABCWidthsW(hdc, wFirst, wLast, lpABC); }
+		}
+
+
+		BOOL WINAPI newGetCharABCWidthsFloatA_SehImpl(HDC hdc, UINT iFirst, UINT iLast, LPABCFLOAT lpABC)
+{
 			HFONT hOld = nullptr;
 			HFONT hNew = ReplaceHdcFont(hdc, &hOld);
 			BOOL ret = rawGetCharABCWidthsFloatA(hdc, iFirst, iLast, lpABC);
@@ -1365,9 +1653,15 @@
 			}
 			return ret;
 		}
-
-		BOOL WINAPI newGetCharABCWidthsFloatW(HDC hdc, UINT iFirst, UINT iLast, LPABCFLOAT lpABC)
+		BOOL WINAPI newGetCharABCWidthsFloatA(HDC hdc, UINT iFirst, UINT iLast, LPABCFLOAT lpABC)
 		{
+			__try { return newGetCharABCWidthsFloatA_SehImpl(hdc, iFirst, iLast, lpABC); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetCharABCWidthsFloatA(hdc, iFirst, iLast, lpABC); }
+		}
+
+
+		BOOL WINAPI newGetCharABCWidthsFloatW_SehImpl(HDC hdc, UINT iFirst, UINT iLast, LPABCFLOAT lpABC)
+{
 			HFONT hOld = nullptr;
 			HFONT hNew = ReplaceHdcFont(hdc, &hOld);
 			BOOL ret = rawGetCharABCWidthsFloatW(hdc, iFirst, iLast, lpABC);
@@ -1389,9 +1683,15 @@
 			}
 			return ret;
 		}
-
-		BOOL WINAPI newGetCharWidthA(HDC hdc, UINT iFirst, UINT iLast, LPINT lpBuffer)
+		BOOL WINAPI newGetCharABCWidthsFloatW(HDC hdc, UINT iFirst, UINT iLast, LPABCFLOAT lpABC)
 		{
+			__try { return newGetCharABCWidthsFloatW_SehImpl(hdc, iFirst, iLast, lpABC); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetCharABCWidthsFloatW(hdc, iFirst, iLast, lpABC); }
+		}
+
+
+		BOOL WINAPI newGetCharWidthA_SehImpl(HDC hdc, UINT iFirst, UINT iLast, LPINT lpBuffer)
+{
 			HFONT hOld = nullptr;
 			HFONT hNew = ReplaceHdcFont(hdc, &hOld);
 			BOOL ret = rawGetCharWidthA(hdc, iFirst, iLast, lpBuffer);
@@ -1411,9 +1711,15 @@
 			}
 			return ret;
 		}
-
-		BOOL WINAPI newGetCharWidthW(HDC hdc, UINT iFirst, UINT iLast, LPINT lpBuffer)
+		BOOL WINAPI newGetCharWidthA(HDC hdc, UINT iFirst, UINT iLast, LPINT lpBuffer)
 		{
+			__try { return newGetCharWidthA_SehImpl(hdc, iFirst, iLast, lpBuffer); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetCharWidthA(hdc, iFirst, iLast, lpBuffer); }
+		}
+
+
+		BOOL WINAPI newGetCharWidthW_SehImpl(HDC hdc, UINT iFirst, UINT iLast, LPINT lpBuffer)
+{
 			HFONT hOld = nullptr;
 			HFONT hNew = ReplaceHdcFont(hdc, &hOld);
 			BOOL ret = rawGetCharWidthW(hdc, iFirst, iLast, lpBuffer);
@@ -1433,9 +1739,15 @@
 			}
 			return ret;
 		}
-
-		BOOL WINAPI newGetCharWidth32A(HDC hdc, UINT iFirst, UINT iLast, LPINT lpBuffer)
+		BOOL WINAPI newGetCharWidthW(HDC hdc, UINT iFirst, UINT iLast, LPINT lpBuffer)
 		{
+			__try { return newGetCharWidthW_SehImpl(hdc, iFirst, iLast, lpBuffer); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetCharWidthW(hdc, iFirst, iLast, lpBuffer); }
+		}
+
+
+		BOOL WINAPI newGetCharWidth32A_SehImpl(HDC hdc, UINT iFirst, UINT iLast, LPINT lpBuffer)
+{
 			HFONT hOld = nullptr;
 			HFONT hNew = ReplaceHdcFont(hdc, &hOld);
 			BOOL ret = rawGetCharWidth32A(hdc, iFirst, iLast, lpBuffer);
@@ -1455,9 +1767,15 @@
 			}
 			return ret;
 		}
-
-		BOOL WINAPI newGetCharWidth32W(HDC hdc, UINT iFirst, UINT iLast, LPINT lpBuffer)
+		BOOL WINAPI newGetCharWidth32A(HDC hdc, UINT iFirst, UINT iLast, LPINT lpBuffer)
 		{
+			__try { return newGetCharWidth32A_SehImpl(hdc, iFirst, iLast, lpBuffer); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetCharWidth32A(hdc, iFirst, iLast, lpBuffer); }
+		}
+
+
+		BOOL WINAPI newGetCharWidth32W_SehImpl(HDC hdc, UINT iFirst, UINT iLast, LPINT lpBuffer)
+{
 			HFONT hOld = nullptr;
 			HFONT hNew = ReplaceHdcFont(hdc, &hOld);
 			BOOL ret = rawGetCharWidth32W(hdc, iFirst, iLast, lpBuffer);
@@ -1477,27 +1795,45 @@
 			}
 			return ret;
 		}
-
-		DWORD WINAPI newGetKerningPairsA(HDC hdc, DWORD nPairs, LPKERNINGPAIR lpKerningPairs)
+		BOOL WINAPI newGetCharWidth32W(HDC hdc, UINT iFirst, UINT iLast, LPINT lpBuffer)
 		{
+			__try { return newGetCharWidth32W_SehImpl(hdc, iFirst, iLast, lpBuffer); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetCharWidth32W(hdc, iFirst, iLast, lpBuffer); }
+		}
+
+
+		DWORD WINAPI newGetKerningPairsA_SehImpl(HDC hdc, DWORD nPairs, LPKERNINGPAIR lpKerningPairs)
+{
 			HFONT hOld = nullptr;
 			HFONT hNew = ReplaceHdcFont(hdc, &hOld);
 			DWORD ret = rawGetKerningPairsA(hdc, nPairs, lpKerningPairs);
 			RestoreHdcFont(hdc, hOld, hNew);
 			return ret;
 		}
-
-		DWORD WINAPI newGetKerningPairsW(HDC hdc, DWORD nPairs, LPKERNINGPAIR lpKerningPairs)
+		DWORD WINAPI newGetKerningPairsA(HDC hdc, DWORD nPairs, LPKERNINGPAIR lpKerningPairs)
 		{
+			__try { return newGetKerningPairsA_SehImpl(hdc, nPairs, lpKerningPairs); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetKerningPairsA(hdc, nPairs, lpKerningPairs); }
+		}
+
+
+		DWORD WINAPI newGetKerningPairsW_SehImpl(HDC hdc, DWORD nPairs, LPKERNINGPAIR lpKerningPairs)
+{
 			HFONT hOld = nullptr;
 			HFONT hNew = ReplaceHdcFont(hdc, &hOld);
 			DWORD ret = rawGetKerningPairsW(hdc, nPairs, lpKerningPairs);
 			RestoreHdcFont(hdc, hOld, hNew);
 			return ret;
 		}
-
-		UINT WINAPI newGetOutlineTextMetricsA(HDC hdc, UINT cjCopy, LPOUTLINETEXTMETRICA lpotm)
+		DWORD WINAPI newGetKerningPairsW(HDC hdc, DWORD nPairs, LPKERNINGPAIR lpKerningPairs)
 		{
+			__try { return newGetKerningPairsW_SehImpl(hdc, nPairs, lpKerningPairs); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetKerningPairsW(hdc, nPairs, lpKerningPairs); }
+		}
+
+
+		UINT WINAPI newGetOutlineTextMetricsA_SehImpl(HDC hdc, UINT cjCopy, LPOUTLINETEXTMETRICA lpotm)
+{
 			HFONT hOld = nullptr;
 			HFONT hNew = ReplaceHdcFont(hdc, &hOld);
 			UINT ret = rawGetOutlineTextMetricsA(hdc, cjCopy, lpotm);
@@ -1509,9 +1845,15 @@
 			}
 			return ret;
 		}
-
-		UINT WINAPI newGetOutlineTextMetricsW(HDC hdc, UINT cjCopy, LPOUTLINETEXTMETRICW lpotm)
+		UINT WINAPI newGetOutlineTextMetricsA(HDC hdc, UINT cjCopy, LPOUTLINETEXTMETRICA lpotm)
 		{
+			__try { return newGetOutlineTextMetricsA_SehImpl(hdc, cjCopy, lpotm); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetOutlineTextMetricsA(hdc, cjCopy, lpotm); }
+		}
+
+
+		UINT WINAPI newGetOutlineTextMetricsW_SehImpl(HDC hdc, UINT cjCopy, LPOUTLINETEXTMETRICW lpotm)
+{
 			HFONT hOld = nullptr;
 			HFONT hNew = ReplaceHdcFont(hdc, &hOld);
 			UINT ret = rawGetOutlineTextMetricsW(hdc, cjCopy, lpotm);
@@ -1523,121 +1865,151 @@
 			}
 			return ret;
 		}
-
-		int WINAPI newAddFontResourceA(LPCSTR lpFileName)
+		UINT WINAPI newGetOutlineTextMetricsW(HDC hdc, UINT cjCopy, LPOUTLINETEXTMETRICW lpotm)
 		{
+			__try { return newGetOutlineTextMetricsW_SehImpl(hdc, cjCopy, lpotm); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetOutlineTextMetricsW(hdc, cjCopy, lpotm); }
+		}
+
+
+		int WINAPI newAddFontResourceA_SehImpl(LPCSTR lpFileName)
+{
 			return rawAddFontResourceA(lpFileName);
 		}
-
-		int WINAPI newAddFontResourceW(LPCWSTR lpFileName)
+		int WINAPI newAddFontResourceA(LPCSTR lpFileName)
 		{
+			__try { return newAddFontResourceA_SehImpl(lpFileName); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawAddFontResourceA(lpFileName); }
+		}
+
+
+		int WINAPI newAddFontResourceW_SehImpl(LPCWSTR lpFileName)
+{
 			return rawAddFontResourceW(lpFileName);
 		}
-
-		int WINAPI newAddFontResourceExA(LPCSTR name, DWORD fl, PVOID pdv)
+		int WINAPI newAddFontResourceW(LPCWSTR lpFileName)
 		{
+			__try { return newAddFontResourceW_SehImpl(lpFileName); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawAddFontResourceW(lpFileName); }
+		}
+
+
+		int WINAPI newAddFontResourceExA_SehImpl(LPCSTR name, DWORD fl, PVOID pdv)
+{
 			return rawAddFontResourceExA(name, fl, pdv);
 		}
-
-		HANDLE WINAPI newAddFontMemResourceEx(PVOID pbFont, DWORD cbFont, PVOID pdv, DWORD* pcFonts)
+		int WINAPI newAddFontResourceExA(LPCSTR name, DWORD fl, PVOID pdv)
 		{
+			__try { return newAddFontResourceExA_SehImpl(name, fl, pdv); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawAddFontResourceExA(name, fl, pdv); }
+		}
+
+
+		HANDLE WINAPI newAddFontMemResourceEx_SehImpl(PVOID pbFont, DWORD cbFont, PVOID pdv, DWORD* pcFonts)
+{
 			return rawAddFontMemResourceEx(pbFont, cbFont, pdv, pcFonts);
 		}
-
-		BOOL WINAPI newRemoveFontResourceA(LPCSTR lpFileName)
+		HANDLE WINAPI newAddFontMemResourceEx(PVOID pbFont, DWORD cbFont, PVOID pdv, DWORD* pcFonts)
 		{
+			__try { return newAddFontMemResourceEx_SehImpl(pbFont, cbFont, pdv, pcFonts); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawAddFontMemResourceEx(pbFont, cbFont, pdv, pcFonts); }
+		}
+
+
+		BOOL WINAPI newRemoveFontResourceA_SehImpl(LPCSTR lpFileName)
+{
 			return rawRemoveFontResourceA(lpFileName);
 		}
-
-		BOOL WINAPI newRemoveFontResourceW(LPCWSTR lpFileName)
+		BOOL WINAPI newRemoveFontResourceA(LPCSTR lpFileName)
 		{
+			__try { return newRemoveFontResourceA_SehImpl(lpFileName); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawRemoveFontResourceA(lpFileName); }
+		}
+
+
+		BOOL WINAPI newRemoveFontResourceW_SehImpl(LPCWSTR lpFileName)
+{
 			return rawRemoveFontResourceW(lpFileName);
 		}
-
-		BOOL WINAPI newRemoveFontResourceExA(LPCSTR name, DWORD fl, PVOID pdv)
+		BOOL WINAPI newRemoveFontResourceW(LPCWSTR lpFileName)
 		{
+			__try { return newRemoveFontResourceW_SehImpl(lpFileName); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawRemoveFontResourceW(lpFileName); }
+		}
+
+
+		BOOL WINAPI newRemoveFontResourceExA_SehImpl(LPCSTR name, DWORD fl, PVOID pdv)
+{
 			return rawRemoveFontResourceExA(name, fl, pdv);
 		}
-
-		BOOL WINAPI newRemoveFontMemResourceEx(HANDLE h)
+		BOOL WINAPI newRemoveFontResourceExA(LPCSTR name, DWORD fl, PVOID pdv)
 		{
+			__try { return newRemoveFontResourceExA_SehImpl(name, fl, pdv); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawRemoveFontResourceExA(name, fl, pdv); }
+		}
+
+
+		BOOL WINAPI newRemoveFontMemResourceEx_SehImpl(HANDLE h)
+{
 			return rawRemoveFontMemResourceEx(h);
 		}
+		BOOL WINAPI newRemoveFontMemResourceEx(HANDLE h)
+		{
+			__try { return newRemoveFontMemResourceEx_SehImpl(h); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawRemoveFontMemResourceEx(h); }
+		}
 
+
+		int WINAPI newEnumFontsA_SehImpl(HDC hdc, LPCSTR lpFaceName, FONTENUMPROCA lpProc, LPARAM lParam)
+{
+			LPCSTR useFaceName = sg_unlockFontSelection ? nullptr : lpFaceName;
+			return rawEnumFontsA(hdc, useFaceName, lpProc, lParam);
+		}
 		int WINAPI newEnumFontsA(HDC hdc, LPCSTR lpFaceName, FONTENUMPROCA lpProc, LPARAM lParam)
 		{
-			LPCSTR useFaceName = sg_unlockFontSelection ? nullptr : lpFaceName;
-			int ret = 0;
-			if (sg_unlockFontSelection && lpProc)
-			{
-				EnumFontDedupContextA context = {};
-				context.callback = lpProc;
-				context.originalLParam = lParam;
-				ret = rawEnumFontsA(hdc, useFaceName, EnumFontDedupProcA, reinterpret_cast<LPARAM>(&context));
-			}
-			else
-			{
-				ret = rawEnumFontsA(hdc, useFaceName, lpProc, lParam);
-			}
-			return ret;
+			__try { return newEnumFontsA_SehImpl(hdc, lpFaceName, lpProc, lParam); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawEnumFontsA(hdc, lpFaceName, lpProc, lParam); }
 		}
 
+
+		int WINAPI newEnumFontsW_SehImpl(HDC hdc, LPCWSTR lpFaceName, FONTENUMPROCW lpProc, LPARAM lParam)
+{
+			LPCWSTR useFaceName = sg_unlockFontSelection ? nullptr : lpFaceName;
+			return rawEnumFontsW(hdc, useFaceName, lpProc, lParam);
+		}
 		int WINAPI newEnumFontsW(HDC hdc, LPCWSTR lpFaceName, FONTENUMPROCW lpProc, LPARAM lParam)
 		{
-			LPCWSTR useFaceName = sg_unlockFontSelection ? nullptr : lpFaceName;
-			int ret = 0;
-			if (sg_unlockFontSelection && lpProc)
-			{
-				EnumFontDedupContextW context = {};
-				context.callback = lpProc;
-				context.originalLParam = lParam;
-				ret = rawEnumFontsW(hdc, useFaceName, EnumFontDedupProcW, reinterpret_cast<LPARAM>(&context));
-			}
-			else
-			{
-				ret = rawEnumFontsW(hdc, useFaceName, lpProc, lParam);
-			}
-			return ret;
+			__try { return newEnumFontsW_SehImpl(hdc, lpFaceName, lpProc, lParam); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawEnumFontsW(hdc, lpFaceName, lpProc, lParam); }
 		}
 
+
+		int WINAPI newEnumFontFamiliesA_SehImpl(HDC hdc, LPCSTR lpFaceName, FONTENUMPROCA lpProc, LPARAM lParam)
+{
+			LPCSTR useFaceName = sg_unlockFontSelection ? nullptr : lpFaceName;
+			return rawEnumFontFamiliesA(hdc, useFaceName, lpProc, lParam);
+		}
 		int WINAPI newEnumFontFamiliesA(HDC hdc, LPCSTR lpFaceName, FONTENUMPROCA lpProc, LPARAM lParam)
 		{
-			LPCSTR useFaceName = sg_unlockFontSelection ? nullptr : lpFaceName;
-			int ret = 0;
-			if (sg_unlockFontSelection && lpProc)
-			{
-				EnumFontDedupContextA context = {};
-				context.callback = lpProc;
-				context.originalLParam = lParam;
-				ret = rawEnumFontFamiliesA(hdc, useFaceName, EnumFontDedupProcA, reinterpret_cast<LPARAM>(&context));
-			}
-			else
-			{
-				ret = rawEnumFontFamiliesA(hdc, useFaceName, lpProc, lParam);
-			}
-			return ret;
+			__try { return newEnumFontFamiliesA_SehImpl(hdc, lpFaceName, lpProc, lParam); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawEnumFontFamiliesA(hdc, lpFaceName, lpProc, lParam); }
 		}
 
+
+		int WINAPI newEnumFontFamiliesW_SehImpl(HDC hdc, LPCWSTR lpFaceName, FONTENUMPROCW lpProc, LPARAM lParam)
+{
+			LPCWSTR useFaceName = sg_unlockFontSelection ? nullptr : lpFaceName;
+			return rawEnumFontFamiliesW(hdc, useFaceName, lpProc, lParam);
+		}
 		int WINAPI newEnumFontFamiliesW(HDC hdc, LPCWSTR lpFaceName, FONTENUMPROCW lpProc, LPARAM lParam)
 		{
-			LPCWSTR useFaceName = sg_unlockFontSelection ? nullptr : lpFaceName;
-			int ret = 0;
-			if (sg_unlockFontSelection && lpProc)
-			{
-				EnumFontDedupContextW context = {};
-				context.callback = lpProc;
-				context.originalLParam = lParam;
-				ret = rawEnumFontFamiliesW(hdc, useFaceName, EnumFontDedupProcW, reinterpret_cast<LPARAM>(&context));
-			}
-			else
-			{
-				ret = rawEnumFontFamiliesW(hdc, useFaceName, lpProc, lParam);
-			}
-			return ret;
+			__try { return newEnumFontFamiliesW_SehImpl(hdc, lpFaceName, lpProc, lParam); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawEnumFontFamiliesW(hdc, lpFaceName, lpProc, lParam); }
 		}
 
-		BOOL WINAPI newChooseFontA(LPCHOOSEFONTA lpcf)
-		{
+
+		BOOL WINAPI newChooseFontA_SehImpl(LPCHOOSEFONTA lpcf)
+{
 			if (!rawChooseFontA || !lpcf || !sg_unlockFontSelection)
 			{
 				return rawChooseFontA ? rawChooseFontA(lpcf) : FALSE;
@@ -1645,17 +2017,24 @@
 
 			CHOOSEFONTA local = *lpcf;
 			LOGFONTA localLogFont = {};
+			LOGFONTA fallbackLogFont = {};
 			LPLOGFONTA originalLogFont = local.lpLogFont;
 			if (originalLogFont)
 			{
+				fallbackLogFont = *originalLogFont;
 				localLogFont = *originalLogFont;
 				localLogFont.lfCharSet = DEFAULT_CHARSET;
 				localLogFont.lfFaceName[0] = '\0';
 				local.lpLogFont = &localLogFont;
 			}
-			local.Flags &= ~(CF_SELECTSCRIPT | CF_SCRIPTSONLY);
+			local.Flags = UnlockChooseFontFlags(local.Flags);
 
 			BOOL ret = rawChooseFontA(&local);
+			if (ret && originalLogFont && !IsSafeChooseFontResultA(&localLogFont))
+			{
+				localLogFont = fallbackLogFont;
+				LogMessage(LogLevel::Warn, L"UnlockFontSelection: rejected unsafe ChooseFontA result");
+			}
 			if (originalLogFont)
 			{
 				*originalLogFont = localLogFont;
@@ -1664,9 +2043,15 @@
 			*lpcf = local;
 			return ret;
 		}
-
-		BOOL WINAPI newChooseFontW(LPCHOOSEFONTW lpcf)
+		BOOL WINAPI newChooseFontA(LPCHOOSEFONTA lpcf)
 		{
+			__try { return newChooseFontA_SehImpl(lpcf); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawChooseFontA(lpcf); }
+		}
+
+
+		BOOL WINAPI newChooseFontW_SehImpl(LPCHOOSEFONTW lpcf)
+{
 			if (!rawChooseFontW || !lpcf || !sg_unlockFontSelection)
 			{
 				return rawChooseFontW ? rawChooseFontW(lpcf) : FALSE;
@@ -1674,17 +2059,24 @@
 
 			CHOOSEFONTW local = *lpcf;
 			LOGFONTW localLogFont = {};
+			LOGFONTW fallbackLogFont = {};
 			LPLOGFONTW originalLogFont = local.lpLogFont;
 			if (originalLogFont)
 			{
+				fallbackLogFont = *originalLogFont;
 				localLogFont = *originalLogFont;
 				localLogFont.lfCharSet = DEFAULT_CHARSET;
 				localLogFont.lfFaceName[0] = L'\0';
 				local.lpLogFont = &localLogFont;
 			}
-			local.Flags &= ~(CF_SELECTSCRIPT | CF_SCRIPTSONLY);
+			local.Flags = UnlockChooseFontFlags(local.Flags);
 
 			BOOL ret = rawChooseFontW(&local);
+			if (ret && originalLogFont && !IsSafeChooseFontResultW(&localLogFont))
+			{
+				localLogFont = fallbackLogFont;
+				LogMessage(LogLevel::Warn, L"UnlockFontSelection: rejected unsafe ChooseFontW result");
+			}
 			if (originalLogFont)
 			{
 				*originalLogFont = localLogFont;
@@ -1693,9 +2085,15 @@
 			*lpcf = local;
 			return ret;
 		}
-
-		BOOL WINAPI newGetCharWidthFloatA(HDC hdc, UINT iFirst, UINT iLast, PFLOAT lpBuffer)
+		BOOL WINAPI newChooseFontW(LPCHOOSEFONTW lpcf)
 		{
+			__try { return newChooseFontW_SehImpl(lpcf); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawChooseFontW(lpcf); }
+		}
+
+
+		BOOL WINAPI newGetCharWidthFloatA_SehImpl(HDC hdc, UINT iFirst, UINT iLast, PFLOAT lpBuffer)
+{
 			HFONT hOld = nullptr;
 			HFONT hNew = ReplaceHdcFont(hdc, &hOld);
 			BOOL ret = rawGetCharWidthFloatA(hdc, iFirst, iLast, lpBuffer);
@@ -1715,9 +2113,15 @@
 			}
 			return ret;
 		}
-
-		BOOL WINAPI newGetCharWidthFloatW(HDC hdc, UINT iFirst, UINT iLast, PFLOAT lpBuffer)
+		BOOL WINAPI newGetCharWidthFloatA(HDC hdc, UINT iFirst, UINT iLast, PFLOAT lpBuffer)
 		{
+			__try { return newGetCharWidthFloatA_SehImpl(hdc, iFirst, iLast, lpBuffer); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetCharWidthFloatA(hdc, iFirst, iLast, lpBuffer); }
+		}
+
+
+		BOOL WINAPI newGetCharWidthFloatW_SehImpl(HDC hdc, UINT iFirst, UINT iLast, PFLOAT lpBuffer)
+{
 			HFONT hOld = nullptr;
 			HFONT hNew = ReplaceHdcFont(hdc, &hOld);
 			BOOL ret = rawGetCharWidthFloatW(hdc, iFirst, iLast, lpBuffer);
@@ -1737,9 +2141,15 @@
 			}
 			return ret;
 		}
-
-		BOOL WINAPI newGetCharWidthI(HDC hdc, UINT giFirst, UINT cgi, LPWORD pgi, LPINT piWidths)
+		BOOL WINAPI newGetCharWidthFloatW(HDC hdc, UINT iFirst, UINT iLast, PFLOAT lpBuffer)
 		{
+			__try { return newGetCharWidthFloatW_SehImpl(hdc, iFirst, iLast, lpBuffer); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetCharWidthFloatW(hdc, iFirst, iLast, lpBuffer); }
+		}
+
+
+		BOOL WINAPI newGetCharWidthI_SehImpl(HDC hdc, UINT giFirst, UINT cgi, LPWORD pgi, LPINT piWidths)
+{
 			HFONT hOld = nullptr;
 			HFONT hNew = ReplaceHdcFont(hdc, &hOld);
 			BOOL ret = rawGetCharWidthI(hdc, giFirst, cgi, pgi, piWidths);
@@ -1758,61 +2168,130 @@
 			}
 			return ret;
 		}
-
-		BOOL WINAPI newGetCharABCWidthsI(HDC hdc, UINT giFirst, UINT cgi, LPWORD pgi, LPABC lpabc)
+		BOOL WINAPI newGetCharWidthI(HDC hdc, UINT giFirst, UINT cgi, LPWORD pgi, LPINT piWidths)
 		{
+			__try { return newGetCharWidthI_SehImpl(hdc, giFirst, cgi, pgi, piWidths); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetCharWidthI(hdc, giFirst, cgi, pgi, piWidths); }
+		}
+
+
+		BOOL WINAPI newGetCharABCWidthsI_SehImpl(HDC hdc, UINT giFirst, UINT cgi, LPWORD pgi, LPABC lpabc)
+{
 			HFONT hOld = nullptr;
 			HFONT hNew = ReplaceHdcFont(hdc, &hOld);
 			BOOL ret = rawGetCharABCWidthsI(hdc, giFirst, cgi, pgi, lpabc);
 			RestoreHdcFont(hdc, hOld, hNew);
 			return ret;
 		}
-
-		BOOL WINAPI newGetTextExtentPointI(HDC hdc, LPWORD pgiIn, int cgi, LPSIZE pSize)
+		BOOL WINAPI newGetCharABCWidthsI(HDC hdc, UINT giFirst, UINT cgi, LPWORD pgi, LPABC lpabc)
 		{
+			__try { return newGetCharABCWidthsI_SehImpl(hdc, giFirst, cgi, pgi, lpabc); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetCharABCWidthsI(hdc, giFirst, cgi, pgi, lpabc); }
+		}
+
+
+		BOOL WINAPI newGetTextExtentPointI_SehImpl(HDC hdc, LPWORD pgiIn, int cgi, LPSIZE pSize)
+{
 			HFONT hOld = nullptr;
 			HFONT hNew = ReplaceHdcFont(hdc, &hOld);
 			BOOL ret = rawGetTextExtentPointI(hdc, pgiIn, cgi, pSize);
 			RestoreHdcFont(hdc, hOld, hNew);
 			return ret;
 		}
-
-		BOOL WINAPI newGetTextExtentExPointI(HDC hdc, LPWORD lpwszString, int cwchString, int nMaxExtent, LPINT lpnFit, LPINT lpnDx, LPSIZE lpSize)
+		BOOL WINAPI newGetTextExtentPointI(HDC hdc, LPWORD pgiIn, int cgi, LPSIZE pSize)
 		{
+			__try { return newGetTextExtentPointI_SehImpl(hdc, pgiIn, cgi, pSize); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetTextExtentPointI(hdc, pgiIn, cgi, pSize); }
+		}
+
+
+		BOOL WINAPI newGetTextExtentExPointI_SehImpl(HDC hdc, LPWORD lpwszString, int cwchString, int nMaxExtent, LPINT lpnFit, LPINT lpnDx, LPSIZE lpSize)
+{
 			HFONT hOld = nullptr;
 			HFONT hNew = ReplaceHdcFont(hdc, &hOld);
 			BOOL ret = rawGetTextExtentExPointI(hdc, lpwszString, cwchString, nMaxExtent, lpnFit, lpnDx, lpSize);
 			RestoreHdcFont(hdc, hOld, hNew);
 			return ret;
 		}
-
-		DWORD WINAPI newGetFontData(HDC hdc, DWORD dwTable, DWORD dwOffset, PVOID pvBuffer, DWORD cjBuffer)
+		BOOL WINAPI newGetTextExtentExPointI(HDC hdc, LPWORD lpwszString, int cwchString, int nMaxExtent, LPINT lpnFit, LPINT lpnDx, LPSIZE lpSize)
 		{
+			__try { return newGetTextExtentExPointI_SehImpl(hdc, lpwszString, cwchString, nMaxExtent, lpnFit, lpnDx, lpSize); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetTextExtentExPointI(hdc, lpwszString, cwchString, nMaxExtent, lpnFit, lpnDx, lpSize); }
+		}
+
+
+		DWORD WINAPI newGetFontData_SehImpl(HDC hdc, DWORD dwTable, DWORD dwOffset, PVOID pvBuffer, DWORD cjBuffer)
+{
 			HFONT hOld = nullptr;
 			HFONT hNew = ReplaceHdcFont(hdc, &hOld);
 			DWORD ret = rawGetFontData(hdc, dwTable, dwOffset, pvBuffer, cjBuffer);
 			RestoreHdcFont(hdc, hOld, hNew);
 			return ret;
 		}
-
-		DWORD WINAPI newGetFontLanguageInfo(HDC hdc)
+		DWORD WINAPI newGetFontData(HDC hdc, DWORD dwTable, DWORD dwOffset, PVOID pvBuffer, DWORD cjBuffer)
 		{
+			__try { return newGetFontData_SehImpl(hdc, dwTable, dwOffset, pvBuffer, cjBuffer); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetFontData(hdc, dwTable, dwOffset, pvBuffer, cjBuffer); }
+		}
+
+
+		DWORD WINAPI newGetFontLanguageInfo_SehImpl(HDC hdc)
+{
 			HFONT hOld = nullptr;
 			HFONT hNew = ReplaceHdcFont(hdc, &hOld);
 			DWORD ret = rawGetFontLanguageInfo(hdc);
 			RestoreHdcFont(hdc, hOld, hNew);
 			return ret;
 		}
-
-		DWORD WINAPI newGetFontUnicodeRanges(HDC hdc, LPGLYPHSET lpgs)
+		DWORD WINAPI newGetFontLanguageInfo(HDC hdc)
 		{
+			__try { return newGetFontLanguageInfo_SehImpl(hdc); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetFontLanguageInfo(hdc); }
+		}
+
+
+		DWORD WINAPI newGetFontUnicodeRanges_SehImpl(HDC hdc, LPGLYPHSET lpgs)
+{
 			HFONT hOld = nullptr;
 			HFONT hNew = ReplaceHdcFont(hdc, &hOld);
 			DWORD ret = rawGetFontUnicodeRanges(hdc, lpgs);
 			RestoreHdcFont(hdc, hOld, hNew);
 			return ret;
 		}
+		DWORD WINAPI newGetFontUnicodeRanges(HDC hdc, LPGLYPHSET lpgs)
+		{
+			__try { return newGetFontUnicodeRanges_SehImpl(hdc, lpgs); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetFontUnicodeRanges(hdc, lpgs); }
+		}
 
+
+		static void TryHookDWriteTextLayoutMethods(void* textLayout);
+		static void TryHookD2DRenderTargetMethods(void* renderTarget);
+		static void TryHookD2DDeviceMethods(void* device);
+
+		HRESULT __stdcall newDWriteFactoryCreateTextFormat_SehImpl(void* factory,
+			LPCWSTR fontFamilyName,
+			void* fontCollection,
+			int fontWeight,
+			int fontStyle,
+			int fontStretch,
+			float fontSize,
+			LPCWSTR localeName,
+			void** textFormat)
+{
+			if (sg_dwriteHookNesting > 0)
+			{
+				return rawDWriteFactoryCreateTextFormat(factory, fontFamilyName, fontCollection, fontWeight, fontStyle, fontStretch, fontSize, localeName, textFormat);
+			}
+			DWriteHookNestingScope dwriteScope;
+			bool skipOverride = false;
+			wchar_t forcedFaceName[LF_FACESIZE] = {};
+			LPCWSTR useName = TryGetForcedFontNameWForRequest(fontFamilyName, forcedFaceName, skipOverride) ? forcedFaceName : fontFamilyName;
+			bool applyScale = ShouldApplyFloatSizeScale() && !sg_runtimeFloatScaleActive;
+			RuntimeFloatScaleScope scaleScope(applyScale);
+			float useFontSize = applyScale ? (fontSize * sg_fFontScale) : fontSize;
+			return rawDWriteFactoryCreateTextFormat(factory, useName, fontCollection, fontWeight, fontStyle, fontStretch, useFontSize, localeName, textFormat);
+		}
 		HRESULT __stdcall newDWriteFactoryCreateTextFormat(void* factory,
 			LPCWSTR fontFamilyName,
 			void* fontCollection,
@@ -1823,18 +2302,204 @@
 			LPCWSTR localeName,
 			void** textFormat)
 		{
-			bool skipOverride = false;
-			wchar_t forcedFaceName[LF_FACESIZE] = {};
-			LPCWSTR useName = TryGetForcedFontNameWForRequest(fontFamilyName, forcedFaceName, skipOverride) ? forcedFaceName : fontFamilyName;
-			bool applyScale = ShouldApplyFloatSizeScale() && !sg_runtimeFloatScaleActive;
-			RuntimeFloatScaleScope scaleScope(applyScale);
-			float useFontSize = applyScale ? (fontSize * sg_fFontScale) : fontSize;
-			return rawDWriteFactoryCreateTextFormat(factory, useName, fontCollection, fontWeight, fontStyle, fontStretch, useFontSize, localeName, textFormat);
+			if (sg_dwriteHookNesting > 0)
+			{
+				return rawDWriteFactoryCreateTextFormat(factory, fontFamilyName, fontCollection, fontWeight, fontStyle, fontStretch, fontSize, localeName, textFormat);
+			}
+			__try { return newDWriteFactoryCreateTextFormat_SehImpl(factory, fontFamilyName, fontCollection, fontWeight, fontStyle, fontStretch, fontSize, localeName, textFormat); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawDWriteFactoryCreateTextFormat(factory, fontFamilyName, fontCollection, fontWeight, fontStyle, fontStretch, fontSize, localeName, textFormat); }
 		}
 
-		static void TryHookDWriteFactoryMethods(IUnknown* factory)
+
+		HRESULT __stdcall newDWriteFactoryCreateTextLayout_SehImpl(void* factory,
+				const WCHAR* string,
+				UINT32 stringLength,
+				void* textFormat,
+				float maxWidth,
+				float maxHeight,
+				void** textLayout)
+			{
+				if (sg_dwriteHookNesting > 0)
+				{
+					return rawDWriteFactoryCreateTextLayout(factory, string, stringLength, textFormat, maxWidth, maxHeight, textLayout);
+				}
+				DWriteHookNestingScope dwriteScope;
+				HRESULT hr = S_OK;
+				if (!string || stringLength == 0)
+				{
+					hr = rawDWriteFactoryCreateTextLayout(factory, string, stringLength, textFormat, maxWidth, maxHeight, textLayout);
+				}
+				else
+				{
+					std::wstring mapped = ProcessGlyphStageTextW(string, static_cast<int>(stringLength));
+					if (mapped.size() == stringLength && wmemcmp(mapped.data(), string, stringLength) == 0)
+					{
+						hr = rawDWriteFactoryCreateTextLayout(factory, string, stringLength, textFormat, maxWidth, maxHeight, textLayout);
+					}
+					else
+					{
+						hr = rawDWriteFactoryCreateTextLayout(factory, mapped.c_str(), static_cast<UINT32>(mapped.size()), textFormat, maxWidth, maxHeight, textLayout);
+					}
+				}
+				if (SUCCEEDED(hr) && textLayout && *textLayout)
+				{
+					TryHookDWriteTextLayoutMethods(*textLayout);
+				}
+				return hr;
+			}
+			HRESULT __stdcall newDWriteFactoryCreateTextLayout(void* factory,
+				const WCHAR* string,
+				UINT32 stringLength,
+				void* textFormat,
+				float maxWidth,
+				float maxHeight,
+				void** textLayout)
+			{
+				if (sg_dwriteHookNesting > 0)
+				{
+					return rawDWriteFactoryCreateTextLayout(factory, string, stringLength, textFormat, maxWidth, maxHeight, textLayout);
+				}
+				__try { return newDWriteFactoryCreateTextLayout_SehImpl(factory, string, stringLength, textFormat, maxWidth, maxHeight, textLayout); }
+				__except(EXCEPTION_EXECUTE_HANDLER) { return rawDWriteFactoryCreateTextLayout(factory, string, stringLength, textFormat, maxWidth, maxHeight, textLayout); }
+			}
+
+			HRESULT __stdcall newDWriteFactoryCreateGdiCompatibleTextLayout_SehImpl(void* factory,
+				const WCHAR* string,
+				UINT32 stringLength,
+				void* textFormat,
+				float layoutWidth,
+				float layoutHeight,
+				float pixelsPerDip,
+				const void* transform,
+				BOOL useGdiNatural,
+				void** textLayout)
+			{
+				if (sg_dwriteHookNesting > 0)
+				{
+					return rawDWriteFactoryCreateGdiCompatibleTextLayout(factory, string, stringLength, textFormat, layoutWidth, layoutHeight, pixelsPerDip, transform, useGdiNatural, textLayout);
+				}
+				DWriteHookNestingScope dwriteScope;
+				HRESULT hr = S_OK;
+				if (!string || stringLength == 0)
+				{
+					hr = rawDWriteFactoryCreateGdiCompatibleTextLayout(factory, string, stringLength, textFormat, layoutWidth, layoutHeight, pixelsPerDip, transform, useGdiNatural, textLayout);
+				}
+				else
+				{
+					std::wstring mapped = ProcessGlyphStageTextW(string, static_cast<int>(stringLength));
+					if (mapped.size() == stringLength && wmemcmp(mapped.data(), string, stringLength) == 0)
+					{
+						hr = rawDWriteFactoryCreateGdiCompatibleTextLayout(factory, string, stringLength, textFormat, layoutWidth, layoutHeight, pixelsPerDip, transform, useGdiNatural, textLayout);
+					}
+					else
+					{
+						hr = rawDWriteFactoryCreateGdiCompatibleTextLayout(factory, mapped.c_str(), static_cast<UINT32>(mapped.size()), textFormat, layoutWidth, layoutHeight, pixelsPerDip, transform, useGdiNatural, textLayout);
+					}
+				}
+				if (SUCCEEDED(hr) && textLayout && *textLayout)
+				{
+					TryHookDWriteTextLayoutMethods(*textLayout);
+				}
+				return hr;
+			}
+			HRESULT __stdcall newDWriteFactoryCreateGdiCompatibleTextLayout(void* factory,
+				const WCHAR* string,
+				UINT32 stringLength,
+				void* textFormat,
+				float layoutWidth,
+				float layoutHeight,
+				float pixelsPerDip,
+				const void* transform,
+				BOOL useGdiNatural,
+				void** textLayout)
+			{
+				if (sg_dwriteHookNesting > 0)
+				{
+					return rawDWriteFactoryCreateGdiCompatibleTextLayout(factory, string, stringLength, textFormat, layoutWidth, layoutHeight, pixelsPerDip, transform, useGdiNatural, textLayout);
+				}
+				__try { return newDWriteFactoryCreateGdiCompatibleTextLayout_SehImpl(factory, string, stringLength, textFormat, layoutWidth, layoutHeight, pixelsPerDip, transform, useGdiNatural, textLayout); }
+				__except(EXCEPTION_EXECUTE_HANDLER) { return rawDWriteFactoryCreateGdiCompatibleTextLayout(factory, string, stringLength, textFormat, layoutWidth, layoutHeight, pixelsPerDip, transform, useGdiNatural, textLayout); }
+			}
+
+			HRESULT __stdcall newDWriteTextLayoutSetFontFamilyName_SehImpl(void* textLayout, LPCWSTR fontFamilyName, DWRITE_TEXT_RANGE textRange)
+			{
+				if (sg_dwriteHookNesting > 0)
+				{
+					return rawDWriteTextLayoutSetFontFamilyName(textLayout, fontFamilyName, textRange);
+				}
+				DWriteHookNestingScope dwriteScope;
+				bool skipOverride = false;
+				wchar_t forcedFaceName[LF_FACESIZE] = {};
+				LPCWSTR useName = TryGetForcedFontNameWForRequest(fontFamilyName, forcedFaceName, skipOverride) ? forcedFaceName : fontFamilyName;
+				return rawDWriteTextLayoutSetFontFamilyName(textLayout, useName, textRange);
+			}
+			HRESULT __stdcall newDWriteTextLayoutSetFontFamilyName(void* textLayout, LPCWSTR fontFamilyName, DWRITE_TEXT_RANGE textRange)
+			{
+				if (sg_dwriteHookNesting > 0)
+				{
+					return rawDWriteTextLayoutSetFontFamilyName(textLayout, fontFamilyName, textRange);
+				}
+				__try { return newDWriteTextLayoutSetFontFamilyName_SehImpl(textLayout, fontFamilyName, textRange); }
+				__except(EXCEPTION_EXECUTE_HANDLER) { return rawDWriteTextLayoutSetFontFamilyName(textLayout, fontFamilyName, textRange); }
+			}
+
+			HRESULT __stdcall newDWriteTextLayoutSetFontSize_SehImpl(void* textLayout, FLOAT fontSize, DWRITE_TEXT_RANGE textRange)
+			{
+				if (sg_dwriteHookNesting > 0)
+				{
+					return rawDWriteTextLayoutSetFontSize(textLayout, fontSize, textRange);
+				}
+				DWriteHookNestingScope dwriteScope;
+				bool applyScale = ShouldApplyFloatSizeScale() && !sg_runtimeFloatScaleActive;
+				RuntimeFloatScaleScope scaleScope(applyScale);
+				FLOAT useFontSize = applyScale ? (fontSize * sg_fFontScale) : fontSize;
+				return rawDWriteTextLayoutSetFontSize(textLayout, useFontSize, textRange);
+			}
+			HRESULT __stdcall newDWriteTextLayoutSetFontSize(void* textLayout, FLOAT fontSize, DWRITE_TEXT_RANGE textRange)
+			{
+				if (sg_dwriteHookNesting > 0)
+				{
+					return rawDWriteTextLayoutSetFontSize(textLayout, fontSize, textRange);
+				}
+				__try { return newDWriteTextLayoutSetFontSize_SehImpl(textLayout, fontSize, textRange); }
+				__except(EXCEPTION_EXECUTE_HANDLER) { return rawDWriteTextLayoutSetFontSize(textLayout, fontSize, textRange); }
+			}
+
+			static void TryHookDWriteTextLayoutMethods(void* textLayout)
+			{
+				if (!textLayout)
+				{
+					return;
+				}
+				ScopedDetourErrorDialogSuppression suppressDetourErrorDialog;
+				void** vtable = *(void***)textLayout;
+				if (!vtable)
+				{
+					return;
+				}
+				if (!sg_hookedDWriteTextLayoutSetFontFamilyName)
+				{
+					rawDWriteTextLayoutSetFontFamilyName = (pDWriteTextLayoutSetFontFamilyName)vtable[31];
+					if (rawDWriteTextLayoutSetFontFamilyName)
+					{
+						bool failed = !TryDetourAttach(&rawDWriteTextLayoutSetFontFamilyName, newDWriteTextLayoutSetFontFamilyName);
+						sg_hookedDWriteTextLayoutSetFontFamilyName = !failed;
+					}
+				}
+				if (!sg_hookedDWriteTextLayoutSetFontSize)
+				{
+					rawDWriteTextLayoutSetFontSize = (pDWriteTextLayoutSetFontSize)vtable[35];
+					if (rawDWriteTextLayoutSetFontSize)
+					{
+						bool failed = !TryDetourAttach(&rawDWriteTextLayoutSetFontSize, newDWriteTextLayoutSetFontSize);
+						sg_hookedDWriteTextLayoutSetFontSize = !failed;
+					}
+				}
+			}
+
+			static void TryHookDWriteFactoryMethods(IUnknown* factory)
 		{
-			if (!factory || sg_hookedDWriteCreateTextFormat)
+			if (!factory)
 			{
 				return;
 			}
@@ -1852,10 +2517,369 @@
 			rawDWriteFactoryCreateTextFormat = target;
 			bool failed = !TryDetourAttach(&rawDWriteFactoryCreateTextFormat, newDWriteFactoryCreateTextFormat);
 			sg_hookedDWriteCreateTextFormat = !failed;
+				if (!sg_hookedDWriteCreateTextLayout)
+				{
+					pDWriteFactoryCreateTextLayout layoutTarget = (pDWriteFactoryCreateTextLayout)vtable[18];
+					if (layoutTarget)
+					{
+						rawDWriteFactoryCreateTextLayout = layoutTarget;
+						bool layoutFailed = !TryDetourAttach(&rawDWriteFactoryCreateTextLayout, newDWriteFactoryCreateTextLayout);
+						sg_hookedDWriteCreateTextLayout = !layoutFailed;
+					}
+				}
+				if (!sg_hookedDWriteCreateGdiCompatibleTextLayout)
+				{
+					pDWriteFactoryCreateGdiCompatibleTextLayout gdiLayoutTarget = (pDWriteFactoryCreateGdiCompatibleTextLayout)vtable[19];
+					if (gdiLayoutTarget)
+					{
+						rawDWriteFactoryCreateGdiCompatibleTextLayout = gdiLayoutTarget;
+						bool gdiLayoutFailed = !TryDetourAttach(&rawDWriteFactoryCreateGdiCompatibleTextLayout, newDWriteFactoryCreateGdiCompatibleTextLayout);
+						sg_hookedDWriteCreateGdiCompatibleTextLayout = !gdiLayoutFailed;
+					}
+				}
 		}
 
-		HRESULT WINAPI newDWriteCreateFactory(UINT factoryType, REFIID iid, IUnknown** factory)
-		{
+		void __stdcall newD2D1RenderTargetDrawText(void* renderTarget,
+				const WCHAR* string,
+				UINT32 stringLength,
+				void* textFormat,
+				const D2D1_RECT_F* layoutRect,
+				void* defaultFillBrush,
+				D2D1_DRAW_TEXT_OPTIONS options,
+				DWRITE_MEASURING_MODE measuringMode);
+			void __stdcall newD2D1RenderTargetDrawTextLayout(void* renderTarget,
+				D2D1_POINT_2F origin,
+				void* textLayout,
+				void* defaultFillBrush,
+				D2D1_DRAW_TEXT_OPTIONS options);
+			HRESULT __stdcall newD2D1DeviceCreateDeviceContext(void* device, D2D1_DEVICE_CONTEXT_OPTIONS options, void** deviceContext);
+
+			static void TryHookD2DDeviceMethods(void* device)
+			{
+				if (!device)
+				{
+					return;
+				}
+				ScopedDetourErrorDialogSuppression suppressDetourErrorDialog;
+				void** vtable = *(void***)device;
+				if (!vtable)
+				{
+					return;
+				}
+				if (!sg_hookedD2D1DeviceCreateDeviceContext)
+				{
+					rawD2D1DeviceCreateDeviceContext = (pD2D1DeviceCreateDeviceContext)vtable[4];
+					if (rawD2D1DeviceCreateDeviceContext)
+					{
+						bool failed = !TryDetourAttach(&rawD2D1DeviceCreateDeviceContext, newD2D1DeviceCreateDeviceContext);
+						sg_hookedD2D1DeviceCreateDeviceContext = !failed;
+					}
+				}
+			}
+
+			static void TryHookD2DRenderTargetMethods(void* renderTarget)
+			{
+				if (!renderTarget)
+				{
+					return;
+				}
+				void** vtable = *(void***)renderTarget;
+				if (!vtable)
+				{
+					return;
+				}
+				if (!sg_hookedD2D1RenderTargetDrawText)
+				{
+					rawD2D1RenderTargetDrawText = (pD2D1RenderTargetDrawText)vtable[27];
+					if (rawD2D1RenderTargetDrawText)
+					{
+						bool failed = !TryDetourAttach(&rawD2D1RenderTargetDrawText, newD2D1RenderTargetDrawText);
+						sg_hookedD2D1RenderTargetDrawText = !failed;
+					}
+				}
+				if (!sg_hookedD2D1RenderTargetDrawTextLayout)
+				{
+					rawD2D1RenderTargetDrawTextLayout = (pD2D1RenderTargetDrawTextLayout)vtable[28];
+					if (rawD2D1RenderTargetDrawTextLayout)
+					{
+						bool failed = !TryDetourAttach(&rawD2D1RenderTargetDrawTextLayout, newD2D1RenderTargetDrawTextLayout);
+						sg_hookedD2D1RenderTargetDrawTextLayout = !failed;
+					}
+				}
+			}
+
+			HRESULT __stdcall newD2D1RenderTargetDrawText_SehImpl(void* renderTarget,
+				const WCHAR* string,
+				UINT32 stringLength,
+				void* textFormat,
+				const D2D1_RECT_F* layoutRect,
+				void* defaultFillBrush,
+				D2D1_DRAW_TEXT_OPTIONS options,
+				DWRITE_MEASURING_MODE measuringMode)
+			{
+				if (!string || stringLength == 0)
+				{
+					rawD2D1RenderTargetDrawText(renderTarget, string, stringLength, textFormat, layoutRect, defaultFillBrush, options, measuringMode);
+					return S_OK;
+				}
+				std::wstring mapped = ProcessGlyphStageTextW(string, static_cast<int>(stringLength));
+				if (mapped.size() == stringLength && wmemcmp(mapped.data(), string, stringLength) == 0)
+				{
+					rawD2D1RenderTargetDrawText(renderTarget, string, stringLength, textFormat, layoutRect, defaultFillBrush, options, measuringMode);
+					return S_OK;
+				}
+				rawD2D1RenderTargetDrawText(renderTarget, mapped.c_str(), static_cast<UINT32>(mapped.size()), textFormat, layoutRect, defaultFillBrush, options, measuringMode);
+				return S_OK;
+			}
+			void __stdcall newD2D1RenderTargetDrawText(void* renderTarget,
+				const WCHAR* string,
+				UINT32 stringLength,
+				void* textFormat,
+				const D2D1_RECT_F* layoutRect,
+				void* defaultFillBrush,
+				D2D1_DRAW_TEXT_OPTIONS options,
+				DWRITE_MEASURING_MODE measuringMode)
+			{
+				__try { (void)newD2D1RenderTargetDrawText_SehImpl(renderTarget, string, stringLength, textFormat, layoutRect, defaultFillBrush, options, measuringMode); }
+				__except(EXCEPTION_EXECUTE_HANDLER) { rawD2D1RenderTargetDrawText(renderTarget, string, stringLength, textFormat, layoutRect, defaultFillBrush, options, measuringMode); }
+			}
+
+			void __stdcall newD2D1RenderTargetDrawTextLayout_SehImpl(void* renderTarget,
+				D2D1_POINT_2F origin,
+				void* textLayout,
+				void* defaultFillBrush,
+				D2D1_DRAW_TEXT_OPTIONS options)
+			{
+				TryHookDWriteTextLayoutMethods(textLayout);
+				rawD2D1RenderTargetDrawTextLayout(renderTarget, origin, textLayout, defaultFillBrush, options);
+			}
+			void __stdcall newD2D1RenderTargetDrawTextLayout(void* renderTarget,
+				D2D1_POINT_2F origin,
+				void* textLayout,
+				void* defaultFillBrush,
+				D2D1_DRAW_TEXT_OPTIONS options)
+			{
+				__try { newD2D1RenderTargetDrawTextLayout_SehImpl(renderTarget, origin, textLayout, defaultFillBrush, options); }
+				__except(EXCEPTION_EXECUTE_HANDLER) { rawD2D1RenderTargetDrawTextLayout(renderTarget, origin, textLayout, defaultFillBrush, options); }
+			}
+
+			HRESULT __stdcall newD2D1DeviceCreateDeviceContext_SehImpl(void* device, D2D1_DEVICE_CONTEXT_OPTIONS options, void** deviceContext)
+			{
+				HRESULT hr = rawD2D1DeviceCreateDeviceContext(device, options, deviceContext);
+				if (SUCCEEDED(hr) && deviceContext && *deviceContext)
+				{
+					TryHookD2DRenderTargetMethods(*deviceContext);
+				}
+				return hr;
+			}
+			HRESULT __stdcall newD2D1DeviceCreateDeviceContext(void* device, D2D1_DEVICE_CONTEXT_OPTIONS options, void** deviceContext)
+			{
+				__try { return newD2D1DeviceCreateDeviceContext_SehImpl(device, options, deviceContext); }
+				__except(EXCEPTION_EXECUTE_HANDLER) { return rawD2D1DeviceCreateDeviceContext(device, options, deviceContext); }
+			}
+
+			HRESULT __stdcall newD2D1Factory1CreateDevice_SehImpl(void* factory, IDXGIDevice* dxgiDevice, void** d2dDevice)
+			{
+				HRESULT hr = rawD2D1Factory1CreateDevice(factory, dxgiDevice, d2dDevice);
+				if (SUCCEEDED(hr) && d2dDevice && *d2dDevice)
+				{
+					TryHookD2DDeviceMethods(*d2dDevice);
+				}
+				return hr;
+			}
+			HRESULT __stdcall newD2D1Factory1CreateDevice(void* factory, IDXGIDevice* dxgiDevice, void** d2dDevice)
+			{
+				__try { return newD2D1Factory1CreateDevice_SehImpl(factory, dxgiDevice, d2dDevice); }
+				__except(EXCEPTION_EXECUTE_HANDLER) { return rawD2D1Factory1CreateDevice(factory, dxgiDevice, d2dDevice); }
+			}
+
+			HRESULT __stdcall newD2D1FactoryCreateHwndRenderTarget_SehImpl(void* factory, const D2D1_RENDER_TARGET_PROPERTIES* renderTargetProperties, const D2D1_HWND_RENDER_TARGET_PROPERTIES* hwndRenderTargetProperties, void** hwndRenderTarget)
+			{
+				HRESULT hr = rawD2D1FactoryCreateHwndRenderTarget(factory, renderTargetProperties, hwndRenderTargetProperties, hwndRenderTarget);
+				if (SUCCEEDED(hr) && hwndRenderTarget && *hwndRenderTarget)
+				{
+					TryHookD2DRenderTargetMethods(*hwndRenderTarget);
+				}
+				return hr;
+			}
+			HRESULT __stdcall newD2D1FactoryCreateHwndRenderTarget(void* factory, const D2D1_RENDER_TARGET_PROPERTIES* renderTargetProperties, const D2D1_HWND_RENDER_TARGET_PROPERTIES* hwndRenderTargetProperties, void** hwndRenderTarget)
+			{
+				__try { return newD2D1FactoryCreateHwndRenderTarget_SehImpl(factory, renderTargetProperties, hwndRenderTargetProperties, hwndRenderTarget); }
+				__except(EXCEPTION_EXECUTE_HANDLER) { return rawD2D1FactoryCreateHwndRenderTarget(factory, renderTargetProperties, hwndRenderTargetProperties, hwndRenderTarget); }
+			}
+
+			HRESULT __stdcall newD2D1FactoryCreateDxgiSurfaceRenderTarget_SehImpl(void* factory, IDXGISurface* dxgiSurface, const D2D1_RENDER_TARGET_PROPERTIES* renderTargetProperties, void** renderTarget)
+			{
+				HRESULT hr = rawD2D1FactoryCreateDxgiSurfaceRenderTarget(factory, dxgiSurface, renderTargetProperties, renderTarget);
+				if (SUCCEEDED(hr) && renderTarget && *renderTarget)
+				{
+					TryHookD2DRenderTargetMethods(*renderTarget);
+				}
+				return hr;
+			}
+			HRESULT __stdcall newD2D1FactoryCreateDxgiSurfaceRenderTarget(void* factory, IDXGISurface* dxgiSurface, const D2D1_RENDER_TARGET_PROPERTIES* renderTargetProperties, void** renderTarget)
+			{
+				__try { return newD2D1FactoryCreateDxgiSurfaceRenderTarget_SehImpl(factory, dxgiSurface, renderTargetProperties, renderTarget); }
+				__except(EXCEPTION_EXECUTE_HANDLER) { return rawD2D1FactoryCreateDxgiSurfaceRenderTarget(factory, dxgiSurface, renderTargetProperties, renderTarget); }
+			}
+
+			HRESULT __stdcall newD2D1FactoryCreateDCRenderTarget_SehImpl(void* factory, const D2D1_RENDER_TARGET_PROPERTIES* renderTargetProperties, void** dcRenderTarget)
+			{
+				HRESULT hr = rawD2D1FactoryCreateDCRenderTarget(factory, renderTargetProperties, dcRenderTarget);
+				if (SUCCEEDED(hr) && dcRenderTarget && *dcRenderTarget)
+				{
+					TryHookD2DRenderTargetMethods(*dcRenderTarget);
+				}
+				return hr;
+			}
+			HRESULT __stdcall newD2D1FactoryCreateDCRenderTarget(void* factory, const D2D1_RENDER_TARGET_PROPERTIES* renderTargetProperties, void** dcRenderTarget)
+			{
+				__try { return newD2D1FactoryCreateDCRenderTarget_SehImpl(factory, renderTargetProperties, dcRenderTarget); }
+				__except(EXCEPTION_EXECUTE_HANDLER) { return rawD2D1FactoryCreateDCRenderTarget(factory, renderTargetProperties, dcRenderTarget); }
+			}
+
+			HRESULT __stdcall newD2D1FactoryCreateWicBitmapRenderTarget_SehImpl(void* factory, IWICBitmap* target, const D2D1_RENDER_TARGET_PROPERTIES* renderTargetProperties, void** renderTarget)
+			{
+				HRESULT hr = rawD2D1FactoryCreateWicBitmapRenderTarget(factory, target, renderTargetProperties, renderTarget);
+				if (SUCCEEDED(hr) && renderTarget && *renderTarget)
+				{
+					TryHookD2DRenderTargetMethods(*renderTarget);
+				}
+				return hr;
+			}
+			HRESULT __stdcall newD2D1FactoryCreateWicBitmapRenderTarget(void* factory, IWICBitmap* target, const D2D1_RENDER_TARGET_PROPERTIES* renderTargetProperties, void** renderTarget)
+			{
+				__try { return newD2D1FactoryCreateWicBitmapRenderTarget_SehImpl(factory, target, renderTargetProperties, renderTarget); }
+				__except(EXCEPTION_EXECUTE_HANDLER) { return rawD2D1FactoryCreateWicBitmapRenderTarget(factory, target, renderTargetProperties, renderTarget); }
+			}
+
+			static void TryHookD2DFactoryMethods(IUnknown* factory)
+			{
+				if (!factory)
+				{
+					return;
+				}
+				ScopedDetourErrorDialogSuppression suppressDetourErrorDialog;
+				void** vtable = *(void***)factory;
+				if (!vtable)
+				{
+					return;
+				}
+				if (!sg_hookedD2D1FactoryCreateWicBitmapRenderTarget)
+				{
+					rawD2D1FactoryCreateWicBitmapRenderTarget = (pD2D1FactoryCreateWicBitmapRenderTarget)vtable[13];
+					if (rawD2D1FactoryCreateWicBitmapRenderTarget)
+					{
+						bool failed = !TryDetourAttach(&rawD2D1FactoryCreateWicBitmapRenderTarget, newD2D1FactoryCreateWicBitmapRenderTarget);
+						sg_hookedD2D1FactoryCreateWicBitmapRenderTarget = !failed;
+					}
+				}
+				if (!sg_hookedD2D1FactoryCreateHwndRenderTarget)
+				{
+					rawD2D1FactoryCreateHwndRenderTarget = (pD2D1FactoryCreateHwndRenderTarget)vtable[14];
+					if (rawD2D1FactoryCreateHwndRenderTarget)
+					{
+						bool failed = !TryDetourAttach(&rawD2D1FactoryCreateHwndRenderTarget, newD2D1FactoryCreateHwndRenderTarget);
+						sg_hookedD2D1FactoryCreateHwndRenderTarget = !failed;
+					}
+				}
+				if (!sg_hookedD2D1FactoryCreateDxgiSurfaceRenderTarget)
+				{
+					rawD2D1FactoryCreateDxgiSurfaceRenderTarget = (pD2D1FactoryCreateDxgiSurfaceRenderTarget)vtable[15];
+					if (rawD2D1FactoryCreateDxgiSurfaceRenderTarget)
+					{
+						bool failed = !TryDetourAttach(&rawD2D1FactoryCreateDxgiSurfaceRenderTarget, newD2D1FactoryCreateDxgiSurfaceRenderTarget);
+						sg_hookedD2D1FactoryCreateDxgiSurfaceRenderTarget = !failed;
+					}
+				}
+				if (!sg_hookedD2D1FactoryCreateDCRenderTarget)
+				{
+					rawD2D1FactoryCreateDCRenderTarget = (pD2D1FactoryCreateDCRenderTarget)vtable[16];
+					if (rawD2D1FactoryCreateDCRenderTarget)
+					{
+						bool failed = !TryDetourAttach(&rawD2D1FactoryCreateDCRenderTarget, newD2D1FactoryCreateDCRenderTarget);
+						sg_hookedD2D1FactoryCreateDCRenderTarget = !failed;
+					}
+				}
+				if (!sg_hookedD2D1Factory1CreateDevice)
+				{
+					ID2D1Factory1* factory1 = nullptr;
+					if (SUCCEEDED(factory->QueryInterface(__uuidof(ID2D1Factory1), reinterpret_cast<void**>(&factory1))) && factory1)
+					{
+						void** vtable1 = *(void***)factory1;
+						if (vtable1)
+						{
+							rawD2D1Factory1CreateDevice = (pD2D1Factory1CreateDevice)vtable1[17];
+							if (rawD2D1Factory1CreateDevice)
+							{
+								bool failed = !TryDetourAttach(&rawD2D1Factory1CreateDevice, newD2D1Factory1CreateDevice);
+								sg_hookedD2D1Factory1CreateDevice = !failed;
+							}
+						}
+						factory1->Release();
+					}
+				}
+			}
+
+			HRESULT WINAPI newD2D1CreateFactory_SehImpl(D2D1_FACTORY_TYPE factoryType, REFIID riid, const D2D1_FACTORY_OPTIONS* pFactoryOptions, void** ppIFactory)
+			{
+				if (!rawD2D1CreateFactory)
+				{
+					return E_FAIL;
+				}
+				HRESULT hr = rawD2D1CreateFactory(factoryType, riid, pFactoryOptions, ppIFactory);
+				if (SUCCEEDED(hr) && ppIFactory && *ppIFactory)
+				{
+					TryHookD2DFactoryMethods(reinterpret_cast<IUnknown*>(*ppIFactory));
+				}
+				return hr;
+			}
+			HRESULT WINAPI newD2D1CreateFactory(D2D1_FACTORY_TYPE factoryType, REFIID riid, const D2D1_FACTORY_OPTIONS* pFactoryOptions, void** ppIFactory)
+			{
+				__try { return newD2D1CreateFactory_SehImpl(factoryType, riid, pFactoryOptions, ppIFactory); }
+				__except(EXCEPTION_EXECUTE_HANDLER) { return rawD2D1CreateFactory(factoryType, riid, pFactoryOptions, ppIFactory); }
+			}
+
+			HRESULT WINAPI newD2D1CreateDevice_SehImpl(IDXGIDevice* dxgiDevice, const D2D1_CREATION_PROPERTIES* creationProperties, void** d2dDevice)
+			{
+				if (!rawD2D1CreateDevice)
+				{
+					return E_FAIL;
+				}
+				HRESULT hr = rawD2D1CreateDevice(dxgiDevice, creationProperties, d2dDevice);
+				if (SUCCEEDED(hr) && d2dDevice && *d2dDevice)
+				{
+					TryHookD2DDeviceMethods(*d2dDevice);
+				}
+				return hr;
+			}
+			HRESULT WINAPI newD2D1CreateDevice(IDXGIDevice* dxgiDevice, const D2D1_CREATION_PROPERTIES* creationProperties, void** d2dDevice)
+			{
+				__try { return newD2D1CreateDevice_SehImpl(dxgiDevice, creationProperties, d2dDevice); }
+				__except(EXCEPTION_EXECUTE_HANDLER) { return rawD2D1CreateDevice(dxgiDevice, creationProperties, d2dDevice); }
+			}
+
+			HRESULT WINAPI newD2D1CreateDeviceContext_SehImpl(IDXGISurface* dxgiSurface, const D2D1_CREATION_PROPERTIES* creationProperties, void** d2dDeviceContext)
+			{
+				if (!rawD2D1CreateDeviceContext)
+				{
+					return E_FAIL;
+				}
+				HRESULT hr = rawD2D1CreateDeviceContext(dxgiSurface, creationProperties, d2dDeviceContext);
+				if (SUCCEEDED(hr) && d2dDeviceContext && *d2dDeviceContext)
+				{
+					TryHookD2DRenderTargetMethods(*d2dDeviceContext);
+				}
+				return hr;
+			}
+			HRESULT WINAPI newD2D1CreateDeviceContext(IDXGISurface* dxgiSurface, const D2D1_CREATION_PROPERTIES* creationProperties, void** d2dDeviceContext)
+			{
+				__try { return newD2D1CreateDeviceContext_SehImpl(dxgiSurface, creationProperties, d2dDeviceContext); }
+				__except(EXCEPTION_EXECUTE_HANDLER) { return rawD2D1CreateDeviceContext(dxgiSurface, creationProperties, d2dDeviceContext); }
+			}
+
+			HRESULT WINAPI newDWriteCreateFactory_SehImpl(UINT factoryType, REFIID iid, IUnknown** factory)
+			{
 			if (!rawDWriteCreateFactory)
 			{
 				return E_FAIL;
@@ -1866,17 +2890,29 @@
 				TryHookDWriteFactoryMethods(*factory);
 			}
 			return hr;
-		}
+			}
+			HRESULT WINAPI newDWriteCreateFactory(UINT factoryType, REFIID iid, IUnknown** factory)
+			{
+				__try { return newDWriteCreateFactory_SehImpl(factoryType, iid, factory); }
+				__except(EXCEPTION_EXECUTE_HANDLER) { return rawDWriteCreateFactory(factoryType, iid, factory); }
+			}
 
-		int WINAPI newGdipCreateFontFamilyFromName(LPCWSTR name, void* fontCollection, void** fontFamily)
+
+		int WINAPI newGdipCreateFontFamilyFromName_SehImpl(LPCWSTR name, void* fontCollection, void** fontFamily)
 		{
 			bool skipOverride = false;
 			wchar_t forcedFaceName[LF_FACESIZE] = {};
 			LPCWSTR useName = TryGetForcedFontNameWForRequest(name, forcedFaceName, skipOverride) ? forcedFaceName : name;
 			return rawGdipCreateFontFamilyFromName(useName, fontCollection, fontFamily);
 		}
+		int WINAPI newGdipCreateFontFamilyFromName(LPCWSTR name, void* fontCollection, void** fontFamily)
+		{
+			__try { return newGdipCreateFontFamilyFromName_SehImpl(name, fontCollection, fontFamily); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGdipCreateFontFamilyFromName(name, fontCollection, fontFamily); }
+		}
 
-		int WINAPI newGdipCreateFontFromLogfontW(HDC hdc, const LOGFONTW* logfont, void** font)
+
+		int WINAPI newGdipCreateFontFromLogfontW_SehImpl(HDC hdc, const LOGFONTW* logfont, void** font)
 		{
 			LOGFONTW lf = {};
 			if (logfont)
@@ -1886,8 +2922,14 @@
 			ApplyOverrideToLogFontW(lf);
 			return rawGdipCreateFontFromLogfontW(hdc, &lf, font);
 		}
+		int WINAPI newGdipCreateFontFromLogfontW(HDC hdc, const LOGFONTW* logfont, void** font)
+		{
+			__try { return newGdipCreateFontFromLogfontW_SehImpl(hdc, logfont, font); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGdipCreateFontFromLogfontW(hdc, logfont, font); }
+		}
 
-		int WINAPI newGdipCreateFontFromLogfontA(HDC hdc, const LOGFONTA* logfont, void** font)
+
+		int WINAPI newGdipCreateFontFromLogfontA_SehImpl(HDC hdc, const LOGFONTA* logfont, void** font)
 		{
 			LOGFONTA lf = {};
 			if (logfont)
@@ -1897,24 +2939,48 @@
 			ApplyOverrideToLogFontA(lf);
 			return rawGdipCreateFontFromLogfontA(hdc, &lf, font);
 		}
+		int WINAPI newGdipCreateFontFromLogfontA(HDC hdc, const LOGFONTA* logfont, void** font)
+		{
+			__try { return newGdipCreateFontFromLogfontA_SehImpl(hdc, logfont, font); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGdipCreateFontFromLogfontA(hdc, logfont, font); }
+		}
 
-		int WINAPI newGdipCreateFontFromHFONT(HDC hdc, HFONT hfont, void** font)
+
+		int WINAPI newGdipCreateFontFromHFONT_SehImpl(HDC hdc, HFONT hfont, void** font)
 		{
 			return rawGdipCreateFontFromHFONT(hdc, hfont, font);
 		}
+		int WINAPI newGdipCreateFontFromHFONT(HDC hdc, HFONT hfont, void** font)
+		{
+			__try { return newGdipCreateFontFromHFONT_SehImpl(hdc, hfont, font); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGdipCreateFontFromHFONT(hdc, hfont, font); }
+		}
 
-		int WINAPI newGdipCreateFontFromDC(HDC hdc, void** font)
+
+		int WINAPI newGdipCreateFontFromDC_SehImpl(HDC hdc, void** font)
 		{
 			return rawGdipCreateFontFromDC(hdc, font);
 		}
+		int WINAPI newGdipCreateFontFromDC(HDC hdc, void** font)
+		{
+			__try { return newGdipCreateFontFromDC_SehImpl(hdc, font); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGdipCreateFontFromDC(hdc, font); }
+		}
 
-		int WINAPI newGdipCreateFont(const void* fontFamily, float emSize, int style, int unit, void** font)
+
+		int WINAPI newGdipCreateFont_SehImpl(const void* fontFamily, float emSize, int style, int unit, void** font)
 		{
 			bool applyScale = ShouldApplyFloatSizeScale() && !sg_runtimeFloatScaleActive;
 			RuntimeFloatScaleScope scaleScope(applyScale);
 			float useEmSize = applyScale ? (emSize * sg_fFontScale) : emSize;
 			return rawGdipCreateFont(fontFamily, useEmSize, style, unit, font);
 		}
+		int WINAPI newGdipCreateFont(const void* fontFamily, float emSize, int style, int unit, void** font)
+		{
+			__try { return newGdipCreateFont_SehImpl(fontFamily, emSize, style, unit, font); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGdipCreateFont(fontFamily, emSize, style, unit, font); }
+		}
+
 
 		static std::wstring PrepareGdipGlyphStageText(const WCHAR* text, int length)
 		{
@@ -2076,7 +3142,7 @@
 			return context.changed;
 		}
 
-		int WINAPI newGdipDrawString(void* graphics, const WCHAR* string, int length, const void* font, const void* layoutRect, const void* stringFormat, const void* brush)
+		int WINAPI newGdipDrawString_SehImpl(void* graphics, const WCHAR* string, int length, const void* font, const void* layoutRect, const void* stringFormat, const void* brush)
 		{
 			std::wstring mapped;
 			int sourceLength = 0;
@@ -2086,8 +3152,14 @@
 			}
 			return rawGdipDrawString(graphics, string, length, font, layoutRect, stringFormat, brush);
 		}
+		int WINAPI newGdipDrawString(void* graphics, const WCHAR* string, int length, const void* font, const void* layoutRect, const void* stringFormat, const void* brush)
+		{
+			__try { return newGdipDrawString_SehImpl(graphics, string, length, font, layoutRect, stringFormat, brush); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGdipDrawString(graphics, string, length, font, layoutRect, stringFormat, brush); }
+		}
 
-		int WINAPI newGdipDrawDriverString(void* graphics, const UINT16* text, int length, const void* font, const void* brush, const void* positions, int flags, const void* matrix)
+
+		int WINAPI newGdipDrawDriverString_SehImpl(void* graphics, const UINT16* text, int length, const void* font, const void* brush, const void* positions, int flags, const void* matrix)
 		{
 			std::wstring mapped;
 			int sourceLength = 0;
@@ -2097,8 +3169,14 @@
 			}
 			return rawGdipDrawDriverString(graphics, text, length, font, brush, positions, flags, matrix);
 		}
+		int WINAPI newGdipDrawDriverString(void* graphics, const UINT16* text, int length, const void* font, const void* brush, const void* positions, int flags, const void* matrix)
+		{
+			__try { return newGdipDrawDriverString_SehImpl(graphics, text, length, font, brush, positions, flags, matrix); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGdipDrawDriverString(graphics, text, length, font, brush, positions, flags, matrix); }
+		}
 
-		int WINAPI newGdipMeasureString(void* graphics, const WCHAR* string, INT length, const void* font, const void* layoutRect, const void* stringFormat, void* boundingBox, INT* codepointsFitted, INT* linesFilled)
+
+		int WINAPI newGdipMeasureString_SehImpl(void* graphics, const WCHAR* string, INT length, const void* font, const void* layoutRect, const void* stringFormat, void* boundingBox, INT* codepointsFitted, INT* linesFilled)
 		{
 			std::wstring mapped;
 			int sourceLength = 0;
@@ -2108,8 +3186,14 @@
 			}
 			return rawGdipMeasureString(graphics, string, length, font, layoutRect, stringFormat, boundingBox, codepointsFitted, linesFilled);
 		}
+		int WINAPI newGdipMeasureString(void* graphics, const WCHAR* string, INT length, const void* font, const void* layoutRect, const void* stringFormat, void* boundingBox, INT* codepointsFitted, INT* linesFilled)
+		{
+			__try { return newGdipMeasureString_SehImpl(graphics, string, length, font, layoutRect, stringFormat, boundingBox, codepointsFitted, linesFilled); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGdipMeasureString(graphics, string, length, font, layoutRect, stringFormat, boundingBox, codepointsFitted, linesFilled); }
+		}
 
-		int WINAPI newGdipMeasureCharacterRanges(void* graphics, const WCHAR* string, INT length, const void* font, const void* layoutRect, const void* stringFormat, INT regionCount, void** regions)
+
+		int WINAPI newGdipMeasureCharacterRanges_SehImpl(void* graphics, const WCHAR* string, INT length, const void* font, const void* layoutRect, const void* stringFormat, INT regionCount, void** regions)
 		{
 			std::wstring mapped;
 			int sourceLength = 0;
@@ -2119,8 +3203,14 @@
 			}
 			return rawGdipMeasureCharacterRanges(graphics, string, length, font, layoutRect, stringFormat, regionCount, regions);
 		}
+		int WINAPI newGdipMeasureCharacterRanges(void* graphics, const WCHAR* string, INT length, const void* font, const void* layoutRect, const void* stringFormat, INT regionCount, void** regions)
+		{
+			__try { return newGdipMeasureCharacterRanges_SehImpl(graphics, string, length, font, layoutRect, stringFormat, regionCount, regions); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGdipMeasureCharacterRanges(graphics, string, length, font, layoutRect, stringFormat, regionCount, regions); }
+		}
 
-		int WINAPI newGdipMeasureDriverString(void* graphics, const UINT16* text, INT length, const void* font, const void* positions, INT flags, const void* matrix, void* boundingBox)
+
+		int WINAPI newGdipMeasureDriverString_SehImpl(void* graphics, const UINT16* text, INT length, const void* font, const void* positions, INT flags, const void* matrix, void* boundingBox)
 		{
 			std::wstring mapped;
 			int sourceLength = 0;
@@ -2130,6 +3220,12 @@
 			}
 			return rawGdipMeasureDriverString(graphics, text, length, font, positions, flags, matrix, boundingBox);
 		}
+		int WINAPI newGdipMeasureDriverString(void* graphics, const UINT16* text, INT length, const void* font, const void* positions, INT flags, const void* matrix, void* boundingBox)
+		{
+			__try { return newGdipMeasureDriverString_SehImpl(graphics, text, length, font, positions, flags, matrix, boundingBox); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGdipMeasureDriverString(graphics, text, length, font, positions, flags, matrix, boundingBox); }
+		}
+
 
 		static void TryHookLateLoadedModules(const wchar_t* moduleName)
 		{
@@ -2138,9 +3234,10 @@
 				return;
 			}
 			const bool shouldHookDWrite = wcsstr(moduleName, L"dwrite") || wcsstr(moduleName, L"DWRITE");
+			const bool shouldHookD2D = wcsstr(moduleName, L"d2d1") || wcsstr(moduleName, L"D2D1");
 			const bool shouldHookGdiplus = wcsstr(moduleName, L"gdiplus") || wcsstr(moduleName, L"GDIPLUS");
 			const bool shouldHookComdlg = sg_unlockFontSelection && (wcsstr(moduleName, L"comdlg32") || wcsstr(moduleName, L"COMDLG32"));
-			if (!shouldHookDWrite && !shouldHookGdiplus && !shouldHookComdlg)
+			if (!shouldHookDWrite && !shouldHookD2D && !shouldHookGdiplus && !shouldHookComdlg)
 			{
 				return;
 			}
@@ -2151,8 +3248,13 @@
 			if (shouldHookDWrite)
 			{
 				HookDWriteCreateFactory();
+					HookD2D1CreateFactory();
 			}
-			if (shouldHookGdiplus)
+			if (shouldHookD2D)
+				{
+					HookD2D1CreateFactory();
+				}
+				if (shouldHookGdiplus)
 			{
 				HookGdipCreateFontFamilyFromName();
 				HookGdipCreateFontFromLogfontW();
@@ -2178,7 +3280,7 @@
 			}
 		}
 
-		HMODULE WINAPI newLoadLibraryW(LPCWSTR lpLibFileName)
+		HMODULE WINAPI newLoadLibraryW_SehImpl(LPCWSTR lpLibFileName)
 		{
 			HMODULE hModule = rawLoadLibraryW(lpLibFileName);
 			if (hModule)
@@ -2187,8 +3289,14 @@
 			}
 			return hModule;
 		}
+		HMODULE WINAPI newLoadLibraryW(LPCWSTR lpLibFileName)
+		{
+			__try { return newLoadLibraryW_SehImpl(lpLibFileName); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawLoadLibraryW(lpLibFileName); }
+		}
 
-		HMODULE WINAPI newLoadLibraryExW(LPCWSTR lpLibFileName, HANDLE hFile, DWORD dwFlags)
+
+		HMODULE WINAPI newLoadLibraryExW_SehImpl(LPCWSTR lpLibFileName, HANDLE hFile, DWORD dwFlags)
 		{
 			HMODULE hModule = rawLoadLibraryExW(lpLibFileName, hFile, dwFlags);
 			if (hModule && (dwFlags & LOAD_LIBRARY_AS_DATAFILE) == 0 && (dwFlags & LOAD_LIBRARY_AS_IMAGE_RESOURCE) == 0)
@@ -2197,6 +3305,12 @@
 			}
 			return hModule;
 		}
+		HMODULE WINAPI newLoadLibraryExW(LPCWSTR lpLibFileName, HANDLE hFile, DWORD dwFlags)
+		{
+			__try { return newLoadLibraryExW_SehImpl(lpLibFileName, hFile, dwFlags); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawLoadLibraryExW(lpLibFileName, hFile, dwFlags); }
+		}
+
 
 		bool HookCreateFontIndirectExA()
 		{
@@ -2470,7 +3584,52 @@
 			return failed;
 		}
 
-		bool HookGdipCreateFontFamilyFromName()
+		bool HookD2D1CreateFactory()
+			{
+				if (sg_hookedD2D1CreateFactory && sg_hookedD2D1CreateDevice && sg_hookedD2D1CreateDeviceContext)
+				{
+					return false;
+				}
+				HMODULE hD2D = GetModuleHandleW(L"d2d1.dll");
+				if (!hD2D)
+				{
+					return false;
+				}
+				bool failed = false;
+				if (!sg_hookedD2D1CreateFactory)
+				{
+					rawD2D1CreateFactory = (pD2D1CreateFactory)GetProcAddress(hD2D, "D2D1CreateFactory");
+					if (rawD2D1CreateFactory)
+					{
+						bool attachFailed = !TryDetourAttach(&rawD2D1CreateFactory, newD2D1CreateFactory);
+						sg_hookedD2D1CreateFactory = !attachFailed;
+						failed = failed || attachFailed;
+					}
+				}
+				if (!sg_hookedD2D1CreateDevice)
+				{
+					rawD2D1CreateDevice = (pD2D1CreateDevice)GetProcAddress(hD2D, "D2D1CreateDevice");
+					if (rawD2D1CreateDevice)
+					{
+						bool attachFailed = !TryDetourAttach(&rawD2D1CreateDevice, newD2D1CreateDevice);
+						sg_hookedD2D1CreateDevice = !attachFailed;
+						failed = failed || attachFailed;
+					}
+				}
+				if (!sg_hookedD2D1CreateDeviceContext)
+				{
+					rawD2D1CreateDeviceContext = (pD2D1CreateDeviceContext)GetProcAddress(hD2D, "D2D1CreateDeviceContext");
+					if (rawD2D1CreateDeviceContext)
+					{
+						bool attachFailed = !TryDetourAttach(&rawD2D1CreateDeviceContext, newD2D1CreateDeviceContext);
+						sg_hookedD2D1CreateDeviceContext = !attachFailed;
+						failed = failed || attachFailed;
+					}
+				}
+				return failed;
+			}
+
+			bool HookGdipCreateFontFamilyFromName()
 		{
 			if (sg_hookedGdipCreateFontFamily)
 			{

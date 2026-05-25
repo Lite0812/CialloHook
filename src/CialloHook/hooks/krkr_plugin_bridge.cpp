@@ -38,6 +38,7 @@ namespace CialloHook
 			bool sg_enableKrkrPatch = false;
 			bool sg_enableKrkrPatchVerboseLog = false;
 			bool sg_enableKrkrBootstrapBypass = false;
+			bool sg_enableKrkrCxdecBridge = false;
 			bool sg_krkrBootstrapBypassTried = false;
 
 			static std::wstring NormalizeSlashes(const std::wstring& path)
@@ -902,11 +903,26 @@ namespace CialloHook
 			bool sg_loadLibraryHooked = false;
 			bool sg_tvpImportStubReady = false;
 			bool sg_injectV2Pending = false;
+				using pTVPRegisterStorageMedia = void(__stdcall*)(void*);
+				using pStorageMediaOpen = tTJSBinaryStream* (__cdecl*)(void*, ttstr*, tjs_uint32);
+				using pCheckExistentStorage = bool(__cdecl*)(void*, ttstr*);
+				pTVPRegisterStorageMedia sg_rawTVPRegisterStorageMedia = nullptr;
+				bool sg_tvpRegisterStorageMediaHooked = false;
+				std::vector<void**> sg_cxdecPatchedVTables;
+				std::vector<pStorageMediaOpen> sg_cxdecOriginalOpenFuncs;
+				std::vector<pCheckExistentStorage> sg_cxdecOriginalCheckFuncs;
+
 
 			static void EnsureHooksInstalled();
 			static void InstallCreateStreamHook();
 			static BOOL __fastcall PatchSignVerifyMsvc(HMODULE /*hModule*/);
 			static HRESULT WINAPI HookV2Link(iTVPFunctionExporter* pExporter);
+				static bool TryBuildPatchMemoryStream(const std::wstring& patchName, tTJSBinaryStream*& outStream, std::wstring& outSource);
+				static bool WritePointer(void** target, void* value);
+				static void TryInstallCxdecStorageMediaHook();
+				static void __stdcall HookTVPRegisterStorageMedia(void* media);
+				static tTJSBinaryStream* __cdecl HookStorageMediaOpen(void* media, ttstr* name, tjs_uint32 flags);
+				static bool __cdecl HookCheckExistentStorage(void* media, ttstr* name);
 
 			static BOOL CALLBACK CheckImportCallback(PVOID pContext, DWORD, LPCSTR pszName, PVOID* ppvFunc)
 			{
@@ -1059,7 +1075,136 @@ namespace CialloHook
 				LogMessage(sg_loadLibraryHooked ? LogLevel::Info : LogLevel::Warn, L"KrkrPluginBridge: load library hook=%s", sg_loadLibraryHooked ? L"ok" : L"failed");
 			}
 
-			static HRESULT WINAPI HookV2Link(iTVPFunctionExporter* pExporter)
+			static void TryInstallCxdecStorageMediaHook()
+				{
+					if (!sg_enableKrkrCxdecBridge || sg_tvpRegisterStorageMediaHooked || !sg_tvpImportStubReady)
+					{
+						return;
+					}
+
+					void* storageMediaRegister = TVPGetImportFuncPtr("void ::TVPRegisterStorageMedia(iTVPStorageMedia *)");
+					if (!storageMediaRegister)
+					{
+						LogMessage(LogLevel::Warn, L"KrkrPluginBridge: TVPRegisterStorageMedia not found for cxdec bridge");
+						return;
+					}
+
+					sg_rawTVPRegisterStorageMedia = reinterpret_cast<pTVPRegisterStorageMedia>(storageMediaRegister);
+					bool failed = !TryDetourAttach(&sg_rawTVPRegisterStorageMedia, HookTVPRegisterStorageMedia);
+					sg_tvpRegisterStorageMediaHooked = !failed;
+					LogMessage(sg_tvpRegisterStorageMediaHooked ? LogLevel::Info : LogLevel::Warn,
+						L"KrkrPluginBridge: cxdec TVPRegisterStorageMedia hook=%s",
+						sg_tvpRegisterStorageMediaHooked ? L"ok" : L"failed");
+				}
+
+				static void __stdcall HookTVPRegisterStorageMedia(void* media)
+				{
+					if (sg_rawTVPRegisterStorageMedia)
+					{
+						sg_rawTVPRegisterStorageMedia(media);
+					}
+					if (!sg_enableKrkrCxdecBridge || !media)
+					{
+						return;
+					}
+
+					void** vtable = *reinterpret_cast<void***>(media);
+					if (!vtable)
+					{
+						return;
+					}
+					for (void** patched : sg_cxdecPatchedVTables)
+					{
+						if (patched == vtable)
+						{
+							return;
+						}
+					}
+
+					pCheckExistentStorage originalCheck = reinterpret_cast<pCheckExistentStorage>(vtable[5]);
+					pStorageMediaOpen originalOpen = reinterpret_cast<pStorageMediaOpen>(vtable[6]);
+					bool checkPatched = WritePointer(vtable + 5, reinterpret_cast<void*>(HookCheckExistentStorage));
+					bool openPatched = WritePointer(vtable + 6, reinterpret_cast<void*>(HookStorageMediaOpen));
+					if (!checkPatched || !openPatched)
+					{
+						if (checkPatched)
+						{
+							WritePointer(vtable + 5, reinterpret_cast<void*>(originalCheck));
+						}
+						if (openPatched)
+						{
+							WritePointer(vtable + 6, reinterpret_cast<void*>(originalOpen));
+						}
+						LogMessage(LogLevel::Warn, L"KrkrPluginBridge: cxdec storage media vtable patch failed");
+						return;
+					}
+
+					sg_cxdecPatchedVTables.push_back(vtable);
+					sg_cxdecOriginalCheckFuncs.push_back(originalCheck);
+					sg_cxdecOriginalOpenFuncs.push_back(originalOpen);
+					LogMessage(LogLevel::Info, L"KrkrPluginBridge: cxdec storage media vtable patched");
+				}
+
+				static tTJSBinaryStream* __cdecl HookStorageMediaOpen(void* media, ttstr* name, tjs_uint32 flags)
+				{
+					if (media && name && flags == TJS_BS_READ && sg_enableKrkrPatch)
+					{
+						std::wstring patchName = PatchName(*name);
+						if (!patchName.empty())
+						{
+							tTJSBinaryStream* patchStream = nullptr;
+							std::wstring patchSource;
+							if (TryBuildPatchMemoryStream(patchName, patchStream, patchSource))
+							{
+								LogMessage(LogLevel::Info, L"KrkrPluginBridge: cxdec memory redirect %s -> %s", name->c_str(), patchSource.c_str());
+								return patchStream;
+							}
+						}
+					}
+
+					void** vtable = media ? *reinterpret_cast<void***>(media) : nullptr;
+					if (vtable)
+					{
+						for (size_t i = 0; i < sg_cxdecPatchedVTables.size(); ++i)
+						{
+							if (sg_cxdecPatchedVTables[i] == vtable)
+							{
+								pStorageMediaOpen originalOpen = sg_cxdecOriginalOpenFuncs[i];
+								return originalOpen ? originalOpen(media, name, flags) : nullptr;
+							}
+						}
+					}
+					return nullptr;
+				}
+
+				static bool __cdecl HookCheckExistentStorage(void* media, ttstr* name)
+				{
+					if (name && sg_enableKrkrPatch)
+					{
+						std::wstring patchUrl;
+						std::wstring patchArc;
+						if (TryBuildPatchUrl(*name, TJS_BS_READ, patchUrl, patchArc))
+						{
+							return true;
+						}
+					}
+
+					void** vtable = media ? *reinterpret_cast<void***>(media) : nullptr;
+					if (vtable)
+					{
+						for (size_t i = 0; i < sg_cxdecPatchedVTables.size(); ++i)
+						{
+							if (sg_cxdecPatchedVTables[i] == vtable)
+							{
+								pCheckExistentStorage originalCheck = sg_cxdecOriginalCheckFuncs[i];
+								return originalCheck ? originalCheck(media, name) : false;
+							}
+						}
+					}
+					return false;
+				}
+
+static HRESULT WINAPI HookV2Link(iTVPFunctionExporter* pExporter)
 			{
 				if (sg_v2LinkHooked)
 				{
@@ -1075,6 +1220,7 @@ namespace CialloHook
 				{
 					LogMessage(LogLevel::Info, L"KrkrPluginBridge: TVP import stub initialized");
 					InstallCreateStreamHook();
+					TryInstallCxdecStorageMediaHook();
 				}
 
 				if (!rawV2Link)
@@ -1713,6 +1859,7 @@ namespace CialloHook
 			bool enableKrkrPatch,
 			bool verboseLog,
 			bool bootstrapBypass,
+			bool enableCxdecBridge,
 			const std::wstring& gameDir,
 			const std::vector<std::wstring>& patchRoots,
 			const std::vector<std::wstring>& customPakFiles,
@@ -1723,6 +1870,7 @@ namespace CialloHook
 			sg_enableKrkrPatch = enableKrkrPatch;
 			sg_enableKrkrPatchVerboseLog = verboseLog;
 			sg_enableKrkrBootstrapBypass = bootstrapBypass;
+				sg_enableKrkrCxdecBridge = enableCxdecBridge;
 			sg_krkrBootstrapBypassTried = false;
 			sg_gameDir = NormalizeSlashes(gameDir);
 			sg_gameDirLower = ToLowerCopy(sg_gameDir);
@@ -1731,6 +1879,11 @@ namespace CialloHook
 			sg_patchBaseNames = patchBaseNames;
 			sg_patchFolders = patchFolders;
 			sg_patchArchives = patchArchives;
+#if defined(_M_IX86)
+				sg_cxdecPatchedVTables.clear();
+				sg_cxdecOriginalCheckFuncs.clear();
+				sg_cxdecOriginalOpenFuncs.clear();
+#endif
 
 			if (!enableKrkrPatch)
 			{

@@ -2,6 +2,7 @@
 
 #include <Windows.h>
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -59,22 +60,37 @@ namespace Rut
 			std::wstring& preparedPath,
 			bool& fromCustomPak,
 			bool& foundCandidate);
+		bool PopulateLocaleEmulatorTimeZone(
+			const std::wstring& timezone,
+			wchar_t* standardName,
+			size_t standardNameCount,
+			wchar_t* daylightName,
+			size_t daylightNameCount,
+			int32_t& bias,
+			int32_t& standardBias,
+			int32_t& daylightBias);
+		bool TryResolveLocalLocaleEmulatorDependency(
+			const std::wstring& baseDir,
+			const wchar_t* fileName,
+			std::wstring& resolvedPath);
 		HMODULE LoadLocaleEmulatorLoaderModule(
 			const LocaleEmulatorLoaderOptions& options,
 			bool& usedConfiguredOverride,
 			bool& usedCustomPak,
 			bool& foundConfiguredCandidate,
 			std::vector<std::wstring>& preparedPaths,
-			std::vector<std::wstring>* runtimeSearchDirs = nullptr);
+			std::vector<std::wstring>* runtimeSearchDirs = nullptr,
+			bool* foundLocaleCandidate = nullptr);
 		inline HMODULE LoadLocaleEmulatorLoaderModule(
 			const LocaleEmulatorLoaderOptions& options,
 			bool& usedCustomPak,
 			bool& foundConfiguredCandidate,
 			std::vector<std::wstring>& preparedPaths,
-			std::vector<std::wstring>* runtimeSearchDirs = nullptr)
+			std::vector<std::wstring>* runtimeSearchDirs = nullptr,
+			bool* foundLocaleCandidate = nullptr)
 		{
 			bool usedConfiguredOverride = false;
-			return LoadLocaleEmulatorLoaderModule(options, usedConfiguredOverride, usedCustomPak, foundConfiguredCandidate, preparedPaths, runtimeSearchDirs);
+			return LoadLocaleEmulatorLoaderModule(options, usedConfiguredOverride, usedCustomPak, foundConfiguredCandidate, preparedPaths, runtimeSearchDirs, foundLocaleCandidate);
 		}
 	}
 }

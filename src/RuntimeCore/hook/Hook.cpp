@@ -2,6 +2,8 @@
 
 #include <Windows.h>
 
+#include <cstring>
+
 #include "../../../third/detours/include/detours.h"
 // Detours 库已在编译脚本中指定，不再使用 pragma comment
 // #pragma comment(lib,"../../third/detours/lib.X86/detours.lib")
@@ -189,5 +191,54 @@ namespace Rut
 			const LONG detachResult = DetourDetach((PVOID*)ppRawFunc, pNewFunc);
 			return FinalizeDetourTransaction(L"Detour detach", detachResult);
 		}
+		bool InstallJumpPatch(void* target, void* detour, size_t patchSize, JumpPatchHandle& handle)
+		{
+			if (!target || !detour || patchSize < 5 || patchSize > sizeof(handle.originalBytes))
+			{
+				return false;
+			}
+			auto* targetBytes = static_cast<uint8_t*>(target);
+			std::memcpy(handle.originalBytes, targetBytes, patchSize);
+			DWORD oldProtect = 0;
+			if (!VirtualProtect(targetBytes, patchSize, PAGE_EXECUTE_READWRITE, &oldProtect))
+			{
+				return false;
+			}
+			std::memset(targetBytes, 0x90, patchSize);
+			targetBytes[0] = 0xE9;
+			int32_t detourRelative = static_cast<int32_t>(static_cast<uint8_t*>(detour) - (targetBytes + 5));
+			std::memcpy(targetBytes + 1, &detourRelative, sizeof(detourRelative));
+			FlushInstructionCache(GetCurrentProcess(), targetBytes, patchSize);
+			DWORD ignoreProtect = 0;
+			VirtualProtect(targetBytes, patchSize, oldProtect, &ignoreProtect);
+			handle.target = target;
+			handle.patchSize = patchSize;
+			handle.installed = true;
+			return true;
+		}
+
+		bool RemoveJumpPatch(JumpPatchHandle& handle)
+		{
+			if (!handle.installed || !handle.target || handle.patchSize == 0)
+			{
+				return true;
+			}
+			auto* targetBytes = static_cast<uint8_t*>(handle.target);
+			DWORD oldProtect = 0;
+			if (!VirtualProtect(targetBytes, handle.patchSize, PAGE_EXECUTE_READWRITE, &oldProtect))
+			{
+				return false;
+			}
+			std::memcpy(targetBytes, handle.originalBytes, handle.patchSize);
+			FlushInstructionCache(GetCurrentProcess(), targetBytes, handle.patchSize);
+			DWORD ignoreProtect = 0;
+			VirtualProtect(targetBytes, handle.patchSize, oldProtect, &ignoreProtect);
+			handle.target = nullptr;
+			handle.patchSize = 0;
+			handle.installed = false;
+			std::memset(handle.originalBytes, 0, sizeof(handle.originalBytes));
+			return true;
+		}
+
 	}
 }

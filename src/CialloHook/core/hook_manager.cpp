@@ -2,9 +2,14 @@
 
 #include <string>
 #include <cwctype>
-#include <filesystem>
+#include <cmath>
 #include <memory>
 #include <vector>
+
+#include <objidl.h>
+#include <gdiplus.h>
+#pragma comment(lib, "gdiplus.lib")
+#pragma comment(lib, "msimg32.lib")
 
 #include "../../RuntimeCore/io/File.h"
 #include "../../RuntimeCore/io/CustomPakVFS.h"
@@ -390,73 +395,84 @@ namespace CialloHook
 		return PathRemoveFileName(exePath);
 	}
 
+	static bool IsDirectoryPath(const std::wstring& path)
+	{
+		DWORD attr = GetFileAttributesW(path.c_str());
+		return attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY) != 0;
+	}
+
 	static void CleanupMedFontCache()
 	{
-		const std::filesystem::path target = std::filesystem::current_path() / L"_FONTSET.MED";
-		std::error_code ec;
-		if (!std::filesystem::exists(target, ec))
+		const std::wstring target = JoinPath(GetCurrentDirW(), L"_FONTSET.MED");
+		DWORD attr = GetFileAttributesW(target.c_str());
+		if (attr == INVALID_FILE_ATTRIBUTES)
 		{
 			return;
 		}
-		if (ec)
+		if ((attr & FILE_ATTRIBUTE_DIRECTORY) != 0)
 		{
-			LogMessage(LogLevel::Error, L"MED cleanup: exists check failed: %hs", ec.message().c_str());
+			LogMessage(LogLevel::Debug, L"MED cleanup: target not deleted %s", target.c_str());
 			return;
 		}
-		if (std::filesystem::remove(target, ec))
+		if (DeleteFileW(target.c_str()))
 		{
-			CIALLOHOOK_VERBOSE_INFO_LOG(L"MED cleanup: deleted %s", target.wstring().c_str());
+			CIALLOHOOK_VERBOSE_INFO_LOG(L"MED cleanup: deleted %s", target.c_str());
 			return;
 		}
-		if (ec)
-		{
-			LogMessage(LogLevel::Error, L"MED cleanup: delete failed %s, error=%hs", target.wstring().c_str(), ec.message().c_str());
-			return;
-		}
-		LogMessage(LogLevel::Debug, L"MED cleanup: target not deleted %s", target.wstring().c_str());
+		LogMessage(LogLevel::Error, L"MED cleanup: delete failed %s, error=%lu", target.c_str(), GetLastError());
 	}
 
 	static void CleanupMajiroFontCache()
 	{
-		const std::filesystem::path savedataDir = std::filesystem::current_path() / L"savedata";
-		std::error_code ec;
-		if (!std::filesystem::exists(savedataDir, ec) || !std::filesystem::is_directory(savedataDir, ec))
+		const std::wstring savedataDir = JoinPath(GetCurrentDirW(), L"savedata");
+		if (!IsDirectoryPath(savedataDir))
 		{
 			return;
 		}
-		if (ec)
+
+		WIN32_FIND_DATAW findData = {};
+		std::wstring pattern = JoinPath(savedataDir, L"*");
+		HANDLE findHandle = FindFirstFileW(pattern.c_str(), &findData);
+		if (findHandle == INVALID_HANDLE_VALUE)
 		{
-			LogMessage(LogLevel::Error, L"MAJIRO cleanup: savedata check failed: %hs", ec.message().c_str());
+			DWORD error = GetLastError();
+			if (error != ERROR_FILE_NOT_FOUND && error != ERROR_PATH_NOT_FOUND)
+			{
+				LogMessage(LogLevel::Error, L"MAJIRO cleanup: iterate failed, error=%lu", error);
+			}
 			return;
 		}
 
 		size_t removedCount = 0;
-		for (const auto& entry : std::filesystem::directory_iterator(savedataDir, ec))
+		do
 		{
-			if (ec)
-			{
-				LogMessage(LogLevel::Error, L"MAJIRO cleanup: iterate failed: %hs", ec.message().c_str());
-				break;
-			}
-			if (!entry.is_regular_file())
+			if ((findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
 			{
 				continue;
 			}
-			std::wstring ext = ToLowerCopy(entry.path().extension().wstring());
+			std::wstring fileName = findData.cFileName;
+			size_t dot = fileName.find_last_of(L'.');
+			std::wstring ext = dot == std::wstring::npos ? std::wstring() : ToLowerCopy(fileName.substr(dot));
 			if (ext != L".fcd")
 			{
 				continue;
 			}
-			std::error_code removeEc;
-			if (std::filesystem::remove(entry.path(), removeEc))
+			std::wstring filePath = JoinPath(savedataDir, fileName);
+			if (DeleteFileW(filePath.c_str()))
 			{
 				++removedCount;
 			}
-			else if (removeEc)
+			else
 			{
-				LogMessage(LogLevel::Error, L"MAJIRO cleanup: delete failed %s, error=%hs",
-					entry.path().wstring().c_str(), removeEc.message().c_str());
+				LogMessage(LogLevel::Error, L"MAJIRO cleanup: delete failed %s, error=%lu", filePath.c_str(), GetLastError());
 			}
+		} while (FindNextFileW(findHandle, &findData));
+
+		DWORD iterateError = GetLastError();
+		FindClose(findHandle);
+		if (iterateError != ERROR_NO_MORE_FILES)
+		{
+			LogMessage(LogLevel::Error, L"MAJIRO cleanup: iterate failed, error=%lu", iterateError);
 		}
 
 		LogMessage(LogLevel::Info, L"MAJIRO cleanup: removed %zu .fcd files", removedCount);
@@ -533,6 +549,719 @@ namespace CialloHook
 		int dialogResult = ShowExternalStartupConsentDialog(settings.title.c_str(), body.c_str());
 		CIALLOHOOK_VERBOSE_INFO_LOG(L"StartupMessage: dialog result=%d", dialogResult);
 		return dialogResult == IDYES;
+	}
+
+	/* ================================================================
+	 * Global Exception Handler (VEH)
+	 * Logs all serious exceptions with module name and registers.
+	 * Crash dump is handled separately by dllmain.cpp TopLevelExceptionFilter.
+	 * ================================================================ */
+
+	static PVOID g_vehHandle = nullptr;
+
+	/* ---- Stack overflow safe logging ----
+	 * When EXCEPTION_STACK_OVERFLOW fires the thread has almost no stack left.
+	 * We must avoid any heap allocation, std::wstring, or deep call chains.
+	 * All buffers are static; OutputDebugStringW and WriteFile are safe to call. */
+	static volatile LONG sg_stackOverflowHandlingInProgress = 0;
+	static wchar_t sg_soLogBuf[512];
+	static wchar_t sg_soRegBuf[512];
+	static wchar_t sg_soFilePath[MAX_PATH];
+	static volatile LONG sg_soFilePathReady = 0;
+
+	static void InitStackOverflowLogFilePath()
+	{
+		wchar_t exePath[MAX_PATH] = {};
+		if (GetModuleFileNameW(nullptr, exePath, MAX_PATH) == 0)
+		{
+			sg_soFilePath[0] = L'\0';
+			return;
+		}
+		wchar_t* lastSep = nullptr;
+		for (wchar_t* p = exePath; *p != L'\0'; ++p)
+		{
+			if (*p == L'\\' || *p == L'/') lastSep = p;
+		}
+		if (lastSep) *(lastSep + 1) = L'\0';
+		else exePath[0] = L'\0';
+		swprintf_s(sg_soFilePath, L"%sCialloHook_stackoverflow.log", exePath);
+		InterlockedExchange(&sg_soFilePathReady, 1);
+	}
+
+	static void WriteStackOverflowLogDirect(const wchar_t* line)
+	{
+		if (InterlockedCompareExchange(&sg_soFilePathReady, 0, 0) == 0 || sg_soFilePath[0] == L'\0')
+			return;
+		HANDLE hf = CreateFileW(sg_soFilePath, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE,
+			nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+		if (hf == INVALID_HANDLE_VALUE)
+			return;
+		/* Write BOM if file is empty */
+		LARGE_INTEGER fileSize = {};
+		if (GetFileSizeEx(hf, &fileSize) && fileSize.QuadPart == 0)
+		{
+			unsigned char bom[3] = { 0xEF, 0xBB, 0xBF };
+			DWORD bw = 0;
+			WriteFile(hf, bom, 3, &bw, nullptr);
+		}
+		/* Convert to UTF-8 using stack-minimal static buffer */
+		char utf8Buf[1536] = {};
+		int utf8Len = WideCharToMultiByte(CP_UTF8, 0, line, -1, utf8Buf, sizeof(utf8Buf) - 1, nullptr, nullptr);
+		if (utf8Len > 1)
+		{
+			DWORD bw = 0;
+			WriteFile(hf, utf8Buf, (DWORD)(utf8Len - 1), &bw, nullptr);
+		}
+		CloseHandle(hf);
+	}
+
+	static void LogStackOverflowSafe(PEXCEPTION_POINTERS ep)
+	{
+		/* Prevent reentrant handling */
+		if (InterlockedCompareExchange(&sg_stackOverflowHandlingInProgress, 1, 0) != 0)
+			return;
+
+		void* faultAddr = (ep && ep->ExceptionRecord) ? ep->ExceptionRecord->ExceptionAddress : nullptr;
+
+		HMODULE faultModule = nullptr;
+		GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+			(LPCWSTR)faultAddr, &faultModule);
+
+		wchar_t modPath[MAX_PATH] = L"<unknown>";
+		if (faultModule) GetModuleFileNameW(faultModule, modPath, MAX_PATH);
+		const wchar_t* modSlash = wcsrchr(modPath, L'\\');
+		const wchar_t* modName = modSlash ? modSlash + 1 : modPath;
+
+		SYSTEMTIME st = {};
+		GetLocalTime(&st);
+
+		swprintf_s(sg_soLogBuf,
+			L"[%02d:%02d:%02d.%03d][P%lu:T%lu][VEH] EXCEPTION_STACK_OVERFLOW at 0x%p in %s\r\n",
+			st.wHour, st.wMinute, st.wSecond, st.wMilliseconds,
+			GetCurrentProcessId(), GetCurrentThreadId(),
+			faultAddr, modName);
+		OutputDebugStringW(sg_soLogBuf);
+		WriteStackOverflowLogDirect(sg_soLogBuf);
+
+		if (ep && ep->ContextRecord)
+		{
+			auto* ctx = ep->ContextRecord;
+#ifdef _M_IX86
+			swprintf_s(sg_soRegBuf,
+				L"[%02d:%02d:%02d.%03d][P%lu:T%lu][VEH] EAX=%08X EBX=%08X ECX=%08X EDX=%08X ESI=%08X EDI=%08X EBP=%08X ESP=%08X EIP=%08X\r\n",
+				st.wHour, st.wMinute, st.wSecond, st.wMilliseconds,
+				GetCurrentProcessId(), GetCurrentThreadId(),
+				ctx->Eax, ctx->Ebx, ctx->Ecx, ctx->Edx, ctx->Esi, ctx->Edi, ctx->Ebp, ctx->Esp, ctx->Eip);
+#elif defined(_M_X64)
+			swprintf_s(sg_soRegBuf,
+				L"[%02d:%02d:%02d.%03d][P%lu:T%lu][VEH] RAX=%016llX RBX=%016llX RCX=%016llX RDX=%016llX RSI=%016llX RDI=%016llX RBP=%016llX RSP=%016llX RIP=%016llX\r\n",
+				st.wHour, st.wMinute, st.wSecond, st.wMilliseconds,
+				GetCurrentProcessId(), GetCurrentThreadId(),
+				ctx->Rax, ctx->Rbx, ctx->Rcx, ctx->Rdx, ctx->Rsi, ctx->Rdi, ctx->Rbp, ctx->Rsp, ctx->Rip);
+#else
+			sg_soRegBuf[0] = L'\0';
+#endif
+			if (sg_soRegBuf[0] != L'\0')
+			{
+				OutputDebugStringW(sg_soRegBuf);
+				WriteStackOverflowLogDirect(sg_soRegBuf);
+			}
+		}
+
+		/* Note: we do NOT reset sg_stackOverflowHandlingInProgress here.
+		 * Stack overflow is typically fatal; preventing reentry avoids infinite loops. */
+	}
+
+	/* ---- VEH exception deduplication ----
+	 * Hook functions use __try/__except, so most exceptions are caught by SEH.
+	 * But VEH fires before SEH, and the same address can trigger hundreds of
+	 * times (e.g. font metrics called repeatedly with invalid state).
+	 * We deduplicate: same address within 2s → log first 3, then suppress
+	 * and emit a count summary when the address changes or time expires. */
+	static void* volatile sg_vehLastAddr = nullptr;
+	static volatile LONG sg_vehRepeatCount = 0;
+	static volatile LONG sg_vehSuppressedCount = 0;
+	static DWORD sg_vehLastTick = 0;
+	static const LONG VEH_LOG_THRESHOLD = 3;
+	static const DWORD VEH_DEDUP_WINDOW_MS = 2000;
+
+	static void FlushVehSuppressedCount()
+	{
+		LONG suppressed = InterlockedExchange(&sg_vehSuppressedCount, 0);
+		if (suppressed > 0)
+		{
+			LogMessage(LogLevel::Warn,
+				L"[VEH] ... suppressed %ld repeated exceptions at same address (caught by SEH, non-fatal)",
+				suppressed);
+		}
+	}
+
+	static LONG CALLBACK GlobalVectoredExceptionHandler(PEXCEPTION_POINTERS ep)
+	{
+		DWORD code = ep->ExceptionRecord->ExceptionCode;
+
+		/* Stack overflow: log with static buffers only (no heap, minimal stack) */
+		if (code == EXCEPTION_STACK_OVERFLOW)
+		{
+			LogStackOverflowSafe(ep);
+			return EXCEPTION_CONTINUE_SEARCH;
+		}
+
+		/* Only log serious exceptions, skip common noise like breakpoints */
+		if (code == EXCEPTION_ACCESS_VIOLATION ||
+		    code == EXCEPTION_ILLEGAL_INSTRUCTION ||
+		    code == EXCEPTION_INT_DIVIDE_BY_ZERO ||
+		    code == EXCEPTION_FLT_DIVIDE_BY_ZERO)
+		{
+			/* ---- Deduplication ---- */
+			void* currentAddr = ep->ExceptionRecord->ExceptionAddress;
+			DWORD currentTick = GetTickCount();
+			void* lastAddr = sg_vehLastAddr;
+
+			if (currentAddr == lastAddr && (currentTick - sg_vehLastTick) < VEH_DEDUP_WINDOW_MS)
+			{
+				LONG count = InterlockedIncrement(&sg_vehRepeatCount);
+				if (count > VEH_LOG_THRESHOLD)
+				{
+					InterlockedIncrement(&sg_vehSuppressedCount);
+					return EXCEPTION_CONTINUE_SEARCH;
+				}
+			}
+			else
+			{
+				/* New address or time window expired: flush old suppressed count and reset */
+				FlushVehSuppressedCount();
+				InterlockedExchangePointer(&sg_vehLastAddr, currentAddr);
+				InterlockedExchange(&sg_vehRepeatCount, 1);
+			}
+			sg_vehLastTick = currentTick;
+
+			/* Get module info for the faulting address */
+			HMODULE faultModule = nullptr;
+			GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+				(LPCWSTR)ep->ExceptionRecord->ExceptionAddress, &faultModule);
+
+			wchar_t moduleName[MAX_PATH] = L"<unknown>";
+			if (faultModule) GetModuleFileNameW(faultModule, moduleName, MAX_PATH);
+
+			/* Extract just the filename */
+			const wchar_t* slash = wcsrchr(moduleName, L'\\');
+			const wchar_t* name = slash ? slash + 1 : moduleName;
+
+			LogMessage(LogLevel::Error,
+				L"[VEH] Exception 0x%08X at 0x%p in %s (base+0x%X)",
+				code, ep->ExceptionRecord->ExceptionAddress, name,
+				faultModule ? (DWORD)((BYTE*)ep->ExceptionRecord->ExceptionAddress - (BYTE*)faultModule) : 0);
+
+#ifdef _M_IX86
+			auto* ctx = ep->ContextRecord;
+			LogMessage(LogLevel::Error,
+				L"[VEH] EAX=%08X EBX=%08X ECX=%08X EDX=%08X ESI=%08X EDI=%08X EBP=%08X ESP=%08X EIP=%08X",
+				ctx->Eax, ctx->Ebx, ctx->Ecx, ctx->Edx, ctx->Esi, ctx->Edi, ctx->Ebp, ctx->Esp, ctx->Eip);
+#elif defined(_M_X64)
+			auto* ctx = ep->ContextRecord;
+			LogMessage(LogLevel::Error,
+				L"[VEH] RAX=%016llX RBX=%016llX RCX=%016llX RDX=%016llX RIP=%016llX RSP=%016llX",
+				ctx->Rax, ctx->Rbx, ctx->Rcx, ctx->Rdx, ctx->Rip, ctx->Rsp);
+#endif
+		}
+
+		return EXCEPTION_CONTINUE_SEARCH;
+	}
+
+	static void InstallGlobalExceptionHandlers()
+	{
+		InitStackOverflowLogFilePath();
+		g_vehHandle = AddVectoredExceptionHandler(1, GlobalVectoredExceptionHandler);
+		/* Note: SetUnhandledExceptionFilter is already set in dllmain.cpp (TopLevelExceptionFilter) */
+	}
+
+	static void UninstallGlobalExceptionHandlers()
+	{
+		if (g_vehHandle)
+		{
+			FlushVehSuppressedCount();
+			RemoveVectoredExceptionHandler(g_vehHandle);
+			g_vehHandle = nullptr;
+		}
+	}
+
+	/* ================================================================
+	 * Splash Image — entry point hook, configurable effects
+	 * ================================================================ */
+
+	struct SplashTile { int sx, sy, sw, sh; float vx, vy, rot, delay; };
+	static constexpr int TILE_C = 12, TILE_R = 9, TILE_N = TILE_C * TILE_R;
+
+	struct SplashState
+	{
+		Gdiplus::Bitmap* scaled;
+		int W, H, posX, posY;
+		DWORD startTick, entryMs, holdMs, exitMs, totalMs;
+		int entryFx, exitFx;
+		int interactionMode;
+		bool isDragging;
+		int dragMouseStartX, dragMouseStartY;
+		int dragWindowStartX, dragWindowStartY;
+		SplashTile tiles[TILE_N];
+	};
+	static SplashState g_sp = {};
+
+	static float sp_randf() { return (float)rand() / (float)RAND_MAX; }
+	static float sp_randf_r(float a, float b) { return a + sp_randf() * (b - a); }
+
+	static void InitTiles(SplashState& s)
+	{
+		srand((unsigned)GetTickCount());
+		int tw = s.W / TILE_C, th = s.H / TILE_R;
+		for (int r = 0; r < TILE_R; ++r)
+			for (int c = 0; c < TILE_C; ++c)
+			{
+				auto& t = s.tiles[r * TILE_C + c];
+				t.sx = c * tw; t.sy = r * th;
+				t.sw = (c == TILE_C - 1) ? (s.W - t.sx) : tw;
+				t.sh = (r == TILE_R - 1) ? (s.H - t.sy) : th;
+				float cx = (float)(t.sx + t.sw / 2 - s.W / 2);
+				float cy = (float)(t.sy + t.sh / 2 - s.H / 2);
+				float d = sqrtf(cx * cx + cy * cy) + 1.0f;
+				float spd = sp_randf_r(180.f, 450.f);
+				t.vx = (cx / d) * spd + sp_randf_r(-60.f, 60.f);
+				t.vy = (cy / d) * spd + sp_randf_r(-60.f, 60.f);
+				t.rot = sp_randf_r(-4.f, 4.f);
+				t.delay = sp_randf() * 0.35f;
+			}
+	}
+
+	static void DrawFade(Gdiplus::Graphics& gfx, float alpha)
+	{
+		Gdiplus::ColorMatrix cm = { 1,0,0,0,0, 0,1,0,0,0, 0,0,1,0,0, 0,0,0,alpha,0, 0,0,0,0,1 };
+		Gdiplus::ImageAttributes ia; ia.SetColorMatrix(&cm);
+		Gdiplus::Rect dr(0, 0, g_sp.W, g_sp.H);
+		gfx.DrawImage(g_sp.scaled, dr, 0, 0, g_sp.W, g_sp.H, Gdiplus::UnitPixel, &ia);
+	}
+
+	static void DrawRotate(Gdiplus::Graphics& gfx, float t, bool entering)
+	{
+		float progress = entering ? t : (1.0f - t);
+		float eased = entering ? (progress * (2.0f - progress)) : (1.0f - (1.0f - progress) * (1.0f - progress));
+		float scale = 0.15f + 0.85f * eased;
+		float angle = (1.0f - eased) * (entering ? -540.0f : 540.0f);
+		float alpha = eased;
+		if (alpha < 0.f) alpha = 0.f; if (alpha > 1.f) alpha = 1.f;
+		float cx = (float)g_sp.W / 2.f, cy = (float)g_sp.H / 2.f;
+		Gdiplus::Matrix mat;
+		mat.Translate(cx, cy); mat.Rotate(angle); mat.Scale(scale, scale); mat.Translate(-cx, -cy);
+		gfx.SetTransform(&mat);
+		Gdiplus::ColorMatrix cm = { 1,0,0,0,0, 0,1,0,0,0, 0,0,1,0,0, 0,0,0,alpha,0, 0,0,0,0,1 };
+		Gdiplus::ImageAttributes ia; ia.SetColorMatrix(&cm);
+		Gdiplus::Rect dr(0, 0, g_sp.W, g_sp.H);
+		gfx.DrawImage(g_sp.scaled, dr, 0, 0, g_sp.W, g_sp.H, Gdiplus::UnitPixel, &ia);
+		gfx.ResetTransform();
+	}
+
+	static void DrawShatter(Gdiplus::Graphics& gfx, float phaseT, bool entering)
+	{
+		for (int i = 0; i < TILE_N; ++i)
+		{
+			const auto& t = g_sp.tiles[i];
+			float lt = (phaseT - t.delay) / (1.0f - t.delay);
+			if (lt < 0.f) lt = 0.f; if (lt > 1.f) lt = 1.f;
+			float moveT, alpha;
+			if (entering) { moveT = (1.f - lt) * (1.f - lt); alpha = lt * (2.f - lt); }
+			else { moveT = lt * lt; alpha = 1.f - lt * lt; }
+			if (alpha < 0.f) alpha = 0.f;
+			float sec = phaseT * (float)(entering ? g_sp.entryMs : g_sp.exitMs) / 1000.f;
+			float dx = t.vx * moveT * sec * 0.5f;
+			float dy = t.vy * moveT * sec * 0.5f + 120.f * moveT * sec;
+			Gdiplus::ColorMatrix cm = { 1,0,0,0,0, 0,1,0,0,0, 0,0,1,0,0, 0,0,0,alpha,0, 0,0,0,0,1 };
+			Gdiplus::ImageAttributes ia; ia.SetColorMatrix(&cm);
+			float ocx = (float)(t.sx + t.sw / 2), ocy = (float)(t.sy + t.sh / 2);
+			Gdiplus::Matrix mat;
+			mat.RotateAt(t.rot * moveT * sec * 30.f, Gdiplus::PointF(ocx, ocy));
+			mat.Translate(dx, dy, Gdiplus::MatrixOrderAppend);
+			gfx.SetTransform(&mat);
+			Gdiplus::Rect dr(t.sx, t.sy, t.sw, t.sh);
+			gfx.DrawImage(g_sp.scaled, dr, t.sx, t.sy, t.sw, t.sh, Gdiplus::UnitPixel, &ia);
+			gfx.ResetTransform();
+		}
+	}
+
+	static void DrawZoom(Gdiplus::Graphics& gfx, float t, bool entering)
+	{
+		float progress = entering ? t : (1.0f - t);
+		float eased = entering ? (progress * (2.0f - progress)) : (1.0f - (1.0f - progress) * (1.0f - progress));
+		float scale = entering ? (0.05f + 0.95f * eased) : (0.05f + 0.95f * eased);
+		float alpha = eased;
+		if (alpha < 0.f) alpha = 0.f; if (alpha > 1.f) alpha = 1.f;
+		float cx = (float)g_sp.W / 2.f, cy = (float)g_sp.H / 2.f;
+		Gdiplus::Matrix mat;
+		mat.Translate(cx, cy); mat.Scale(scale, scale); mat.Translate(-cx, -cy);
+		gfx.SetTransform(&mat);
+		Gdiplus::ColorMatrix cm = { 1,0,0,0,0, 0,1,0,0,0, 0,0,1,0,0, 0,0,0,alpha,0, 0,0,0,0,1 };
+		Gdiplus::ImageAttributes ia; ia.SetColorMatrix(&cm);
+		Gdiplus::Rect dr(0, 0, g_sp.W, g_sp.H);
+		gfx.DrawImage(g_sp.scaled, dr, 0, 0, g_sp.W, g_sp.H, Gdiplus::UnitPixel, &ia);
+		gfx.ResetTransform();
+	}
+
+	static void DrawBlinds(Gdiplus::Graphics& gfx, float t, bool entering)
+	{
+		const int NUM_BLINDS = 12;
+		float progress = entering ? t : (1.0f - t);
+		float eased = entering ? (progress * (2.0f - progress)) : (1.0f - (1.0f - progress) * (1.0f - progress));
+		int blindH = g_sp.H / NUM_BLINDS;
+		for (int i = 0; i < NUM_BLINDS; ++i)
+		{
+			int y = i * blindH;
+			int h = (i == NUM_BLINDS - 1) ? (g_sp.H - y) : blindH;
+			int visH = (int)(h * eased);
+			if (visH <= 0) continue;
+			Gdiplus::Rect dr(0, y, g_sp.W, visH);
+			gfx.DrawImage(g_sp.scaled, dr, 0, y, g_sp.W, visH, Gdiplus::UnitPixel);
+		}
+	}
+
+	static void DrawPixelate(Gdiplus::Graphics& gfx, float t, bool entering)
+	{
+		float progress = entering ? t : (1.0f - t);
+		/* eased: 0→1 for entering, 1→0 for exiting */
+		float eased = entering ? (progress * (2.0f - progress)) : (1.0f - (1.0f - progress) * (1.0f - progress));
+		/* block size: large when eased is small, 1 when eased is 1 */
+		int maxBlock = 48;
+		int blockSize = (int)(maxBlock * (1.0f - eased)) + 1;
+		if (blockSize < 1) blockSize = 1;
+
+		/* Downscale to create pixelation */
+		int smallW = g_sp.W / blockSize; if (smallW < 1) smallW = 1;
+		int smallH = g_sp.H / blockSize; if (smallH < 1) smallH = 1;
+
+		Gdiplus::Bitmap tiny(smallW, smallH, PixelFormat32bppPARGB);
+		{
+			Gdiplus::Graphics tg(&tiny);
+			tg.SetInterpolationMode(Gdiplus::InterpolationModeNearestNeighbor);
+			tg.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHalf);
+			tg.DrawImage(g_sp.scaled, 0, 0, smallW, smallH);
+		}
+		/* Upscale back with nearest-neighbor for blocky look */
+		gfx.SetInterpolationMode(Gdiplus::InterpolationModeNearestNeighbor);
+		gfx.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHalf);
+
+		float alpha = eased;
+		if (alpha < 0.f) alpha = 0.f;
+		Gdiplus::ColorMatrix cm = { 1,0,0,0,0, 0,1,0,0,0, 0,0,1,0,0, 0,0,0,alpha,0, 0,0,0,0,1 };
+		Gdiplus::ImageAttributes ia; ia.SetColorMatrix(&cm);
+		Gdiplus::Rect dr(0, 0, g_sp.W, g_sp.H);
+		gfx.DrawImage(&tiny, dr, 0, 0, smallW, smallH, Gdiplus::UnitPixel, &ia);
+
+		/* Restore interpolation mode */
+		gfx.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
+		gfx.SetPixelOffsetMode(Gdiplus::PixelOffsetModeDefault);
+	}
+
+	static void SplashRenderFrame(HWND hWnd)
+	{
+		DWORD elapsed = GetTickCount() - g_sp.startTick;
+		if (elapsed > g_sp.totalMs) elapsed = g_sp.totalMs;
+		Gdiplus::Bitmap off(g_sp.W, g_sp.H, PixelFormat32bppPARGB);
+		Gdiplus::Graphics gfx(&off);
+		gfx.SetSmoothingMode(Gdiplus::SmoothingModeHighQuality);
+		gfx.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
+		gfx.SetCompositingMode(Gdiplus::CompositingModeSourceCopy);
+		gfx.Clear(Gdiplus::Color(0, 0, 0, 0));
+		gfx.SetCompositingMode(Gdiplus::CompositingModeSourceOver);
+		DWORD entryEnd = g_sp.entryMs, holdEnd = entryEnd + g_sp.holdMs;
+		if (elapsed < entryEnd && entryEnd > 0)
+		{
+			float t = (float)elapsed / (float)entryEnd;
+			switch (g_sp.entryFx) {
+			case 2: DrawRotate(gfx, t, true); break;
+			case 3: DrawShatter(gfx, t, true); break;
+			case 4: DrawZoom(gfx, t, true); break;
+			case 5: DrawBlinds(gfx, t, true); break;
+			case 6: DrawPixelate(gfx, t, true); break;
+			default: DrawFade(gfx, t * (2.f - t)); break;
+			}
+		}
+		else if (elapsed <= holdEnd)
+		{
+			gfx.DrawImage(g_sp.scaled, 0, 0, g_sp.W, g_sp.H);
+		}
+		else
+		{
+			float t = (float)(elapsed - holdEnd) / (float)g_sp.exitMs;
+			if (t > 1.f) t = 1.f;
+			switch (g_sp.exitFx) {
+			case 2: DrawRotate(gfx, t, false); break;
+			case 3: DrawShatter(gfx, t, false); break;
+			case 4: DrawZoom(gfx, t, false); break;
+			case 5: DrawBlinds(gfx, t, false); break;
+			case 6: DrawPixelate(gfx, t, false); break;
+			default: { float a = 1.f - t * t; DrawFade(gfx, a < 0.f ? 0.f : a); } break;
+			}
+		}
+		HBITMAP hBmp = nullptr;
+		off.GetHBITMAP(Gdiplus::Color(0, 0, 0, 0), &hBmp);
+		HDC scDC = GetDC(nullptr), memDC = CreateCompatibleDC(scDC);
+		HBITMAP old = (HBITMAP)SelectObject(memDC, hBmp);
+		BLENDFUNCTION bl = {}; bl.BlendOp = AC_SRC_OVER; bl.SourceConstantAlpha = 255; bl.AlphaFormat = AC_SRC_ALPHA;
+		POINT src = {0,0}; SIZE sz = {(LONG)g_sp.W,(LONG)g_sp.H}; POINT pos = {(LONG)g_sp.posX,(LONG)g_sp.posY};
+		UpdateLayeredWindow(hWnd, scDC, &pos, &sz, memDC, &src, 0, &bl, ULW_ALPHA);
+		SelectObject(memDC, old); DeleteObject(hBmp); DeleteDC(memDC); ReleaseDC(nullptr, scDC);
+	}
+
+	static LRESULT CALLBACK SplashWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
+	{
+		switch (msg)
+		{
+		case WM_TIMER:
+			if (wParam == 1)
+			{
+				if (GetTickCount() - g_sp.startTick >= g_sp.totalMs)
+				{
+					KillTimer(hWnd, 1);
+					DestroyWindow(hWnd);
+				}
+				else
+				{
+					SplashRenderFrame(hWnd);
+				}
+				return 0;
+			}
+			break;
+
+		case WM_LBUTTONDOWN:
+			if (g_sp.interactionMode == 2)
+			{
+				/* Click to dismiss: skip to exit phase or close immediately */
+				DWORD elapsed = GetTickCount() - g_sp.startTick;
+				DWORD exitStart = g_sp.entryMs + g_sp.holdMs;
+				if (elapsed < exitStart)
+				{
+					/* Jump to exit phase start */
+					g_sp.startTick = GetTickCount() - exitStart;
+				}
+				return 0;
+			}
+			if (g_sp.interactionMode == 1)
+			{
+				/* Start dragging */
+				g_sp.isDragging = true;
+				POINT cursorPos;
+				GetCursorPos(&cursorPos);
+				g_sp.dragMouseStartX = cursorPos.x;
+				g_sp.dragMouseStartY = cursorPos.y;
+				g_sp.dragWindowStartX = g_sp.posX;
+				g_sp.dragWindowStartY = g_sp.posY;
+				SetCapture(hWnd);
+				return 0;
+			}
+			break;
+
+		case WM_MOUSEMOVE:
+			if (g_sp.isDragging && g_sp.interactionMode == 1)
+			{
+				POINT cursorPos;
+				GetCursorPos(&cursorPos);
+				g_sp.posX = g_sp.dragWindowStartX + (cursorPos.x - g_sp.dragMouseStartX);
+				g_sp.posY = g_sp.dragWindowStartY + (cursorPos.y - g_sp.dragMouseStartY);
+				/* SplashRenderFrame will use the updated posX/posY via UpdateLayeredWindow */
+				SplashRenderFrame(hWnd);
+				return 0;
+			}
+			break;
+
+		case WM_LBUTTONUP:
+			if (g_sp.isDragging)
+			{
+				g_sp.isDragging = false;
+				ReleaseCapture();
+				return 0;
+			}
+			break;
+
+		case WM_DESTROY:
+			PostQuitMessage(0);
+			return 0;
+		}
+		return DefWindowProcW(hWnd, msg, wParam, lParam);
+	}
+
+	static void RunSplashAnimation(const uint8_t* imgData, size_t imgSize, const SplashImageSettings& settings)
+	{
+		HGLOBAL hg = GlobalAlloc(GMEM_MOVEABLE, imgSize);
+		if (!hg) return;
+		void* pg = GlobalLock(hg); memcpy(pg, imgData, imgSize); GlobalUnlock(hg);
+		Gdiplus::GdiplusStartupInput gi; ULONG_PTR gt=0;
+		if (Gdiplus::GdiplusStartup(&gt, &gi, nullptr) != Gdiplus::Ok) { GlobalFree(hg); return; }
+		IStream* ps=nullptr; CreateStreamOnHGlobal(hg, TRUE, &ps);
+		auto* srcBmp = new Gdiplus::Bitmap(ps); ps->Release();
+		if (srcBmp->GetLastStatus() != Gdiplus::Ok) { delete srcBmp; Gdiplus::GdiplusShutdown(gt); return; }
+		int W = settings.width, H = settings.height;
+		auto* sc = new Gdiplus::Bitmap(W, H, PixelFormat32bppPARGB);
+		{ Gdiplus::Graphics g(sc); g.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
+		  g.SetCompositingMode(Gdiplus::CompositingModeSourceCopy); g.DrawImage(srcBmp, 0, 0, W, H); }
+		delete srcBmp;
+		g_sp.scaled = sc; g_sp.W = W; g_sp.H = H;
+		g_sp.entryFx = settings.entryEffect; g_sp.exitFx = settings.exitEffect;
+		g_sp.entryMs = settings.entryMs; g_sp.holdMs = settings.holdMs; g_sp.exitMs = settings.exitMs;
+		g_sp.interactionMode = settings.interactionMode;
+		g_sp.isDragging = false;
+
+		/* Calculate total duration: DurationMs overrides if set */
+		DWORD autoTotal = g_sp.entryMs + g_sp.holdMs + g_sp.exitMs;
+		if (settings.durationMs > 0)
+		{
+			g_sp.totalMs = (DWORD)settings.durationMs;
+			/* If overridden duration is shorter, adjust hold/exit proportionally */
+			if (g_sp.totalMs < g_sp.entryMs)
+			{
+				g_sp.entryMs = g_sp.totalMs;
+				g_sp.holdMs = 0;
+				g_sp.exitMs = 0;
+			}
+			else if (g_sp.totalMs < g_sp.entryMs + g_sp.holdMs)
+			{
+				g_sp.holdMs = g_sp.totalMs - g_sp.entryMs;
+				g_sp.exitMs = 0;
+			}
+			else if (g_sp.totalMs < autoTotal)
+			{
+				g_sp.exitMs = g_sp.totalMs - g_sp.entryMs - g_sp.holdMs;
+			}
+		}
+		else
+		{
+			g_sp.totalMs = autoTotal;
+		}
+
+		/* Calculate position based on settings.position
+		 * 1=center  2=top-left  3=top-right  4=bottom-left  5=bottom-right */
+		{
+			const int MARGIN = 20;
+			int screenW = GetSystemMetrics(SM_CXSCREEN);
+			int screenH = GetSystemMetrics(SM_CYSCREEN);
+			switch (settings.position)
+			{
+			case 2: /* top-left */
+				g_sp.posX = MARGIN;
+				g_sp.posY = MARGIN;
+				break;
+			case 3: /* top-right */
+				g_sp.posX = screenW - W - MARGIN;
+				g_sp.posY = MARGIN;
+				break;
+			case 4: /* bottom-left */
+				g_sp.posX = MARGIN;
+				g_sp.posY = screenH - H - MARGIN;
+				break;
+			case 5: /* bottom-right */
+				g_sp.posX = screenW - W - MARGIN;
+				g_sp.posY = screenH - H - MARGIN;
+				break;
+			default: /* 1 = center */
+				g_sp.posX = (screenW - W) / 2;
+				g_sp.posY = (screenH - H) / 2;
+				break;
+			}
+		}
+
+		if (g_sp.entryFx == 3 || g_sp.exitFx == 3) InitTiles(g_sp);
+		HINSTANCE hInst = GetModuleHandleW(nullptr);
+		static const wchar_t* cls = L"CialloSplashClass";
+		WNDCLASSEXW wc = {}; wc.cbSize = sizeof(wc); wc.lpfnWndProc = SplashWndProc;
+		wc.hInstance = hInst;
+		/* Use move cursor for draggable mode, normal arrow otherwise */
+		wc.hCursor = LoadCursorW(nullptr, settings.interactionMode == 1 ? IDC_SIZEALL : IDC_ARROW);
+		wc.lpszClassName = cls; RegisterClassExW(&wc);
+		HWND hWnd = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED,
+			cls, L"", WS_POPUP, g_sp.posX, g_sp.posY, W, H, nullptr, nullptr, hInst, nullptr);
+		if (!hWnd) { delete sc; g_sp.scaled = nullptr; Gdiplus::GdiplusShutdown(gt); return; }
+		g_sp.startTick = GetTickCount();
+		SplashRenderFrame(hWnd);
+		ShowWindow(hWnd, SW_SHOW);
+		SetTimer(hWnd, 1, 16, nullptr);
+		MSG msg;
+		while (GetMessageW(&msg, nullptr, 0, 0) > 0) { TranslateMessage(&msg); DispatchMessageW(&msg); }
+		UnregisterClassW(cls, hInst);
+		delete sc; g_sp.scaled = nullptr;
+		Gdiplus::GdiplusShutdown(gt);
+	}
+
+	/* SEH wrapper — no C++ objects on stack so __try is legal */
+	static void RunSplashAnimationSafe(const uint8_t* data, size_t size, const SplashImageSettings* pSettings)
+	{
+		__try { RunSplashAnimation(data, size, *pSettings); }
+		__except (EXCEPTION_EXECUTE_HANDLER) { /* splash failed, continue to game */ }
+	}
+
+	static bool ReadFileToVector(const std::wstring& path, std::vector<uint8_t>& out)
+	{
+		HANDLE hf = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+		if (hf == INVALID_HANDLE_VALUE) return false;
+		DWORD sz = GetFileSize(hf, nullptr);
+		if (sz == 0 || sz == INVALID_FILE_SIZE) { CloseHandle(hf); return false; }
+		out.resize(sz);
+		DWORD br = 0; ReadFile(hf, out.data(), sz, &br, nullptr); CloseHandle(hf);
+		return (br == sz);
+	}
+
+	void HookManager::ShowSplashFromEntryPoint(HMODULE dllModule)
+	{
+		const ModuleSettingsContext context = BuildModuleSettingsContext(dllModule);
+		if (context.iniPath.empty()) return;
+
+		wchar_t val[16] = {};
+		GetPrivateProfileStringW(L"SplashImage", L"Enable", L"false", val, 16, context.iniPath.c_str());
+		bool enabled = (lstrcmpiW(val, L"true") == 0 || lstrcmpiW(val, L"1") == 0 || lstrcmpiW(val, L"yes") == 0);
+		if (!enabled) return;
+
+		SplashImageSettings ss;
+		ss.enable = true;
+		wchar_t buf[256] = {};
+		GetPrivateProfileStringW(L"SplashImage", L"ImageFile", L"splash.png", buf, 256, context.iniPath.c_str());
+		ss.imageFile = buf;
+		ss.width = GetPrivateProfileIntW(L"SplashImage", L"Width", 800, context.iniPath.c_str());
+		ss.height = GetPrivateProfileIntW(L"SplashImage", L"Height", 600, context.iniPath.c_str());
+		ss.entryEffect = GetPrivateProfileIntW(L"SplashImage", L"EntryEffect", 1, context.iniPath.c_str());
+		ss.exitEffect = GetPrivateProfileIntW(L"SplashImage", L"ExitEffect", 1, context.iniPath.c_str());
+		ss.entryMs = GetPrivateProfileIntW(L"SplashImage", L"EntryMs", 1200, context.iniPath.c_str());
+		ss.holdMs = GetPrivateProfileIntW(L"SplashImage", L"HoldMs", 1800, context.iniPath.c_str());
+		ss.exitMs = GetPrivateProfileIntW(L"SplashImage", L"ExitMs", 1500, context.iniPath.c_str());
+		ss.durationMs = GetPrivateProfileIntW(L"SplashImage", L"DurationMs", 0, context.iniPath.c_str());
+		ss.position = GetPrivateProfileIntW(L"SplashImage", L"Position", 1, context.iniPath.c_str());
+		ss.interactionMode = GetPrivateProfileIntW(L"SplashImage", L"InteractionMode", 0, context.iniPath.c_str());
+
+		wchar_t patchFolder[256] = {};
+		GetPrivateProfileStringW(L"FilePatch", L"PatchFolderName_0", L"patch", patchFolder, 256, context.iniPath.c_str());
+		wchar_t cpkFile[256] = {};
+		GetPrivateProfileStringW(L"FilePatch", L"CustomPakName_0", L"patch.cpk", cpkFile, 256, context.iniPath.c_str());
+		wchar_t cpkEnabled[16] = {};
+		GetPrivateProfileStringW(L"FilePatch", L"CustomPakEnable", L"false", cpkEnabled, 16, context.iniPath.c_str());
+		bool useCpk = (lstrcmpiW(cpkEnabled, L"true") == 0 || lstrcmpiW(cpkEnabled, L"1") == 0);
+
+		wchar_t ep[MAX_PATH] = {};
+		GetModuleFileNameW(nullptr, ep, MAX_PATH);
+		std::wstring gameDir(ep);
+		auto sep = gameDir.find_last_of(L"\\/");
+		if (sep != std::wstring::npos) gameDir = gameDir.substr(0, sep + 1);
+
+		std::vector<uint8_t> imgData;
+		bool found = false;
+
+		if (!found) { found = ReadFileToVector(gameDir + patchFolder + L"\\" + ss.imageFile, imgData); }
+		if (!found && useCpk)
+		{
+			std::shared_ptr<const std::vector<uint8_t>> cpkData;
+			if (ResolveCustomPakArchiveData((gameDir + cpkFile).c_str(), ss.imageFile.c_str(), cpkData) && cpkData && !cpkData->empty())
+			{
+				imgData.assign(cpkData->begin(), cpkData->end());
+				found = true;
+			}
+		}
+		if (!found) { found = ReadFileToVector(gameDir + ss.imageFile, imgData); }
+		if (!found || imgData.empty()) return;
+
+		RunSplashAnimationSafe(imgData.data(), imgData.size(), &ss);
 	}
 
 	static void FillTimeZone(const std::wstring& timezone, RTL_TIME_ZONE_INFORMATION& tzi)
@@ -821,7 +1550,22 @@ namespace CialloHook
 		}
 	}
 
-	void HookManager::RegisterLocaleEmulatorStagedFilesFromEnvironment()
+	bool HookManager::TryLoadStartupSettings(HMODULE dllModule, AppSettings& settings)
+		{
+			try
+			{
+				const ModuleSettingsContext context = BuildModuleSettingsContext(dllModule);
+				std::string errorMessage;
+				return TryLoadModuleSettings(context, settings, errorMessage, nullptr);
+			}
+			catch (...)
+			{
+				settings = AppSettings{};
+				return false;
+			}
+		}
+
+		void HookManager::RegisterLocaleEmulatorStagedFilesFromEnvironment()
 	{
 		bool exists = false;
 		const std::wstring rawValue = GetEnvironmentVariableString(kLocaleEmulatorStagedFilesEnvVar, exists);
@@ -890,12 +1634,15 @@ namespace CialloHook
 			{
 				std::wstring wideError = Utf8ToWide(errorMessage);
 				LogMessage(LogLevel::Error, L"Config load failed: %s", wideError.c_str());
+					ReleaseStartupWindowGate();
 				MessageBoxW(NULL, wideError.c_str(), L"CialloHook", MB_OK | MB_ICONERROR);
 				return;
 			}
 
 			bool effectiveDebugEnable = settings.debug.enable;
 			InitLogger(dllNameNoExt.c_str(), effectiveDebugEnable, settings.debug.logToFile, settings.debug.logToConsole);
+			InstallGlobalExceptionHandlers();
+			LogMessage(LogLevel::Info, L"Global VEH exception handler installed");
 			LogMessage(LogLevel::Info, L"Config loaded: %s", configSource.c_str());
 			LogMessage(LogLevel::Info, L"Debug flags: Enable=%d File=%d Console=%d Effective=%d",
 				settings.debug.enable ? 1 : 0,
@@ -909,9 +1656,10 @@ namespace CialloHook
 				MessageBoxW(NULL, wideWarning.c_str(), L"CialloHook", MB_OK | MB_ICONWARNING);
 			}
 			bool hasFontHook = !settings.font.font.empty();
-			LogMessage(LogLevel::Info, L"Feature flags: Font=%d Text=%d Title=%d FilePatch=%d CodePage=%d",
+			LogMessage(LogLevel::Info, L"Feature flags: Font=%d Text=%d Title=%d FilePatch=%d CodePage=%d RioShiina=%d(mode=%d)",
 				hasFontHook ? 1 : 0, settings.textReplace.rules.empty() ? 0 : 1, settings.windowTitle.rules.empty() ? 0 : 1,
-				settings.filePatch.enable ? 1 : 0, settings.codePage.enable ? 1 : 0);
+				settings.filePatch.enable ? 1 : 0, settings.codePage.enable ? 1 : 0,
+				settings.rioShiina.enable ? 1 : 0, settings.rioShiina.mode);
 			LogMessage(LogLevel::Info, L"Engine cache flags: MED=%d MAJIRO=%d",
 				settings.engineCache.med ? 1 : 0, settings.engineCache.majiro ? 1 : 0);
 			LogMessage(LogLevel::Info, L"Engine patch flags: KrkrPatch=%d(count=%u) WafflePatch=%d(GetTextCrash=%d)",
@@ -951,6 +1699,7 @@ namespace CialloHook
 			std::wstring wideError = Utf8ToWide(err.what());
 			InitLogger(dllNameNoExt.c_str(), true, false, false);
 			LogMessage(LogLevel::Error, L"Initialize exception: %s", wideError.c_str());
+				ReleaseStartupWindowGate();
 			MessageBoxW(NULL, wideError.c_str(), L"CialloHook", MB_OK | MB_ICONERROR);
 		}
 	}

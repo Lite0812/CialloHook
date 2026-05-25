@@ -1,4 +1,4 @@
-		//*********START File Hot-Patch*********
+﻿		//*********START File Hot-Patch*********
 		static std::vector<std::wstring> sg_vecPatchFolders = { L"patch" };
 		static std::vector<std::wstring> sg_vecSpoofFiles;
 		static std::vector<std::wstring> sg_vecSpoofDirectories;
@@ -9,6 +9,13 @@
 			std::wstring targetDirectory;
 		};
 		static std::vector<DirectoryRedirectRule> sg_vecDirectoryRedirectRules;
+			struct SyntheticFileRule
+			{
+				std::wstring pathPrefix;
+				std::wstring pathPrefixLower;
+				uint64_t logicalSize = 0;
+			};
+			static std::vector<SyntheticFileRule> sg_vecSyntheticFileRules;
 		static std::wstring sg_wsGameDir;
 		static std::wstring sg_wsGameDirLower;
 		static bool sg_bEnableLog = false;
@@ -18,6 +25,7 @@
 		static int sg_customPakReadMode = 1;
 		static std::wstring sg_customPakCacheDir;
 		static bool sg_customPakCacheCleanupDone = false;
+			static bool sg_fileApisAttached = false;
 		static pCreateFileA_File rawCreateFileA_Patch = CreateFileA;
 		static pCreateFileW_File rawCreateFileW_Patch = CreateFileW;
 		static bool BuildRelativePath(const wchar_t* originalPath, std::wstring& relativePath);
@@ -134,7 +142,32 @@
 			return _wcsnicmp(textLower.c_str(), prefixLower.c_str(), prefixLower.size()) == 0;
 		}
 
-		static void RefreshGameDir()
+		static std::wstring NormalizeSyntheticPathPrefix(std::wstring value)
+			{
+				value = TrimTrailingPathSlashes(value);
+				return ToLowerCopy(value);
+			}
+
+			static bool TryResolveSyntheticFileSize(const wchar_t* originalPath, uint64_t& logicalSizeOut)
+			{
+				logicalSizeOut = 0;
+				if (!originalPath)
+				{
+					return false;
+				}
+				std::wstring normalizedLower = NormalizeSyntheticPathPrefix(originalPath);
+				for (const auto& rule : sg_vecSyntheticFileRules)
+				{
+					if (StartsWithNoCase(normalizedLower, rule.pathPrefixLower))
+					{
+						logicalSizeOut = rule.logicalSize;
+						return true;
+					}
+				}
+				return false;
+			}
+
+			static void RefreshGameDir()
 		{
 			wchar_t exePath[MAX_PATH] = {};
 			GetModuleFileNameW(NULL, exePath, MAX_PATH);
@@ -193,7 +226,56 @@
 			return !relativePath.empty();
 		}
 
-		static std::vector<std::wstring> BuildPatchCandidates(const wchar_t* originalPath)
+		static bool BuildRelativePathAllowRoot(const wchar_t* originalPath, std::wstring& relativePath)
+			{
+				relativePath.clear();
+				if (!originalPath)
+				{
+					return false;
+				}
+
+				std::wstring source = NormalizeFileHookSlashes(originalPath);
+				if (source.empty() || source == L"." || source == L"\\")
+				{
+					return true;
+				}
+
+				bool isAbs = false;
+				if (source.size() >= 2 && source[1] == L':')
+				{
+					isAbs = true;
+				}
+				else if (source.size() >= 2 && source[0] == L'\\' && source[1] == L'\\')
+				{
+					isAbs = true;
+				}
+
+				if (!isAbs)
+				{
+					relativePath = source;
+				}
+				else
+				{
+					std::wstring sourceLower = ToLowerCopy(source);
+					if (!StartsWithNoCase(sourceLower, sg_wsGameDirLower))
+					{
+						return false;
+					}
+					relativePath = source.substr(sg_wsGameDir.size());
+				}
+
+				while (!relativePath.empty() && (relativePath[0] == L'.' || relativePath[0] == L'\\'))
+				{
+					relativePath.erase(relativePath.begin());
+				}
+				while (!relativePath.empty() && relativePath.back() == L'\\')
+				{
+					relativePath.pop_back();
+				}
+				return true;
+			}
+
+			static std::vector<std::wstring> BuildPatchCandidates(const wchar_t* originalPath)
 		{
 			std::vector<std::wstring> result;
 			std::wstring relativePath;
@@ -734,7 +816,33 @@
 			}
 		}
 
-		void SetCustomPakVFS(bool enable, const wchar_t* const* pakPaths, size_t pakCount, bool enableLog)
+		void SetSyntheticFilePrefixSizeRule(const wchar_t* pathPrefix, uint64_t logicalSize, bool enableLog)
+			{
+				const wchar_t* raw = pathPrefix ? pathPrefix : L"";
+				std::wstring normalized = NormalizeSyntheticPathPrefix(raw);
+				sg_vecSyntheticFileRules.clear();
+				if (normalized.empty())
+				{
+					return;
+				}
+				SyntheticFileRule rule = {};
+				rule.pathPrefix = TrimTrailingPathSlashes(raw);
+				rule.pathPrefixLower = normalized;
+				rule.logicalSize = logicalSize;
+				sg_vecSyntheticFileRules.push_back(std::move(rule));
+				if (enableLog)
+				{
+					LogMessage(LogLevel::Info, L"Synthetic file rule enabled: prefix=%s size=%llu",
+						sg_vecSyntheticFileRules[0].pathPrefix.c_str(), sg_vecSyntheticFileRules[0].logicalSize);
+				}
+			}
+
+			void ClearSyntheticFileRules()
+			{
+				sg_vecSyntheticFileRules.clear();
+			}
+
+			void SetCustomPakVFS(bool enable, const wchar_t* const* pakPaths, size_t pakCount, bool enableLog)
 		{
 			sg_bCustomPakLog = enableLog;
 			ConfigureCustomPakVFS(enable, pakPaths, pakCount, enableLog);
@@ -1092,7 +1200,8 @@
 			std::shared_ptr<const std::vector<uint8_t>> data;
 			std::wstring sourcePath;
 			uint64_t position;
-		};
+				uint64_t logicalSize;
+			};
 
 		static CRITICAL_SECTION sg_memoryFileLock;
 		static bool sg_memoryFileLockInitialized = false;
@@ -1125,26 +1234,37 @@
 			return true;
 		}
 
-		static HANDLE AllocateMemoryFileHandle(const wchar_t* sourcePath, const std::shared_ptr<const std::vector<uint8_t>>& data)
-		{
-			if (!TryEnterMemoryFileLock())
+		static HANDLE AllocateMemoryFileHandle(const wchar_t* sourcePath, const std::shared_ptr<const std::vector<uint8_t>>& data, uint64_t logicalSize)
 			{
-				SetLastError(ERROR_OPERATION_ABORTED);
-				return INVALID_HANDLE_VALUE;
+				if (!TryEnterMemoryFileLock())
+				{
+					SetLastError(ERROR_OPERATION_ABORTED);
+					return INVALID_HANDLE_VALUE;
+				}
+				uint64_t next = sg_memoryHandleSeed++;
+				uintptr_t handleValue = (uintptr_t)((next << 1) | 1ull);
+				HANDLE handle = reinterpret_cast<HANDLE>(handleValue);
+				MemoryFileState state = {};
+				state.data = data;
+				state.sourcePath = sourcePath ? sourcePath : L"";
+				state.position = 0;
+				state.logicalSize = logicalSize;
+				sg_memoryFiles[handle] = state;
+				LeaveCriticalSection(&sg_memoryFileLock);
+				return handle;
 			}
-			uint64_t next = sg_memoryHandleSeed++;
-			uintptr_t handleValue = (uintptr_t)((next << 1) | 1ull);
-			HANDLE handle = reinterpret_cast<HANDLE>(handleValue);
-			MemoryFileState state = {};
-			state.data = data;
-			state.sourcePath = sourcePath ? sourcePath : L"";
-			state.position = 0;
-			sg_memoryFiles[handle] = state;
-			LeaveCriticalSection(&sg_memoryFileLock);
-			return handle;
-		}
 
-		static bool GetMemoryFileState(HANDLE handle, MemoryFileState& stateOut)
+			static HANDLE AllocateMemoryFileHandle(const wchar_t* sourcePath, const std::shared_ptr<const std::vector<uint8_t>>& data)
+			{
+				return AllocateMemoryFileHandle(sourcePath, data, data ? static_cast<uint64_t>(data->size()) : 0);
+			}
+
+			static uint64_t GetMemoryFileLogicalSize(const MemoryFileState& state)
+			{
+				return state.data ? static_cast<uint64_t>(state.data->size()) : state.logicalSize;
+			}
+
+			static bool GetMemoryFileState(HANDLE handle, MemoryFileState& stateOut)
 		{
 			if (!TryEnterMemoryFileLock())
 			{
@@ -1290,10 +1410,10 @@
 
 		// Hook CreateFileA
 		
-		HANDLE WINAPI newCreateFileA_Patch(LPCSTR lpFileName, DWORD dwDesiredAccess, DWORD dwShareMode, 
+		HANDLE WINAPI newCreateFileA_Patch_SehImpl(LPCSTR lpFileName, DWORD dwDesiredAccess, DWORD dwShareMode, 
 			LPSECURITY_ATTRIBUTES lpSecurityAttributes, DWORD dwCreationDisposition, 
 			DWORD dwFlagsAndAttributes, HANDLE hTemplateFile)
-		{
+{
 			if (ShouldBypassFileHook())
 			{
 				return rawCreateFileA_Patch(lpFileName, dwDesiredAccess, dwShareMode,
@@ -1401,13 +1521,21 @@
 			return rawCreateFileA_Patch(lpFileName, dwDesiredAccess, dwShareMode, 
 				lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
 		}
-
-		// Hook CreateFileW
-		
-		HANDLE WINAPI newCreateFileW_Patch(LPCWSTR lpFileName, DWORD dwDesiredAccess, DWORD dwShareMode, 
+		HANDLE WINAPI newCreateFileA_Patch(LPCSTR lpFileName, DWORD dwDesiredAccess, DWORD dwShareMode, 
 			LPSECURITY_ATTRIBUTES lpSecurityAttributes, DWORD dwCreationDisposition, 
 			DWORD dwFlagsAndAttributes, HANDLE hTemplateFile)
 		{
+			__try { return newCreateFileA_Patch_SehImpl(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawCreateFileA_Patch(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile); }
+		}
+
+
+		// Hook CreateFileW
+		
+		HANDLE WINAPI newCreateFileW_Patch_SehImpl(LPCWSTR lpFileName, DWORD dwDesiredAccess, DWORD dwShareMode, 
+			LPSECURITY_ATTRIBUTES lpSecurityAttributes, DWORD dwCreationDisposition, 
+			DWORD dwFlagsAndAttributes, HANDLE hTemplateFile)
+{
 			if (ShouldBypassFileHook())
 			{
 				return rawCreateFileW_Patch(lpFileName, dwDesiredAccess, dwShareMode,
@@ -1508,12 +1636,20 @@
 			return rawCreateFileW_Patch(lpFileName, dwDesiredAccess, dwShareMode, 
 				lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
 		}
+		HANDLE WINAPI newCreateFileW_Patch(LPCWSTR lpFileName, DWORD dwDesiredAccess, DWORD dwShareMode, 
+			LPSECURITY_ATTRIBUTES lpSecurityAttributes, DWORD dwCreationDisposition, 
+			DWORD dwFlagsAndAttributes, HANDLE hTemplateFile)
+		{
+			__try { return newCreateFileW_Patch_SehImpl(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawCreateFileW_Patch(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile); }
+		}
+
 
 		// Hook GetFileAttributesA
 		static pGetFileAttributesA_File rawGetFileAttributesA_Patch = GetFileAttributesA;
 		
-		DWORD WINAPI newGetFileAttributesA_Patch(LPCSTR lpFileName)
-		{
+		DWORD WINAPI newGetFileAttributesA_Patch_SehImpl(LPCSTR lpFileName)
+{
 			if (ShouldBypassFileHook())
 			{
 				return rawGetFileAttributesA_Patch(lpFileName);
@@ -1550,10 +1686,16 @@
 				}
 			}
 
+			bool isCustomPakDirectory = false;
 			uint64_t fileSize = 0;
 			bool allowCustomPak = !IsPathInsidePatchFolder(sourcePath.c_str()) && !HasExistingPatchOverride(sourcePath.c_str());
-			if (allowCustomPak && TryResolveCustomPakFileSize(sourcePath.c_str(), fileSize))
+			if (allowCustomPak && QueryCustomPakVFSPathInfo(sourcePath.c_str(), isCustomPakDirectory, fileSize))
 			{
+				if (isCustomPakDirectory)
+				{
+					LogMessage(LogLevel::Info, L"[GetFileAttributesA] Hooked source=%s redirected=CustomPAK:directory", sourcePath.c_str());
+					return FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_READONLY;
+				}
 				if (PreferDiskBackedCustomPak())
 				{
 					std::shared_ptr<const std::vector<uint8_t>> customPakData;
@@ -1591,12 +1733,18 @@
 
 			return rawGetFileAttributesA_Patch(lpFileName);
 		}
+		DWORD WINAPI newGetFileAttributesA_Patch(LPCSTR lpFileName)
+		{
+			__try { return newGetFileAttributesA_Patch_SehImpl(lpFileName); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetFileAttributesA_Patch(lpFileName); }
+		}
+
 
 		// Hook GetFileAttributesW
 		static pGetFileAttributesW_File rawGetFileAttributesW_Patch = GetFileAttributesW;
 		
-		DWORD WINAPI newGetFileAttributesW_Patch(LPCWSTR lpFileName)
-		{
+		DWORD WINAPI newGetFileAttributesW_Patch_SehImpl(LPCWSTR lpFileName)
+{
 			if (ShouldBypassFileHook())
 			{
 				return rawGetFileAttributesW_Patch(lpFileName);
@@ -1624,10 +1772,16 @@
 				}
 			}
 
+			bool isCustomPakDirectory = false;
 			uint64_t fileSize = 0;
 			bool allowCustomPak = !IsPathInsidePatchFolder(sourcePathW) && !HasExistingPatchOverride(sourcePathW);
-			if (allowCustomPak && TryResolveCustomPakFileSize(sourcePathW, fileSize))
+			if (allowCustomPak && QueryCustomPakVFSPathInfo(sourcePathW, isCustomPakDirectory, fileSize))
 			{
+				if (isCustomPakDirectory)
+				{
+					LogMessage(LogLevel::Info, L"[GetFileAttributesW] Hooked source=%s redirected=CustomPAK:directory", sourcePathW);
+					return FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_READONLY;
+				}
 				if (PreferDiskBackedCustomPak())
 				{
 					std::shared_ptr<const std::vector<uint8_t>> customPakData;
@@ -1661,12 +1815,18 @@
 
 			return rawGetFileAttributesW_Patch(lpFileName);
 		}
+		DWORD WINAPI newGetFileAttributesW_Patch(LPCWSTR lpFileName)
+		{
+			__try { return newGetFileAttributesW_Patch_SehImpl(lpFileName); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetFileAttributesW_Patch(lpFileName); }
+		}
+
 
 		// Hook GetFileAttributesExA
 		static pGetFileAttributesExA_File rawGetFileAttributesExA_Patch = GetFileAttributesExA;
 		
-		BOOL WINAPI newGetFileAttributesExA_Patch(LPCSTR lpFileName, GET_FILEEX_INFO_LEVELS fInfoLevelId, LPVOID lpFileInformation)
-		{
+		BOOL WINAPI newGetFileAttributesExA_Patch_SehImpl(LPCSTR lpFileName, GET_FILEEX_INFO_LEVELS fInfoLevelId, LPVOID lpFileInformation)
+{
 			if (ShouldBypassFileHook())
 			{
 				return rawGetFileAttributesExA_Patch(lpFileName, fInfoLevelId, lpFileInformation);
@@ -1703,11 +1863,30 @@
 				}
 			}
 
+			bool isCustomPakDirectory = false;
 			uint64_t fileSize = 0;
 			bool allowCustomPak = !IsPathInsidePatchFolder(sourcePath.c_str()) && !HasExistingPatchOverride(sourcePath.c_str());
-			if (allowCustomPak && TryResolveCustomPakFileSize(sourcePath.c_str(), fileSize))
+			if (allowCustomPak && QueryCustomPakVFSPathInfo(sourcePath.c_str(), isCustomPakDirectory, fileSize))
 			{
-				if (PreferDiskBackedCustomPak())
+				if (isCustomPakDirectory)
+				{
+					if (fInfoLevelId == GetFileExInfoStandard && lpFileInformation)
+					{
+						WIN32_FILE_ATTRIBUTE_DATA* attrData = reinterpret_cast<WIN32_FILE_ATTRIBUTE_DATA*>(lpFileInformation);
+						ZeroMemory(attrData, sizeof(WIN32_FILE_ATTRIBUTE_DATA));
+						attrData->dwFileAttributes = FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_READONLY;
+						SYSTEMTIME st;
+						GetSystemTime(&st);
+						FILETIME ft;
+						SystemTimeToFileTime(&st, &ft);
+						attrData->ftCreationTime = ft;
+						attrData->ftLastAccessTime = ft;
+						attrData->ftLastWriteTime = ft;
+						LogMessage(LogLevel::Info, L"[GetFileAttributesExA] Hooked source=%s redirected=CustomPAK:directory infoLevel=%u", sourcePath.c_str(), static_cast<unsigned>(fInfoLevelId));
+						return TRUE;
+					}
+				}
+				else if (PreferDiskBackedCustomPak())
 				{
 					std::shared_ptr<const std::vector<uint8_t>> customPakData;
 					if (TryResolveCustomPakMemory(sourcePath.c_str(), customPakData))
@@ -1752,12 +1931,18 @@
 
 			return rawGetFileAttributesExA_Patch(lpFileName, fInfoLevelId, lpFileInformation);
 		}
+		BOOL WINAPI newGetFileAttributesExA_Patch(LPCSTR lpFileName, GET_FILEEX_INFO_LEVELS fInfoLevelId, LPVOID lpFileInformation)
+		{
+			__try { return newGetFileAttributesExA_Patch_SehImpl(lpFileName, fInfoLevelId, lpFileInformation); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetFileAttributesExA_Patch(lpFileName, fInfoLevelId, lpFileInformation); }
+		}
+
 
 		// Hook GetFileAttributesExW
 		static pGetFileAttributesExW_File rawGetFileAttributesExW_Patch = GetFileAttributesExW;
 		
-		BOOL WINAPI newGetFileAttributesExW_Patch(LPCWSTR lpFileName, GET_FILEEX_INFO_LEVELS fInfoLevelId, LPVOID lpFileInformation)
-		{
+		BOOL WINAPI newGetFileAttributesExW_Patch_SehImpl(LPCWSTR lpFileName, GET_FILEEX_INFO_LEVELS fInfoLevelId, LPVOID lpFileInformation)
+{
 			if (ShouldBypassFileHook())
 			{
 				return rawGetFileAttributesExW_Patch(lpFileName, fInfoLevelId, lpFileInformation);
@@ -1785,11 +1970,30 @@
 				}
 			}
 
+			bool isCustomPakDirectory = false;
 			uint64_t fileSize = 0;
 			bool allowCustomPak = !IsPathInsidePatchFolder(sourcePathW) && !HasExistingPatchOverride(sourcePathW);
-			if (allowCustomPak && TryResolveCustomPakFileSize(sourcePathW, fileSize))
+			if (allowCustomPak && QueryCustomPakVFSPathInfo(sourcePathW, isCustomPakDirectory, fileSize))
 			{
-				if (PreferDiskBackedCustomPak())
+				if (isCustomPakDirectory)
+				{
+					if (fInfoLevelId == GetFileExInfoStandard && lpFileInformation)
+					{
+						WIN32_FILE_ATTRIBUTE_DATA* attrData = reinterpret_cast<WIN32_FILE_ATTRIBUTE_DATA*>(lpFileInformation);
+						ZeroMemory(attrData, sizeof(WIN32_FILE_ATTRIBUTE_DATA));
+						attrData->dwFileAttributes = FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_READONLY;
+						SYSTEMTIME st;
+						GetSystemTime(&st);
+						FILETIME ft;
+						SystemTimeToFileTime(&st, &ft);
+						attrData->ftCreationTime = ft;
+						attrData->ftLastAccessTime = ft;
+						attrData->ftLastWriteTime = ft;
+						LogMessage(LogLevel::Info, L"[GetFileAttributesExW] Hooked source=%s redirected=CustomPAK:directory infoLevel=%u", sourcePathW, static_cast<unsigned>(fInfoLevelId));
+						return TRUE;
+					}
+				}
+				else if (PreferDiskBackedCustomPak())
 				{
 					std::shared_ptr<const std::vector<uint8_t>> customPakData;
 					if (TryResolveCustomPakMemory(sourcePathW, customPakData))
@@ -1831,6 +2035,12 @@
 
 			return rawGetFileAttributesExW_Patch(lpFileName, fInfoLevelId, lpFileInformation);
 		}
+		BOOL WINAPI newGetFileAttributesExW_Patch(LPCWSTR lpFileName, GET_FILEEX_INFO_LEVELS fInfoLevelId, LPVOID lpFileInformation)
+		{
+			__try { return newGetFileAttributesExW_Patch_SehImpl(lpFileName, fInfoLevelId, lpFileInformation); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetFileAttributesExW_Patch(lpFileName, fInfoLevelId, lpFileInformation); }
+		}
+
 
 		static pReadFile_File rawReadFile_Patch = ReadFile;
 		static pSetFilePointer_File rawSetFilePointer_Patch = SetFilePointer;
@@ -1848,7 +2058,415 @@
 		static pFindNextFileW_File rawFindNextFileW_Patch = FindNextFileW;
 		static pFindClose_File rawFindClose_Patch = FindClose;
 
-		static HANDLE TryCreateCustomPakDiskMappingW(const MemoryFileState& state,
+			struct SyntheticFindState
+			{
+				std::vector<WIN32_FIND_DATAW> entries;
+				size_t nextIndex = 0;
+			};
+
+			struct FindRequestInfo
+			{
+				std::wstring sourcePath;
+				std::wstring directoryPath;
+				std::wstring namePattern;
+				bool hasWildcards = false;
+			};
+
+			static std::unordered_map<HANDLE, SyntheticFindState> sg_syntheticFindStates;
+			static uint64_t sg_syntheticFindHandleSeed = 1;
+
+			static bool HasFindWildcards(const std::wstring& value)
+			{
+				return value.find_first_of(L"*?") != std::wstring::npos;
+			}
+
+			static bool WildcardMatchNoCaseRecursive(const wchar_t* pattern, const wchar_t* text)
+			{
+				while (*pattern)
+				{
+					if (*pattern == L'*')
+					{
+						while (*pattern == L'*')
+						{
+							++pattern;
+						}
+						if (*pattern == L'\0')
+						{
+							return true;
+						}
+						while (*text)
+						{
+							if (WildcardMatchNoCaseRecursive(pattern, text))
+							{
+								return true;
+							}
+							++text;
+						}
+						return false;
+					}
+					if (*pattern == L'?')
+					{
+						if (*text == L'\0')
+						{
+							return false;
+						}
+						++pattern;
+						++text;
+						continue;
+					}
+					if (towlower(*pattern) != towlower(*text))
+					{
+						return false;
+					}
+					++pattern;
+					if (*text == L'\0')
+					{
+						return false;
+					}
+					++text;
+				}
+				return *text == L'\0';
+			}
+
+			static bool WildcardMatchNoCase(const std::wstring& pattern, const std::wstring& text)
+			{
+				return WildcardMatchNoCaseRecursive(pattern.c_str(), text.c_str());
+			}
+
+			static std::wstring GetFindItemNameFromPath(const std::wstring& path)
+			{
+				size_t pos = path.find_last_of(L"\\/");
+				if (pos == std::wstring::npos)
+				{
+					return path;
+				}
+				return path.substr(pos + 1);
+			}
+
+			static std::wstring JoinFindPath(const std::wstring& directoryPath, const std::wstring& fileName)
+			{
+				if (directoryPath.empty())
+				{
+					return fileName;
+				}
+				std::wstring result = directoryPath;
+				if (!result.empty() && result.back() != L'\\' && result.back() != L'/')
+				{
+					result += L'\\';
+				}
+				result += fileName;
+				return result;
+			}
+
+			static void FillSyntheticFindData(const std::wstring& name, bool isDirectory, uint64_t size, WIN32_FIND_DATAW& dataOut)
+			{
+				ZeroMemory(&dataOut, sizeof(dataOut));
+				wcsncpy_s(dataOut.cFileName, name.c_str(), _TRUNCATE);
+				dataOut.dwFileAttributes = isDirectory ? (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_READONLY) : (FILE_ATTRIBUTE_ARCHIVE | FILE_ATTRIBUTE_READONLY);
+				dataOut.nFileSizeLow = static_cast<DWORD>(size & 0xFFFFFFFFull);
+				dataOut.nFileSizeHigh = static_cast<DWORD>((size >> 32) & 0xFFFFFFFFull);
+				SYSTEMTIME st = {};
+				GetSystemTime(&st);
+				FILETIME ft = {};
+				SystemTimeToFileTime(&st, &ft);
+				dataOut.ftCreationTime = ft;
+				dataOut.ftLastAccessTime = ft;
+				dataOut.ftLastWriteTime = ft;
+			}
+
+			static void FillFindDataAFromW(const WIN32_FIND_DATAW& wideData, WIN32_FIND_DATAA& ansiData)
+			{
+				ZeroMemory(&ansiData, sizeof(ansiData));
+				ansiData.dwFileAttributes = wideData.dwFileAttributes;
+				ansiData.ftCreationTime = wideData.ftCreationTime;
+				ansiData.ftLastAccessTime = wideData.ftLastAccessTime;
+				ansiData.ftLastWriteTime = wideData.ftLastWriteTime;
+				ansiData.nFileSizeHigh = wideData.nFileSizeHigh;
+				ansiData.nFileSizeLow = wideData.nFileSizeLow;
+				std::string nameA = WideToAnsi(wideData.cFileName);
+				strncpy_s(ansiData.cFileName, nameA.c_str(), _TRUNCATE);
+			}
+
+			static void AddMergedFindEntry(std::unordered_map<std::wstring, WIN32_FIND_DATAW>& mergedEntries, const WIN32_FIND_DATAW& data)
+			{
+				if (data.cFileName[0] == L'\0')
+				{
+					return;
+				}
+				if ((wcscmp(data.cFileName, L".") == 0) || (wcscmp(data.cFileName, L"..") == 0))
+				{
+					return;
+				}
+				std::wstring key = ToLowerCopy(data.cFileName);
+				if (mergedEntries.find(key) == mergedEntries.end())
+				{
+					mergedEntries.emplace(std::move(key), data);
+				}
+			}
+
+			static bool TryQueryRawFindDataW(const std::wstring& path, WIN32_FIND_DATAW& dataOut)
+			{
+				ZeroMemory(&dataOut, sizeof(dataOut));
+				HANDLE hFind = rawFindFirstFileW_Patch(path.c_str(), &dataOut);
+				if (hFind == INVALID_HANDLE_VALUE)
+				{
+					return false;
+				}
+				rawFindClose_Patch(hFind);
+				return true;
+			}
+
+			static void ParseFindRequest(const wchar_t* sourcePathW, FindRequestInfo& request)
+			{
+				request = {};
+				request.sourcePath = NormalizeFileHookSlashes(sourcePathW ? sourcePathW : L"");
+				request.hasWildcards = HasFindWildcards(request.sourcePath);
+				size_t pos = request.sourcePath.find_last_of(L"\\/");
+				if (pos == std::wstring::npos)
+				{
+					request.directoryPath.clear();
+					request.namePattern = request.sourcePath;
+				}
+				else
+				{
+					bool keepSlash = (request.sourcePath.size() >= 3 && request.sourcePath[1] == L':' && pos == 2);
+					request.directoryPath = request.sourcePath.substr(0, keepSlash ? (pos + 1) : pos);
+					request.namePattern = request.sourcePath.substr(pos + 1);
+				}
+				if (request.namePattern.empty())
+				{
+					request.namePattern = L"*";
+				}
+			}
+
+			static std::wstring GetDirectoryQueryPath(const FindRequestInfo& request)
+			{
+				return request.directoryPath.empty() ? sg_wsGameDir : request.directoryPath;
+			}
+
+			static HANDLE AllocateSyntheticFindHandle(std::vector<WIN32_FIND_DATAW>&& entries)
+			{
+				if (entries.empty())
+				{
+					SetLastError(ERROR_FILE_NOT_FOUND);
+					return INVALID_HANDLE_VALUE;
+				}
+				if (!TryEnterMemoryFileLock())
+				{
+					SetLastError(ERROR_OPERATION_ABORTED);
+					return INVALID_HANDLE_VALUE;
+				}
+				uint64_t next = sg_syntheticFindHandleSeed++;
+				uintptr_t handleValue = static_cast<uintptr_t>((next << 2) | 2ull);
+				HANDLE handle = reinterpret_cast<HANDLE>(handleValue);
+				SyntheticFindState state = {};
+				state.entries = std::move(entries);
+				state.nextIndex = 1;
+				sg_syntheticFindStates[handle] = std::move(state);
+				LeaveCriticalSection(&sg_memoryFileLock);
+				return handle;
+			}
+
+			static bool GetSyntheticFindNextDataW(HANDLE handle, WIN32_FIND_DATAW& dataOut)
+			{
+				if (!TryEnterMemoryFileLock())
+				{
+					return false;
+				}
+				auto it = sg_syntheticFindStates.find(handle);
+				if (it == sg_syntheticFindStates.end())
+				{
+					LeaveCriticalSection(&sg_memoryFileLock);
+					return false;
+				}
+				if (it->second.nextIndex >= it->second.entries.size())
+				{
+					LeaveCriticalSection(&sg_memoryFileLock);
+					return false;
+				}
+				dataOut = it->second.entries[it->second.nextIndex++];
+				LeaveCriticalSection(&sg_memoryFileLock);
+				return true;
+			}
+
+			static bool RemoveSyntheticFindHandle(HANDLE handle)
+			{
+				if (!TryEnterMemoryFileLock())
+				{
+					return false;
+				}
+				size_t erased = sg_syntheticFindStates.erase(handle);
+				LeaveCriticalSection(&sg_memoryFileLock);
+				return erased > 0;
+			}
+
+			static bool HasSyntheticFindHandle(HANDLE handle)
+			{
+				if (!TryEnterMemoryFileLock())
+				{
+					return false;
+				}
+				bool exists = sg_syntheticFindStates.find(handle) != sg_syntheticFindStates.end();
+				LeaveCriticalSection(&sg_memoryFileLock);
+				return exists;
+			}
+
+			static void CollectPhysicalFindEntries(const FindRequestInfo& request, std::unordered_map<std::wstring, WIN32_FIND_DATAW>& mergedEntries)
+			{
+				if (!request.hasWildcards)
+				{
+					WIN32_FIND_DATAW data = {};
+					if (TryQueryRawFindDataW(request.sourcePath, data))
+					{
+						AddMergedFindEntry(mergedEntries, data);
+					}
+					return;
+				}
+				WIN32_FIND_DATAW data = {};
+				HANDLE hFind = rawFindFirstFileW_Patch(request.sourcePath.c_str(), &data);
+				if (hFind == INVALID_HANDLE_VALUE)
+				{
+					return;
+				}
+				do
+				{
+					AddMergedFindEntry(mergedEntries, data);
+				} while (rawFindNextFileW_Patch(hFind, &data));
+				rawFindClose_Patch(hFind);
+			}
+
+			static bool CollectPatchVirtualFindEntries(const FindRequestInfo& request, std::unordered_map<std::wstring, WIN32_FIND_DATAW>& mergedEntries)
+			{
+				bool added = false;
+				if (!request.hasWildcards)
+				{
+					std::vector<std::wstring> patchCandidates = BuildPatchCandidates(request.sourcePath.c_str());
+					for (const std::wstring& patchPath : patchCandidates)
+					{
+						WIN32_FIND_DATAW data = {};
+						if (TryQueryRawFindDataW(patchPath, data))
+						{
+							AddMergedFindEntry(mergedEntries, data);
+							return true;
+						}
+					}
+					return false;
+				}
+
+				std::wstring relativeDirectory;
+				std::wstring directoryQuery = GetDirectoryQueryPath(request);
+				if (!BuildRelativePathAllowRoot(directoryQuery.c_str(), relativeDirectory))
+				{
+					return false;
+				}
+				std::wstring relativeDirectoryLower = NormalizeRelativePath(relativeDirectory);
+				for (size_t i = sg_vecPatchFolders.size(); i > 0; --i)
+				{
+					const std::wstring& folder = sg_vecPatchFolders[i - 1];
+					if (folder.empty())
+					{
+						continue;
+					}
+					std::wstring folderLower = ToLowerCopy(NormalizeFileHookSlashes(folder));
+					std::wstring folderPrefix = folderLower + L"\\";
+					if (!relativeDirectoryLower.empty() && (relativeDirectoryLower == folderLower || StartsWithNoCase(relativeDirectoryLower, folderPrefix)))
+					{
+						continue;
+					}
+					std::wstring patchDirectory = sg_wsGameDir + folder;
+					if (!relativeDirectory.empty())
+					{
+						patchDirectory += L"\\" + relativeDirectory;
+					}
+					std::wstring patchSearchPath = JoinFindPath(patchDirectory, request.namePattern);
+					WIN32_FIND_DATAW data = {};
+					HANDLE hFind = rawFindFirstFileW_Patch(patchSearchPath.c_str(), &data);
+					if (hFind == INVALID_HANDLE_VALUE)
+					{
+						continue;
+					}
+					do
+					{
+						AddMergedFindEntry(mergedEntries, data);
+						added = true;
+					} while (rawFindNextFileW_Patch(hFind, &data));
+					rawFindClose_Patch(hFind);
+				}
+				return added;
+			}
+
+			static bool CollectCustomPakVirtualFindEntries(const FindRequestInfo& request, std::unordered_map<std::wstring, WIN32_FIND_DATAW>& mergedEntries)
+			{
+				if (!request.hasWildcards)
+				{
+					bool isDirectory = false;
+					uint64_t size = 0;
+					if (!QueryCustomPakVFSPathInfo(request.sourcePath.c_str(), isDirectory, size))
+					{
+						return false;
+					}
+					std::wstring name = GetFindItemNameFromPath(request.sourcePath);
+					if (name.empty())
+					{
+						return false;
+					}
+					WIN32_FIND_DATAW data = {};
+					FillSyntheticFindData(name, isDirectory, isDirectory ? 0 : size, data);
+					AddMergedFindEntry(mergedEntries, data);
+					return true;
+				}
+
+				std::vector<CustomPakVFSDirectoryEntry> entries;
+				std::wstring directoryQuery = GetDirectoryQueryPath(request);
+				if (!EnumerateCustomPakVFSDirectory(directoryQuery.c_str(), entries))
+				{
+					return false;
+				}
+				bool added = false;
+				for (const CustomPakVFSDirectoryEntry& entry : entries)
+				{
+					if (!WildcardMatchNoCase(request.namePattern, entry.name))
+					{
+						continue;
+					}
+					WIN32_FIND_DATAW data = {};
+					FillSyntheticFindData(entry.name, entry.isDirectory, entry.isDirectory ? 0 : entry.size, data);
+					AddMergedFindEntry(mergedEntries, data);
+					added = true;
+				}
+				return added;
+			}
+
+			static bool TryBuildMergedFindEntriesW(const wchar_t* sourcePathW, std::vector<WIN32_FIND_DATAW>& entriesOut)
+			{
+				entriesOut.clear();
+				FindRequestInfo request = {};
+				ParseFindRequest(sourcePathW, request);
+				std::unordered_map<std::wstring, WIN32_FIND_DATAW> mergedEntries;
+				bool hasVirtual = CollectPatchVirtualFindEntries(request, mergedEntries);
+				bool allowCustomPak = !IsPathInsidePatchFolder(request.sourcePath.c_str());
+				if (allowCustomPak)
+				{
+					hasVirtual = CollectCustomPakVirtualFindEntries(request, mergedEntries) || hasVirtual;
+				}
+				if (!hasVirtual)
+				{
+					return false;
+				}
+				CollectPhysicalFindEntries(request, mergedEntries);
+				entriesOut.reserve(mergedEntries.size());
+				for (auto& pair : mergedEntries)
+				{
+					entriesOut.push_back(std::move(pair.second));
+				}
+				std::sort(entriesOut.begin(), entriesOut.end(), [](const WIN32_FIND_DATAW& a, const WIN32_FIND_DATAW& b)
+					{
+						return _wcsicmp(a.cFileName, b.cFileName) < 0;
+					});
+				return !entriesOut.empty();
+			}
+
+			static HANDLE TryCreateCustomPakDiskMappingW(const MemoryFileState& state,
 			LPSECURITY_ATTRIBUTES lpFileMappingAttributes,
 			DWORD flProtect,
 			DWORD dwMaximumSizeHigh,
@@ -1932,7 +2550,7 @@
 			return hMap;
 		}
 
-		BOOL WINAPI newReadFile_Patch(HANDLE hFile, LPVOID lpBuffer, DWORD nNumberOfBytesToRead, LPDWORD lpNumberOfBytesRead, LPOVERLAPPED lpOverlapped)
+		BOOL WINAPI newReadFile_Patch_SehImpl(HANDLE hFile, LPVOID lpBuffer, DWORD nNumberOfBytesToRead, LPDWORD lpNumberOfBytesRead, LPOVERLAPPED lpOverlapped)
 		{
 			MemoryFileState state = {};
 			if (!GetMemoryFileState(hFile, state))
@@ -1943,7 +2561,7 @@
 			{
 				*lpNumberOfBytesRead = 0;
 			}
-			if (!lpBuffer || !state.data)
+			if (!lpBuffer)
 			{
 				SetLastError(ERROR_INVALID_PARAMETER);
 				return FALSE;
@@ -1953,7 +2571,7 @@
 			{
 				offset = (static_cast<uint64_t>(lpOverlapped->OffsetHigh) << 32) | lpOverlapped->Offset;
 			}
-			const uint64_t totalSize = static_cast<uint64_t>(state.data->size());
+			const uint64_t totalSize = GetMemoryFileLogicalSize(state);
 			if (offset >= totalSize)
 			{
 				if (sg_bCustomPakLog)
@@ -1968,7 +2586,14 @@
 			DWORD readBytes = remain > nNumberOfBytesToRead ? nNumberOfBytesToRead : static_cast<DWORD>(remain);
 			if (readBytes > 0)
 			{
-				memcpy(lpBuffer, state.data->data() + static_cast<size_t>(offset), readBytes);
+				if (state.data && !state.data->empty())
+					{
+						memcpy(lpBuffer, state.data->data() + static_cast<size_t>(offset), readBytes);
+					}
+					else
+					{
+						memset(lpBuffer, 0, readBytes);
+					}
 			}
 			if (lpNumberOfBytesRead)
 			{
@@ -1986,8 +2611,14 @@
 			SetLastError(ERROR_SUCCESS);
 			return TRUE;
 		}
+		BOOL WINAPI newReadFile_Patch(HANDLE hFile, LPVOID lpBuffer, DWORD nNumberOfBytesToRead, LPDWORD lpNumberOfBytesRead, LPOVERLAPPED lpOverlapped)
+		{
+			__try { return newReadFile_Patch_SehImpl(hFile, lpBuffer, nNumberOfBytesToRead, lpNumberOfBytesRead, lpOverlapped); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawReadFile_Patch(hFile, lpBuffer, nNumberOfBytesToRead, lpNumberOfBytesRead, lpOverlapped); }
+		}
 
-		DWORD WINAPI newSetFilePointer_Patch(HANDLE hFile, LONG lDistanceToMove, PLONG lpDistanceToMoveHigh, DWORD dwMoveMethod)
+
+		DWORD WINAPI newSetFilePointer_Patch_SehImpl(HANDLE hFile, LONG lDistanceToMove, PLONG lpDistanceToMoveHigh, DWORD dwMoveMethod)
 		{
 			MemoryFileState state = {};
 			if (!GetMemoryFileState(hFile, state))
@@ -2010,7 +2641,7 @@
 			}
 			else if (dwMoveMethod == FILE_END)
 			{
-				base = static_cast<LONGLONG>(state.data ? state.data->size() : 0);
+				base = static_cast<LONGLONG>(GetMemoryFileLogicalSize(state));
 			}
 			else
 			{
@@ -2037,8 +2668,14 @@
 			SetLastError(ERROR_SUCCESS);
 			return static_cast<DWORD>(newPos & 0xFFFFFFFFull);
 		}
+		DWORD WINAPI newSetFilePointer_Patch(HANDLE hFile, LONG lDistanceToMove, PLONG lpDistanceToMoveHigh, DWORD dwMoveMethod)
+		{
+			__try { return newSetFilePointer_Patch_SehImpl(hFile, lDistanceToMove, lpDistanceToMoveHigh, dwMoveMethod); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawSetFilePointer_Patch(hFile, lDistanceToMove, lpDistanceToMoveHigh, dwMoveMethod); }
+		}
 
-		BOOL WINAPI newSetFilePointerEx_Patch(HANDLE hFile, LARGE_INTEGER liDistanceToMove, PLARGE_INTEGER lpNewFilePointer, DWORD dwMoveMethod)
+
+		BOOL WINAPI newSetFilePointerEx_Patch_SehImpl(HANDLE hFile, LARGE_INTEGER liDistanceToMove, PLARGE_INTEGER lpNewFilePointer, DWORD dwMoveMethod)
 		{
 			MemoryFileState state = {};
 			if (!GetMemoryFileState(hFile, state))
@@ -2056,7 +2693,7 @@
 			}
 			else if (dwMoveMethod == FILE_END)
 			{
-				base = static_cast<LONGLONG>(state.data ? state.data->size() : 0);
+				base = static_cast<LONGLONG>(GetMemoryFileLogicalSize(state));
 			}
 			else
 			{
@@ -2083,15 +2720,21 @@
 			SetLastError(ERROR_SUCCESS);
 			return TRUE;
 		}
+		BOOL WINAPI newSetFilePointerEx_Patch(HANDLE hFile, LARGE_INTEGER liDistanceToMove, PLARGE_INTEGER lpNewFilePointer, DWORD dwMoveMethod)
+		{
+			__try { return newSetFilePointerEx_Patch_SehImpl(hFile, liDistanceToMove, lpNewFilePointer, dwMoveMethod); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawSetFilePointerEx_Patch(hFile, liDistanceToMove, lpNewFilePointer, dwMoveMethod); }
+		}
 
-		DWORD WINAPI newGetFileSize_Patch(HANDLE hFile, LPDWORD lpFileSizeHigh)
+
+		DWORD WINAPI newGetFileSize_Patch_SehImpl(HANDLE hFile, LPDWORD lpFileSizeHigh)
 		{
 			MemoryFileState state = {};
 			if (!GetMemoryFileState(hFile, state))
 			{
 				return rawGetFileSize_Patch(hFile, lpFileSizeHigh);
 			}
-			uint64_t size = state.data ? state.data->size() : 0;
+			uint64_t size = GetMemoryFileLogicalSize(state);
 			if (lpFileSizeHigh)
 			{
 				*lpFileSizeHigh = static_cast<DWORD>((size >> 32) & 0xFFFFFFFFull);
@@ -2103,8 +2746,14 @@
 			}
 			return static_cast<DWORD>(size & 0xFFFFFFFFull);
 		}
+		DWORD WINAPI newGetFileSize_Patch(HANDLE hFile, LPDWORD lpFileSizeHigh)
+		{
+			__try { return newGetFileSize_Patch_SehImpl(hFile, lpFileSizeHigh); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetFileSize_Patch(hFile, lpFileSizeHigh); }
+		}
 
-		BOOL WINAPI newGetFileSizeEx_Patch(HANDLE hFile, PLARGE_INTEGER lpFileSize)
+
+		BOOL WINAPI newGetFileSizeEx_Patch_SehImpl(HANDLE hFile, PLARGE_INTEGER lpFileSize)
 		{
 			MemoryFileState state = {};
 			if (!GetMemoryFileState(hFile, state))
@@ -2116,7 +2765,7 @@
 				SetLastError(ERROR_INVALID_PARAMETER);
 				return FALSE;
 			}
-			lpFileSize->QuadPart = static_cast<LONGLONG>(state.data ? state.data->size() : 0);
+			lpFileSize->QuadPart = static_cast<LONGLONG>(GetMemoryFileLogicalSize(state));
 			if (sg_bCustomPakLog)
 			{
 				LogMessage(LogLevel::Debug, L"[GetFileSizeEx] Hooked memory handle=%p size=%llu", hFile, static_cast<uint64_t>(lpFileSize->QuadPart));
@@ -2124,8 +2773,14 @@
 			SetLastError(ERROR_SUCCESS);
 			return TRUE;
 		}
+		BOOL WINAPI newGetFileSizeEx_Patch(HANDLE hFile, PLARGE_INTEGER lpFileSize)
+		{
+			__try { return newGetFileSizeEx_Patch_SehImpl(hFile, lpFileSize); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetFileSizeEx_Patch(hFile, lpFileSize); }
+		}
 
-		BOOL WINAPI newGetFileInformationByHandle_Patch(HANDLE hFile, LPBY_HANDLE_FILE_INFORMATION lpFileInformation)
+
+		BOOL WINAPI newGetFileInformationByHandle_Patch_SehImpl(HANDLE hFile, LPBY_HANDLE_FILE_INFORMATION lpFileInformation)
 		{
 			MemoryFileState state = {};
 			if (!GetMemoryFileState(hFile, state))
@@ -2134,7 +2789,7 @@
 			}
 			ZeroMemory(lpFileInformation, sizeof(BY_HANDLE_FILE_INFORMATION));
 			lpFileInformation->dwFileAttributes = FILE_ATTRIBUTE_NORMAL | FILE_ATTRIBUTE_READONLY;
-			uint64_t size = state.data ? state.data->size() : 0;
+			uint64_t size = GetMemoryFileLogicalSize(state);
 			lpFileInformation->nFileSizeLow = static_cast<DWORD>(size & 0xFFFFFFFFull);
 			lpFileInformation->nFileSizeHigh = static_cast<DWORD>((size >> 32) & 0xFFFFFFFFull);
 			lpFileInformation->nNumberOfLinks = 1;
@@ -2153,8 +2808,14 @@
 			SetLastError(ERROR_SUCCESS);
 			return TRUE;
 		}
+		BOOL WINAPI newGetFileInformationByHandle_Patch(HANDLE hFile, LPBY_HANDLE_FILE_INFORMATION lpFileInformation)
+		{
+			__try { return newGetFileInformationByHandle_Patch_SehImpl(hFile, lpFileInformation); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetFileInformationByHandle_Patch(hFile, lpFileInformation); }
+		}
 
-		DWORD WINAPI newGetFileType_Patch(HANDLE hFile)
+
+		DWORD WINAPI newGetFileType_Patch_SehImpl(HANDLE hFile)
 		{
 			MemoryFileState state = {};
 			if (!GetMemoryFileState(hFile, state))
@@ -2167,8 +2828,14 @@
 			}
 			return FILE_TYPE_DISK;
 		}
+		DWORD WINAPI newGetFileType_Patch(HANDLE hFile)
+		{
+			__try { return newGetFileType_Patch_SehImpl(hFile); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetFileType_Patch(hFile); }
+		}
 
-		BOOL WINAPI newCloseHandle_Patch(HANDLE hObject)
+
+		BOOL WINAPI newCloseHandle_Patch_SehImpl(HANDLE hObject)
 		{
 			if (RemoveMemoryFileHandle(hObject))
 			{
@@ -2199,8 +2866,14 @@
 			}
 			return result;
 		}
+		BOOL WINAPI newCloseHandle_Patch(HANDLE hObject)
+		{
+			__try { return newCloseHandle_Patch_SehImpl(hObject); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawCloseHandle_Patch(hObject); }
+		}
 
-		HANDLE WINAPI newCreateFileMappingW_Patch(HANDLE hFile, LPSECURITY_ATTRIBUTES lpFileMappingAttributes, DWORD flProtect, DWORD dwMaximumSizeHigh, DWORD dwMaximumSizeLow, LPCWSTR lpName)
+
+		HANDLE WINAPI newCreateFileMappingW_Patch_SehImpl(HANDLE hFile, LPSECURITY_ATTRIBUTES lpFileMappingAttributes, DWORD flProtect, DWORD dwMaximumSizeHigh, DWORD dwMaximumSizeLow, LPCWSTR lpName)
 		{
 			MemoryFileState state = {};
 			if (!GetMemoryFileState(hFile, state))
@@ -2218,7 +2891,7 @@
 				return hDiskMap;
 			}
 			uint64_t requestedSize = (static_cast<uint64_t>(dwMaximumSizeHigh) << 32) | dwMaximumSizeLow;
-			uint64_t dataSize = state.data ? state.data->size() : 0;
+			uint64_t dataSize = GetMemoryFileLogicalSize(state);
 			uint64_t mapSize = (requestedSize == 0 || (dataSize != 0 && requestedSize < dataSize)) ? dataSize : requestedSize;
 			if (mapSize == 0)
 			{
@@ -2255,8 +2928,14 @@
 			UnmapViewOfFile(view);
 			return hMap;
 		}
+		HANDLE WINAPI newCreateFileMappingW_Patch(HANDLE hFile, LPSECURITY_ATTRIBUTES lpFileMappingAttributes, DWORD flProtect, DWORD dwMaximumSizeHigh, DWORD dwMaximumSizeLow, LPCWSTR lpName)
+		{
+			__try { return newCreateFileMappingW_Patch_SehImpl(hFile, lpFileMappingAttributes, flProtect, dwMaximumSizeHigh, dwMaximumSizeLow, lpName); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawCreateFileMappingW_Patch(hFile, lpFileMappingAttributes, flProtect, dwMaximumSizeHigh, dwMaximumSizeLow, lpName); }
+		}
 
-		HANDLE WINAPI newCreateFileMappingA_Patch(HANDLE hFile, LPSECURITY_ATTRIBUTES lpFileMappingAttributes, DWORD flProtect, DWORD dwMaximumSizeHigh, DWORD dwMaximumSizeLow, LPCSTR lpName)
+
+		HANDLE WINAPI newCreateFileMappingA_Patch_SehImpl(HANDLE hFile, LPSECURITY_ATTRIBUTES lpFileMappingAttributes, DWORD flProtect, DWORD dwMaximumSizeHigh, DWORD dwMaximumSizeLow, LPCSTR lpName)
 		{
 			MemoryFileState state = {};
 			if (!GetMemoryFileState(hFile, state))
@@ -2275,7 +2954,7 @@
 				return hDiskMap;
 			}
 			uint64_t requestedSize = (static_cast<uint64_t>(dwMaximumSizeHigh) << 32) | dwMaximumSizeLow;
-			uint64_t dataSize = state.data ? state.data->size() : 0;
+			uint64_t dataSize = GetMemoryFileLogicalSize(state);
 			uint64_t mapSize = (requestedSize == 0 || (dataSize != 0 && requestedSize < dataSize)) ? dataSize : requestedSize;
 			if (mapSize == 0)
 			{
@@ -2313,16 +2992,20 @@
 			UnmapViewOfFile(view);
 			return hMap;
 		}
-
-		HANDLE WINAPI newFindFirstFileA_Patch(LPCSTR lpFileName, LPWIN32_FIND_DATAA lpFindFileData)
+		HANDLE WINAPI newCreateFileMappingA_Patch(HANDLE hFile, LPSECURITY_ATTRIBUTES lpFileMappingAttributes, DWORD flProtect, DWORD dwMaximumSizeHigh, DWORD dwMaximumSizeLow, LPCSTR lpName)
 		{
-			if (ShouldBypassFileHook())
-			{
-				return rawFindFirstFileA_Patch(lpFileName, lpFindFileData);
-			}
-			if (lpFileName)
-			{
-				std::wstring sourcePathW = AnsiToWide(lpFileName);
+			__try { return newCreateFileMappingA_Patch_SehImpl(hFile, lpFileMappingAttributes, flProtect, dwMaximumSizeHigh, dwMaximumSizeLow, lpName); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawCreateFileMappingA_Patch(hFile, lpFileMappingAttributes, flProtect, dwMaximumSizeHigh, dwMaximumSizeLow, lpName); }
+		}
+
+
+		HANDLE WINAPI newFindFirstFileA_Patch_SehImpl(LPCSTR lpFileName, LPWIN32_FIND_DATAA lpFindFileData)
+		{
+				if (ShouldBypassFileHook())
+				{
+					return rawFindFirstFileA_Patch(lpFileName, lpFindFileData);
+				}
+				std::wstring sourcePathW = AnsiToWide(lpFileName ? lpFileName : "");
 				std::wstring redirectedPathW;
 				if (ResolveDirectoryRedirectPath(sourcePathW.c_str(), redirectedPathW))
 				{
@@ -2338,58 +3021,115 @@
 					LogMessage(LogLevel::Info, L"[FindFirstFileA] Spoofed: %s", sourcePathW.c_str());
 					return INVALID_HANDLE_VALUE;
 				}
+				std::vector<WIN32_FIND_DATAW> mergedEntries;
+				if (!TryBuildMergedFindEntriesW(sourcePathW.c_str(), mergedEntries))
+				{
+					return rawFindFirstFileA_Patch(lpFileName, lpFindFileData);
+				}
+				if (mergedEntries.empty())
+				{
+					SetLastError(ERROR_FILE_NOT_FOUND);
+					return INVALID_HANDLE_VALUE;
+				}
+				FillFindDataAFromW(mergedEntries.front(), *lpFindFileData);
+				return AllocateSyntheticFindHandle(std::move(mergedEntries));
 			}
-			return rawFindFirstFileA_Patch(lpFileName, lpFindFileData);
+		HANDLE WINAPI newFindFirstFileA_Patch(LPCSTR lpFileName, LPWIN32_FIND_DATAA lpFindFileData)
+		{
+			__try { return newFindFirstFileA_Patch_SehImpl(lpFileName, lpFindFileData); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawFindFirstFileA_Patch(lpFileName, lpFindFileData); }
 		}
 
-		HANDLE WINAPI newFindFirstFileW_Patch(LPCWSTR lpFileName, LPWIN32_FIND_DATAW lpFindFileData)
-		{
-			if (ShouldBypassFileHook())
-			{
-				return rawFindFirstFileW_Patch(lpFileName, lpFindFileData);
-			}
-			if (lpFileName && IsSpoofTarget(lpFileName))
-			{
-				SetLastError(ERROR_FILE_NOT_FOUND);
-				LogMessage(LogLevel::Info, L"[FindFirstFileW] Spoofed: %s", lpFileName);
-				return INVALID_HANDLE_VALUE;
-			}
-			std::wstring redirectedPathW;
-			if (ResolveDirectoryRedirectPath(lpFileName ? lpFileName : L"", redirectedPathW))
-			{
-				return rawFindFirstFileW_Patch(redirectedPathW.c_str(), lpFindFileData);
-			}
-			return rawFindFirstFileW_Patch(lpFileName, lpFindFileData);
-		}
 
-		BOOL WINAPI newFindNextFileA_Patch(HANDLE hFindFile, LPWIN32_FIND_DATAA lpFindFileData)
-		{
-			if (ShouldBypassFileHook())
+			HANDLE WINAPI newFindFirstFileW_Patch(LPCWSTR lpFileName, LPWIN32_FIND_DATAW lpFindFileData)
 			{
+				if (ShouldBypassFileHook())
+				{
+					return rawFindFirstFileW_Patch(lpFileName, lpFindFileData);
+				}
+				const wchar_t* sourcePathW = lpFileName ? lpFileName : L"";
+				if (IsSpoofTarget(sourcePathW))
+				{
+					SetLastError(ERROR_FILE_NOT_FOUND);
+					LogMessage(LogLevel::Info, L"[FindFirstFileW] Spoofed: %s", sourcePathW);
+					return INVALID_HANDLE_VALUE;
+				}
+				std::wstring redirectedPathW;
+				if (ResolveDirectoryRedirectPath(sourcePathW, redirectedPathW))
+				{
+					return rawFindFirstFileW_Patch(redirectedPathW.c_str(), lpFindFileData);
+				}
+				std::vector<WIN32_FIND_DATAW> mergedEntries;
+				if (!TryBuildMergedFindEntriesW(sourcePathW, mergedEntries))
+				{
+					return rawFindFirstFileW_Patch(lpFileName, lpFindFileData);
+				}
+				if (mergedEntries.empty())
+				{
+					SetLastError(ERROR_FILE_NOT_FOUND);
+					return INVALID_HANDLE_VALUE;
+				}
+				*lpFindFileData = mergedEntries.front();
+				return AllocateSyntheticFindHandle(std::move(mergedEntries));
+			}
+
+			BOOL WINAPI newFindNextFileA_Patch(HANDLE hFindFile, LPWIN32_FIND_DATAA lpFindFileData)
+			{
+				if (ShouldBypassFileHook())
+				{
+					return rawFindNextFileA_Patch(hFindFile, lpFindFileData);
+				}
+				WIN32_FIND_DATAW dataW = {};
+				if (GetSyntheticFindNextDataW(hFindFile, dataW))
+				{
+					FillFindDataAFromW(dataW, *lpFindFileData);
+					SetLastError(ERROR_SUCCESS);
+					return TRUE;
+				}
+				if (HasSyntheticFindHandle(hFindFile))
+				{
+					SetLastError(ERROR_NO_MORE_FILES);
+					return FALSE;
+				}
 				return rawFindNextFileA_Patch(hFindFile, lpFindFileData);
 			}
-			return rawFindNextFileA_Patch(hFindFile, lpFindFileData);
-		}
 
-		BOOL WINAPI newFindNextFileW_Patch(HANDLE hFindFile, LPWIN32_FIND_DATAW lpFindFileData)
-		{
-			if (ShouldBypassFileHook())
+			BOOL WINAPI newFindNextFileW_Patch(HANDLE hFindFile, LPWIN32_FIND_DATAW lpFindFileData)
 			{
+				if (ShouldBypassFileHook())
+				{
+					return rawFindNextFileW_Patch(hFindFile, lpFindFileData);
+				}
+				WIN32_FIND_DATAW dataW = {};
+				if (GetSyntheticFindNextDataW(hFindFile, dataW))
+				{
+					*lpFindFileData = dataW;
+					SetLastError(ERROR_SUCCESS);
+					return TRUE;
+				}
+				if (HasSyntheticFindHandle(hFindFile))
+				{
+					SetLastError(ERROR_NO_MORE_FILES);
+					return FALSE;
+				}
 				return rawFindNextFileW_Patch(hFindFile, lpFindFileData);
 			}
-			return rawFindNextFileW_Patch(hFindFile, lpFindFileData);
-		}
 
-		BOOL WINAPI newFindClose_Patch(HANDLE hFindFile)
-		{
-			if (ShouldBypassFileHook())
+			BOOL WINAPI newFindClose_Patch(HANDLE hFindFile)
 			{
+				if (ShouldBypassFileHook())
+				{
+					return rawFindClose_Patch(hFindFile);
+				}
+				if (RemoveSyntheticFindHandle(hFindFile))
+				{
+					SetLastError(ERROR_SUCCESS);
+					return TRUE;
+				}
 				return rawFindClose_Patch(hFindFile);
 			}
-			return rawFindClose_Patch(hFindFile);
-		}
 
-		// 启用文件 Hook
+			// 启用文件 Hook
 		bool HookFileAPIs()
 		{
 			bool hasFailed = false;

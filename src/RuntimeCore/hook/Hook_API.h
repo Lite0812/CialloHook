@@ -86,6 +86,7 @@ namespace Rut
 		bool HookGetFontLanguageInfo();
 		bool HookGetFontUnicodeRanges();
 		bool HookDWriteCreateFactory();
+			bool HookD2D1CreateFactory();
 		bool HookGdipCreateFontFamilyFromName();
 		bool HookGdipCreateFontFromLogfontW();
 		bool HookGdipCreateFontFromLogfontA();
@@ -141,6 +142,32 @@ namespace Rut
 		bool HookGetGlyphIndicesW();
 		bool HookGetGlyphOutlineA();
 		bool HookGetGlyphOutlineW();
+			bool HookMessageBoxA();
+			bool HookSetDlgItemTextA();
+			bool HookSendDlgItemMessageA();
+			bool HookSendDlgItemMessageW();
+			bool HookSendMessageA();
+			bool HookSendMessageW();
+			bool HookAppendMenuA();
+			bool HookModifyMenuA();
+			bool HookInsertMenuA();
+			bool HookInsertMenuItemA();
+			bool HookSetMenuItemInfoA();
+			bool HookMessageBoxIndirectA();
+			bool HookDrawThemeText();
+			bool HookDrawThemeTextEx();
+			bool HookDefWindowProcA();
+			bool HookDefWindowProcW();
+			bool HookDialogBoxParamA();
+			bool HookDialogBoxParamW();
+			bool HookCreateDialogParamA();
+			bool HookCreateDialogParamW();
+			bool HookDialogBoxIndirectParamA();
+			bool HookDialogBoxIndirectParamW();
+			bool HookCreateDialogIndirectParamA();
+			bool HookCreateDialogIndirectParamW();
+			bool HookPropertySheetA();
+			bool HookExitProcessGuard();
 		
 		// 窗口标题替换功能
 		void AddWindowTitleRule(const wchar_t* originalTitle, const wchar_t* newTitle);
@@ -160,14 +187,18 @@ namespace Rut
 			
 		// 代码页转换功能
 		void SetCodePageMapping(uint32_t fromCodePage, uint32_t toCodePage);
-		bool HookCodePageAPIs();
+		bool HookMultiByteToWideChar();
+			bool HookWideCharToMultiByte();
+			bool HookCodePageAPIs();
 		
 		// 文件热补丁功能
 		void SetPatchFolder(const wchar_t* folderPath, bool enableLog = false);
 		void SetPatchFolders(const wchar_t* const* folderPaths, size_t folderCount, bool enableLog = false);
 		void SetSpoofRules(const wchar_t* const* filePaths, size_t fileCount, const wchar_t* const* directoryPaths, size_t directoryCount, bool enableLog = false);
 		void SetDirectoryRedirectRules(const wchar_t* const* sourceDirectories, const wchar_t* const* targetDirectories, size_t ruleCount, bool enableLog = false);
-		bool LoadVirtualRegistryFile(const wchar_t* regFilePath, bool enableLog = false);
+		void SetSyntheticFilePrefixSizeRule(const wchar_t* pathPrefix, uint64_t logicalSize, bool enableLog = false);
+			void ClearSyntheticFileRules();
+			bool LoadVirtualRegistryFile(const wchar_t* regFilePath, bool enableLog = false);
 		bool LoadVirtualRegistryFiles(const wchar_t* const* regFilePaths, size_t count, bool enableLog = false);
 		void SetCustomPakVFS(bool enable, const wchar_t* const* pakPaths, size_t pakCount, bool enableLog = false);
 		void SetCustomPakReadMode(int mode);
@@ -176,5 +207,6 @@ namespace Rut
 		bool HookFileAPIs();
 		bool UnhookFileAPIs();
 		bool HookRegistryAPIs();
+			bool UnhookRegistryAPIs();
 	}
 }

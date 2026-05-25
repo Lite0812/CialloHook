@@ -103,6 +103,7 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <StringPooling>true</StringPooling>
+      <RuntimeTypeInfo>false</RuntimeTypeInfo>
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
@@ -115,6 +116,8 @@
       <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
+      <GenerateMapFile>true</GenerateMapFile>
+      <MapFileName>$(OutDir)$(TargetName).map</MapFileName>
       <AdditionalOptions>/ignore:4099 %(AdditionalOptions)</AdditionalOptions>
       <AdditionalLibraryDirectories>..\..\third\detours\lib.X86;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>detours.lib;%(AdditionalDependencies)</AdditionalDependencies>
@@ -147,6 +150,7 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <StringPooling>true</StringPooling>
+      <RuntimeTypeInfo>false</RuntimeTypeInfo>
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
@@ -159,6 +163,8 @@
       <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
+      <GenerateMapFile>true</GenerateMapFile>
+      <MapFileName>$(OutDir)$(TargetName).map</MapFileName>
       <AdditionalOptions>/ignore:4099 %(AdditionalOptions)</AdditionalOptions>
       <AdditionalLibraryDirectories>..\..\third\detours\lib.X64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>detours.lib;%(AdditionalDependencies)</AdditionalDependencies>
@@ -171,6 +177,7 @@
     <ClCompile Include="entry\dllmain.cpp" />
     <ClCompile Include="hooks\hook_modules.cpp" />
     <ClCompile Include="hooks\krkr_plugin_bridge.cpp" />
+    <ClCompile Include="hooks\rio_shiina_hooks.cpp" />
     <ClCompile Include="entry\Proxy.cpp" />
     <ClCompile Include="entry\WinMMExports.cpp">
       <WholeProgramOptimization>false</WholeProgramOptimization>
@@ -187,6 +194,7 @@
     <ClInclude Include="core\hook_manager.h" />
     <ClInclude Include="hooks\hook_modules.h" />
     <ClInclude Include="hooks\krkr_plugin_bridge.h" />
+    <ClInclude Include="hooks\rio_shiina_hooks.h" />
     <ClInclude Include="entry\Proxy.h" />
     <ClInclude Include="..\..\third\krkrplugin\CompilerHelper.h" />
     <ClInclude Include="..\..\third\krkrplugin\CompilerType.h" />
@@ -211,6 +219,21 @@
     </ProjectReference>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <PropertyGroup>
+    <PostBuildEventUseInBuild>true</PostBuildEventUseInBuild>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <PostBuildEvent>
+      <Command>
+if exist "$(ProjectDir)config\CialloHook.ini" (
+  copy /Y "$(ProjectDir)config\CialloHook.ini" "$(OutDir)CialloHook.ini" >nul
+  copy /Y "$(ProjectDir)config\CialloHook.ini" "$(OutDir)winmm.ini" >nul
+  copy /Y "$(ProjectDir)config\CialloHook.ini" "$(OutDir)version.ini" >nul
+)
+      </Command>
+      <Message>Copying CialloHook.ini to output directory...</Message>
+    </PostBuildEvent>
+  </ItemDefinitionGroup>
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
 </Project>

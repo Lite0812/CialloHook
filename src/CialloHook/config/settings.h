@@ -85,7 +85,7 @@ namespace CialloHook
 		bool hookGdipMeasureDriverString = true;
 		bool hookLoadLibraryW = true;
 		bool hookLoadLibraryExW = true;
-		bool unlockFontSelection = true;
+		bool unlockFontSelection = false;
 		bool enableCnJpMap = false;
 		bool cnJpMapVerboseLog = false;
 		std::wstring cnJpMapJson = L"subs_cn_jp.json";
@@ -138,6 +138,32 @@ namespace CialloHook
 		bool hookGetGlyphIndicesW = true;
 		bool hookGetGlyphOutlineA = true;
 		bool hookGetGlyphOutlineW = true;
+		bool hookMessageBoxA = true;
+		bool hookSetDlgItemTextA = true;
+		bool hookSendDlgItemMessageA = true;
+		bool hookSendDlgItemMessageW = true;
+		bool hookSendMessageA = true;
+		bool hookSendMessageW = true;
+		bool hookAppendMenuA = true;
+		bool hookModifyMenuA = true;
+		bool hookInsertMenuA = true;
+		bool hookInsertMenuItemA = true;
+		bool hookSetMenuItemInfoA = true;
+		bool hookMessageBoxIndirectA = true;
+		bool hookDrawThemeText = true;
+		bool hookDrawThemeTextEx = true;
+		bool hookDefWindowProcA = true;
+		bool hookDefWindowProcW = true;
+		bool hookDialogBoxParamA = true;
+		bool hookDialogBoxParamW = true;
+		bool hookCreateDialogParamA = true;
+		bool hookCreateDialogParamW = true;
+		bool hookDialogBoxIndirectParamA = true;
+		bool hookDialogBoxIndirectParamW = true;
+		bool hookCreateDialogIndirectParamA = true;
+		bool hookCreateDialogIndirectParamW = true;
+		bool hookPropertySheetA = false;
+		bool hookExitProcessGuard = false;
 	};
 
 	struct WindowTitleSettings
@@ -201,11 +227,30 @@ namespace CialloHook
 		bool enableLog = false;
 	};
 
+	struct RegistryBootstrapRule
+	{
+		std::wstring root = L"HKCU";
+		std::wstring key;
+		std::wstring valueName;
+		std::wstring type = L"SZ";
+		std::wstring data;
+	};
+
+	struct RegistryBootstrapSettings
+	{
+		bool enable = false;
+		bool cleanupOnExit = true;
+		bool enableLog = false;
+		std::vector<RegistryBootstrapRule> rules;
+	};
+
 	struct CodePageSettings
 	{
 		bool enable = false;
 		uint32_t fromCodePage = 932;
 		uint32_t toCodePage = 936;
+		bool hookMultiByteToWideChar = true;
+		bool hookWideCharToMultiByte = true;
 	};
 
 	struct DebugSettings
@@ -220,6 +265,14 @@ namespace CialloHook
 		std::wstring mode = L"proxy";
 	};
 
+	struct StartupTimingSettings
+	{
+		std::wstring attachMode = L"immediate";
+		uint32_t delayMs = 0;
+		bool waitForGuiReady = false;
+		bool enableStartupWindowGate = false;
+	};
+
 	struct LocaleEmulatorSettings
 	{
 		bool enable = false;
@@ -229,6 +282,20 @@ namespace CialloHook
 		uint32_t defaultCharset = 128;
 		uint32_t hookUILanguageAPI = 0;
 		std::wstring timezone = L"Tokyo Standard Time";
+	};
+
+	struct RioShiinaSettings
+	{
+		bool enable = false;
+		int mode = 0;
+		std::vector<std::wstring> patchNames;
+		std::wstring extractOutputDir = L"rio_extract";
+		std::vector<std::wstring> archivesToExtract;
+		bool skipInvalidFileName = true;
+		bool enableLog = false;
+		bool processReg = true;
+		bool processDvd = false;
+		uint64_t specDvdFileSize = 0;
 	};
 
 	struct EngineCacheSettings
@@ -242,9 +309,26 @@ namespace CialloHook
 		bool enableKrkrPatch = false;
 		bool krkrPatchVerboseLog = false;
 		bool krkrBootstrapBypass = false;
+		bool enableKrkrCxdecBridge = false;
 		std::vector<std::wstring> krkrPatchNames;
 		bool enableWafflePatch = false;
 		bool waffleFixGetTextCrash = true;
+	};
+
+	struct SplashImageSettings
+	{
+		bool enable = false;
+		std::wstring imageFile = L"splash.png";
+		int width = 800;
+		int height = 600;
+		int entryEffect = 1;
+		int exitEffect = 1;
+		int entryMs = 1200;
+		int holdMs = 1800;
+		int exitMs = 1500;
+		int durationMs = 0;
+		int position = 1;
+		int interactionMode = 0;
 	};
 
 	struct AppSettings
@@ -253,15 +337,19 @@ namespace CialloHook
 		TextReplaceSettings textReplace;
 		WindowTitleSettings windowTitle;
 		StartupMessageSettings startupMessage;
+		SplashImageSettings splashImage;
 		SiglusKeyExtractSettings siglusKeyExtract;
 		FilePatchSettings filePatch;
 		FileSpoofSettings fileSpoof;
 		DirectoryRedirectSettings directoryRedirect;
 		RegistrySettings registry;
+		RegistryBootstrapSettings registryBootstrap;
 		CodePageSettings codePage;
 		DebugSettings debug;
 		LoadModeSettings loadMode;
+		StartupTimingSettings startupTiming;
 		LocaleEmulatorSettings localeEmulator;
+		RioShiinaSettings rioShiina;
 		EngineCacheSettings engineCache;
 		EnginePatchSettings enginePatches;
 	};

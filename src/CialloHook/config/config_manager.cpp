@@ -5,6 +5,7 @@
 #include "../../RuntimeCore/base/Str.h"
 
 #include <cmath>
+#include <cwctype>
 #include <limits>
 #include <vector>
 
@@ -276,6 +277,28 @@ namespace CialloHook
 		return fallback;
 	}
 
+	static uint64_t GetUInt64OrDefault(
+		ConfigReadContext& context,
+		const wchar_t* section,
+		const wchar_t* key,
+		uint64_t fallback,
+		uint64_t minValue = 0,
+		uint64_t maxValue = (std::numeric_limits<uint64_t>::max)())
+	{
+		if (!context.ini.Has(section, key))
+		{
+			return fallback;
+		}
+		std::wstring rawValue = (std::wstring)context.ini[section][key];
+		unsigned long long parsedValue = 0;
+		if (!TryParseUInt64(rawValue, parsedValue) || parsedValue < minValue || parsedValue > maxValue)
+		{
+			AppendFallbackWarning(context, section, key, rawValue, std::to_wstring(fallback));
+			return fallback;
+		}
+		return static_cast<uint64_t>(parsedValue);
+	}
+
 	static float GetFloatOrDefault(ConfigReadContext& context, const wchar_t* section, const wchar_t* key, float fallback, float minValue = -FLT_MAX, float maxValue = FLT_MAX)
 	{
 		if (!context.ini.Has(section, key))
@@ -317,7 +340,28 @@ namespace CialloHook
 		return result;
 	}
 
-	static size_t FindRedirectRuleSeparator(const std::wstring& value)
+	static std::vector<std::wstring> SplitAndTrimList(const std::wstring& rawValue, wchar_t separator)
+		{
+			std::vector<std::wstring> result;
+			size_t start = 0;
+			while (start <= rawValue.size())
+			{
+				size_t end = rawValue.find(separator, start);
+				std::wstring item = Rut::StrX::Trim(rawValue.substr(start, end == std::wstring::npos ? std::wstring::npos : end - start));
+				if (!item.empty())
+				{
+					result.push_back(std::move(item));
+				}
+				if (end == std::wstring::npos)
+				{
+					break;
+				}
+				start = end + 1;
+			}
+			return result;
+		}
+
+		static size_t FindRedirectRuleSeparator(const std::wstring& value)
 	{
 		for (size_t i = 0; i < value.size(); ++i)
 		{
@@ -382,7 +426,50 @@ namespace CialloHook
 		return result;
 	}
 
-	static std::vector<FontRedirectRule> GetIndexedFontRedirectRules(
+	static std::vector<RegistryBootstrapRule> GetIndexedRegistryBootstrapRules(
+			ConfigReadContext& context,
+			const wchar_t* section,
+			const wchar_t* countKey)
+		{
+			std::vector<RegistryBootstrapRule> result;
+			if (!context.ini.Has(section, countKey))
+			{
+				return result;
+			}
+
+			int count = GetIntOrDefault(context, section, countKey, 0, 0, 4096);
+			for (int i = 0; i < count; ++i)
+			{
+				std::wstring index = std::to_wstring(i);
+				std::wstring rootKey = L"Root_" + index;
+				std::wstring keyKey = L"Key_" + index;
+				std::wstring valueNameKey = L"ValueName_" + index;
+				std::wstring typeKey = L"Type_" + index;
+				std::wstring dataKey = L"Data_" + index;
+
+				if (!context.ini.Has(section, keyKey))
+				{
+					AppendWarning(context, MakeFieldName(section, countKey) + L" 中的第 " + index + L" 条缺少 Key_i，已跳过");
+					continue;
+				}
+
+				RegistryBootstrapRule rule;
+				rule.root = Rut::StrX::Trim(GetStringOrDefault(context, section, rootKey.c_str(), L"HKCU"));
+				rule.key = Rut::StrX::Trim(GetStringOrDefault(context, section, keyKey.c_str(), L""));
+				rule.valueName = GetStringOrDefault(context, section, valueNameKey.c_str(), L"");
+				rule.type = Rut::StrX::Trim(GetStringOrDefault(context, section, typeKey.c_str(), L"SZ"));
+				rule.data = GetStringOrDefault(context, section, dataKey.c_str(), L"");
+				if (rule.key.empty())
+				{
+					AppendWarning(context, MakeFieldName(section, keyKey.c_str()) + L" 为空，已跳过");
+					continue;
+				}
+				result.push_back(std::move(rule));
+			}
+			return result;
+		}
+
+		static std::vector<FontRedirectRule> GetIndexedFontRedirectRules(
 		ConfigReadContext& context,
 		const wchar_t* section,
 		const wchar_t* countKey)
@@ -688,6 +775,32 @@ namespace CialloHook
 			settings.textReplace.hookGetGlyphIndicesW = GetBoolOrDefault(context, L"TextReplace", L"HookGetGlyphIndicesW", true);
 			settings.textReplace.hookGetGlyphOutlineA = GetBoolOrDefault(context, L"TextReplace", L"HookGetGlyphOutlineA", true);
 			settings.textReplace.hookGetGlyphOutlineW = GetBoolOrDefault(context, L"TextReplace", L"HookGetGlyphOutlineW", true);
+				settings.textReplace.hookMessageBoxA = GetBoolOrDefault(context, L"TextReplace", L"HookMessageBoxA", true);
+				settings.textReplace.hookSetDlgItemTextA = GetBoolOrDefault(context, L"TextReplace", L"HookSetDlgItemTextA", true);
+				settings.textReplace.hookSendDlgItemMessageA = GetBoolOrDefault(context, L"TextReplace", L"HookSendDlgItemMessageA", true);
+				settings.textReplace.hookSendDlgItemMessageW = GetBoolOrDefault(context, L"TextReplace", L"HookSendDlgItemMessageW", true);
+				settings.textReplace.hookSendMessageA = GetBoolOrDefault(context, L"TextReplace", L"HookSendMessageA", true);
+				settings.textReplace.hookSendMessageW = GetBoolOrDefault(context, L"TextReplace", L"HookSendMessageW", true);
+				settings.textReplace.hookAppendMenuA = GetBoolOrDefault(context, L"TextReplace", L"HookAppendMenuA", true);
+				settings.textReplace.hookModifyMenuA = GetBoolOrDefault(context, L"TextReplace", L"HookModifyMenuA", true);
+				settings.textReplace.hookInsertMenuA = GetBoolOrDefault(context, L"TextReplace", L"HookInsertMenuA", true);
+				settings.textReplace.hookInsertMenuItemA = GetBoolOrDefault(context, L"TextReplace", L"HookInsertMenuItemA", true);
+				settings.textReplace.hookSetMenuItemInfoA = GetBoolOrDefault(context, L"TextReplace", L"HookSetMenuItemInfoA", true);
+				settings.textReplace.hookMessageBoxIndirectA = GetBoolOrDefault(context, L"TextReplace", L"HookMessageBoxIndirectA", true);
+				settings.textReplace.hookDrawThemeText = GetBoolOrDefault(context, L"TextReplace", L"HookDrawThemeText", true);
+				settings.textReplace.hookDrawThemeTextEx = GetBoolOrDefault(context, L"TextReplace", L"HookDrawThemeTextEx", true);
+				settings.textReplace.hookDefWindowProcA = GetBoolOrDefault(context, L"TextReplace", L"HookDefWindowProcA", true);
+				settings.textReplace.hookDefWindowProcW = GetBoolOrDefault(context, L"TextReplace", L"HookDefWindowProcW", true);
+				settings.textReplace.hookDialogBoxParamA = GetBoolOrDefault(context, L"TextReplace", L"HookDialogBoxParamA", true);
+				settings.textReplace.hookDialogBoxParamW = GetBoolOrDefault(context, L"TextReplace", L"HookDialogBoxParamW", true);
+				settings.textReplace.hookCreateDialogParamA = GetBoolOrDefault(context, L"TextReplace", L"HookCreateDialogParamA", true);
+				settings.textReplace.hookCreateDialogParamW = GetBoolOrDefault(context, L"TextReplace", L"HookCreateDialogParamW", true);
+				settings.textReplace.hookDialogBoxIndirectParamA = GetBoolOrDefault(context, L"TextReplace", L"HookDialogBoxIndirectParamA", true);
+				settings.textReplace.hookDialogBoxIndirectParamW = GetBoolOrDefault(context, L"TextReplace", L"HookDialogBoxIndirectParamW", true);
+				settings.textReplace.hookCreateDialogIndirectParamA = GetBoolOrDefault(context, L"TextReplace", L"HookCreateDialogIndirectParamA", true);
+				settings.textReplace.hookCreateDialogIndirectParamW = GetBoolOrDefault(context, L"TextReplace", L"HookCreateDialogIndirectParamW", true);
+				settings.textReplace.hookPropertySheetA = GetBoolOrDefault(context, L"TextReplace", L"HookPropertySheetA", false);
+				settings.textReplace.hookExitProcessGuard = GetBoolOrDefault(context, L"TextReplace", L"HookExitProcessGuard", false);
 
 			settings.windowTitle.rules.clear();
 			settings.windowTitle.titleMode = GetIntOrDefault(context, L"WindowTitle", L"TitleMode",
@@ -765,9 +878,22 @@ namespace CialloHook
 				AppendWarning(context, L"StartupMessage.Enable 已开启，但 Author 和 Text 都为空，已自动关闭");
 			}
 
+			settings.splashImage.enable = GetBoolOrDefault(context, L"SplashImage", L"Enable", false);
+			settings.splashImage.imageFile = GetStringOrDefault(context, L"SplashImage", L"ImageFile", L"splash.png");
+			settings.splashImage.width = GetIntOrDefault(context, L"SplashImage", L"Width", 800, 100, 3840);
+			settings.splashImage.height = GetIntOrDefault(context, L"SplashImage", L"Height", 600, 100, 2160);
+			settings.splashImage.entryEffect = GetIntOrDefault(context, L"SplashImage", L"EntryEffect", 1, 1, 6);
+			settings.splashImage.exitEffect = GetIntOrDefault(context, L"SplashImage", L"ExitEffect", 1, 1, 6);
+			settings.splashImage.entryMs = GetIntOrDefault(context, L"SplashImage", L"EntryMs", 1200, 0, 10000);
+			settings.splashImage.holdMs = GetIntOrDefault(context, L"SplashImage", L"HoldMs", 1800, 0, 30000);
+			settings.splashImage.exitMs = GetIntOrDefault(context, L"SplashImage", L"ExitMs", 1500, 0, 10000);
+			settings.splashImage.durationMs = GetIntOrDefault(context, L"SplashImage", L"DurationMs", 0, 0, 120000);
+			settings.splashImage.position = GetIntOrDefault(context, L"SplashImage", L"Position", 1, 1, 5);
+			settings.splashImage.interactionMode = GetIntOrDefault(context, L"SplashImage", L"InteractionMode", 0, 0, 2);
+
 			settings.filePatch.enable = GetBoolOrDefault(context, L"FilePatch", L"Enable", false);
 			settings.filePatch.patchFolders = GetIndexedList(context, L"FilePatch", L"PatchFolderCount", L"PatchFolderName_");
-			if (settings.filePatch.patchFolders.empty())
+			if (settings.filePatch.patchFolders.empty() && !context.ini.Has(L"FilePatch", L"PatchFolderCount"))
 			{
 				settings.filePatch.patchFolders.push_back(L"patch");
 			}
@@ -829,7 +955,17 @@ namespace CialloHook
 				AppendWarning(context, L"Registry.Enable 已开启，但未配置有效的 FileName_i / File，已自动关闭");
 			}
 
-			settings.siglusKeyExtract.enable = GetBoolOrDefault(context, L"SiglusKeyExtract", L"Enable", false);
+			settings.registryBootstrap.enable = GetBoolOrDefault(context, L"RegistryBootstrap", L"Enable", false);
+				settings.registryBootstrap.cleanupOnExit = GetBoolOrDefault(context, L"RegistryBootstrap", L"CleanupOnExit", true);
+				settings.registryBootstrap.enableLog = GetBoolOrDefault(context, L"RegistryBootstrap", L"EnableLog", false);
+				settings.registryBootstrap.rules = GetIndexedRegistryBootstrapRules(context, L"RegistryBootstrap", L"RuleCount");
+				if (settings.registryBootstrap.enable && settings.registryBootstrap.rules.empty())
+				{
+					settings.registryBootstrap.enable = false;
+					AppendWarning(context, L"RegistryBootstrap.Enable 已开启，但未配置有效的 RuleCount / Key_i，已自动关闭");
+				}
+
+				settings.siglusKeyExtract.enable = GetBoolOrDefault(context, L"SiglusKeyExtract", L"Enable", false);
 			settings.siglusKeyExtract.gameexePath = GetStringOrDefault(context, L"SiglusKeyExtract", L"GameexePath", L"Gameexe.dat");
 			settings.siglusKeyExtract.keyOutputPath = GetStringOrDefault(context, L"SiglusKeyExtract", L"KeyOutputPath", L"siglus_key.txt");
 			settings.siglusKeyExtract.showMessageBox = GetBoolOrDefault(context, L"SiglusKeyExtract", L"ShowMessageBox", true);
@@ -848,19 +984,38 @@ namespace CialloHook
 			settings.codePage.enable = GetBoolOrDefault(context, L"CodePage", L"Enable", false);
 			settings.codePage.fromCodePage = GetUIntOrDefault(context, L"CodePage", L"FromCodePage", 932);
 			settings.codePage.toCodePage = GetUIntOrDefault(context, L"CodePage", L"ToCodePage", 936);
+				settings.codePage.hookMultiByteToWideChar = GetBoolOrDefault(context, L"CodePage", L"HookMultiByteToWideChar", true);
+				settings.codePage.hookWideCharToMultiByte = GetBoolOrDefault(context, L"CodePage", L"HookWideCharToMultiByte", true);
 
 			settings.debug.enable = GetBoolOrDefault(context, L"Debug", L"Enable", false);
 			settings.debug.logToFile = GetBoolOrDefault(context, L"Debug", L"LogToFile", false);
 			settings.debug.logToConsole = GetBoolOrDefault(context, L"Debug", L"LogToConsole", false);
 
 			settings.loadMode.mode = GetStringOrDefault(context, L"LoadMode", L"Mode", L"proxy");
+				settings.startupTiming.attachMode = GetStringOrDefault(context, L"StartupTiming", L"AttachMode", L"immediate");
+				for (wchar_t& ch : settings.startupTiming.attachMode)
+				{
+					ch = static_cast<wchar_t>(towlower(ch));
+				}
+				settings.startupTiming.delayMs = GetUIntOrDefault(context, L"StartupTiming", L"DelayMs", 0, 0, 30000);
+				settings.startupTiming.waitForGuiReady = GetBoolOrDefault(context, L"StartupTiming", L"WaitForGuiReady", false);
+				settings.startupTiming.enableStartupWindowGate = GetBoolOrDefault(context, L"StartupTiming", L"EnableStartupWindowGate", false);
 			if (Rut::StrX::Trim(settings.loadMode.mode).empty())
 			{
 				settings.loadMode.mode = L"proxy";
 				AppendWarning(context, L"LoadMode.Mode 为空，已回退为 proxy");
 			}
 
-			settings.localeEmulator.enable = GetBoolOrDefault(context, L"LocaleEmulator", L"Enable", false);
+			if (settings.startupTiming.attachMode != L"immediate"
+					&& settings.startupTiming.attachMode != L"delay"
+					&& settings.startupTiming.attachMode != L"entrypoint")
+				{
+					std::wstring invalidMode = settings.startupTiming.attachMode;
+					settings.startupTiming.attachMode = L"immediate";
+					AppendWarning(context, L"StartupTiming.AttachMode = \"" + invalidMode + L"\" 无效，已回退为 immediate");
+				}
+
+				settings.localeEmulator.enable = GetBoolOrDefault(context, L"LocaleEmulator", L"Enable", false);
 			settings.localeEmulator.ansiCodePage = GetUIntWithAliasOrDefault(context, L"LocaleEmulator", L"AnsiCodePage", L"CodePage", 932);
 			settings.localeEmulator.oemCodePage = GetUIntWithAliasOrDefault(context, L"LocaleEmulator", L"OemCodePage", L"CodePage", settings.localeEmulator.ansiCodePage);
 			settings.localeEmulator.localeID = GetUIntOrDefault(context, L"LocaleEmulator", L"LocaleID", 0x411);
@@ -872,6 +1027,43 @@ namespace CialloHook
 				settings.localeEmulator.timezone = L"Tokyo Standard Time";
 				AppendWarning(context, L"LocaleEmulator.Timezone 为空，已回退为 Tokyo Standard Time");
 			}
+
+			settings.rioShiina.enable = GetBoolOrDefault(context, L"RioShiina", L"Enable", false);
+			settings.rioShiina.mode = GetIntOrDefault(context, L"RioShiina", L"Mode", 0, 0, 2);
+			settings.rioShiina.patchNames = GetIndexedList(context, L"RioShiina", L"PatchCount", L"PatchName_");
+			if (settings.rioShiina.patchNames.empty())
+			{
+				settings.rioShiina.patchNames.push_back(L"unencrypted");
+			}
+			settings.rioShiina.extractOutputDir = Rut::StrX::Trim(GetStringOrDefault(context, L"RioShiina", L"ExtractOutputDir", L"rio_extract"));
+			settings.rioShiina.skipInvalidFileName = GetBoolOrDefault(context, L"RioShiina", L"SkipInvalidFileName", true);
+			settings.rioShiina.enableLog = GetBoolOrDefault(context, L"RioShiina", L"EnableLog", false);
+			settings.rioShiina.processReg = GetBoolOrDefault(context, L"RioShiina", L"ProcessReg", true);
+			settings.rioShiina.processDvd = GetBoolOrDefault(context, L"RioShiina", L"ProcessDvd", false);
+			settings.rioShiina.specDvdFileSize = GetUInt64OrDefault(context, L"RioShiina", L"SpecDvdFileSize", 0);
+			settings.rioShiina.archivesToExtract = SplitAndTrimList(GetStringOrDefault(context, L"RioShiina", L"ArchivesToExtract", L""), L'|');
+			if (settings.rioShiina.extractOutputDir.empty())
+			{
+				settings.rioShiina.extractOutputDir = L"rio_extract";
+				AppendWarning(context, L"RioShiina.ExtractOutputDir 为空，已回退为 rio_extract");
+			}
+			if (settings.rioShiina.enable)
+			{
+				if (settings.rioShiina.mode == 0 && !settings.rioShiina.processReg && !settings.rioShiina.processDvd)
+				{
+					settings.rioShiina.enable = false;
+					AppendWarning(context, L"RioShiina.Enable 已开启，但 Mode=0 且未启用 ProcessReg/ProcessDvd，已自动关闭");
+				}
+				else if (settings.rioShiina.mode == 2 && settings.rioShiina.archivesToExtract.empty())
+				{
+					settings.rioShiina.enable = false;
+					AppendWarning(context, L"RioShiina.Enable 已开启，但未配置有效的 ArchivesToExtract，已自动关闭");
+				}
+			}
+			if (!settings.rioShiina.processDvd && settings.rioShiina.specDvdFileSize != 0)
+			{
+				AppendWarning(context, L"RioShiina.SpecDvdFileSize 已设置，但 ProcessDvd=false；运行时不会启用 DVD 文件大小模拟");
+			}
 			settings.engineCache.med = GetBoolOrDefault(context, L"GLOBAL", L"MED", false);
 			settings.engineCache.majiro = GetBoolOrDefault(context, L"GLOBAL", L"MAJIRO", false);
 			settings.enginePatches.enableKrkrPatch = GetBoolWithAliasOrDefault(
@@ -880,6 +1072,9 @@ namespace CialloHook
 			settings.enginePatches.krkrPatchVerboseLog = GetBoolOrDefault(
 				context, L"EnginePatches", L"KrkrPatchVerboseLog",
 				GetBoolOrDefault(context, L"GLOBAL", L"KrkrPatchVerboseLog", false));
+			settings.enginePatches.enableKrkrCxdecBridge = GetBoolWithAliasOrDefault(
+				context, L"EnginePatches", L"EnableKrkrCxdecBridge", L"KrkrCxdecBridge",
+				GetBoolWithAliasOrDefault(context, L"GLOBAL", L"EnableKrkrCxdecBridge", L"KrkrCxdecBridge", false));
 			settings.enginePatches.krkrBootstrapBypass = GetBoolOrDefault(
 				context, L"EnginePatches", L"KrkrBootstrapBypass",
 				GetBoolOrDefault(context, L"GLOBAL", L"KrkrBootstrapBypass", false));

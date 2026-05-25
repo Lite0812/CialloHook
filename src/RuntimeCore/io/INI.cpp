@@ -1,43 +1,155 @@
 #include "INI.h"
 #include "Str.h"
-#include "File.h"
 
-#include <sstream>
+#include <Windows.h>
 
+#include <limits>
+#include <stdexcept>
 
 namespace Rcf
 {
 	namespace INI
 	{
 		using namespace Rut::StrX;
-		using namespace Rut::FileX;
+
+		namespace
+		{
+			std::string ReadAllBytes(const std::wstring& path)
+			{
+				HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+				if (file == INVALID_HANDLE_VALUE)
+				{
+					throw std::runtime_error("OpenFileUTF8Stream: Open File Error!");
+				}
+
+				LARGE_INTEGER fileSize = {};
+				if (!GetFileSizeEx(file, &fileSize) || fileSize.QuadPart > (std::numeric_limits<DWORD>::max)())
+				{
+					CloseHandle(file);
+					throw std::runtime_error("OpenFileUTF8Stream: Open File Error!");
+				}
+
+				std::string bytes(static_cast<size_t>(fileSize.QuadPart), '\0');
+				DWORD bytesRead = 0;
+				BOOL ok = bytes.empty() || ReadFile(file, &bytes[0], static_cast<DWORD>(bytes.size()), &bytesRead, nullptr);
+				CloseHandle(file);
+				if (!ok || bytesRead != bytes.size())
+				{
+					throw std::runtime_error("OpenFileUTF8Stream: Open File Error!");
+				}
+				return bytes;
+			}
+
+			void WriteAllBytes(const std::wstring& path, const std::string& bytes)
+			{
+				if (bytes.size() > (std::numeric_limits<DWORD>::max)())
+				{
+					throw std::runtime_error("CreateFileUTF8Stream: Create File Error!");
+				}
+
+				HANDLE file = CreateFileW(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+				if (file == INVALID_HANDLE_VALUE)
+				{
+					throw std::runtime_error("CreateFileUTF8Stream: Create File Error!");
+				}
+
+				DWORD bytesWritten = 0;
+				BOOL ok = bytes.empty() || WriteFile(file, bytes.data(), static_cast<DWORD>(bytes.size()), &bytesWritten, nullptr);
+				CloseHandle(file);
+				if (!ok || bytesWritten != bytes.size())
+				{
+					throw std::runtime_error("CreateFileUTF8Stream: Create File Error!");
+				}
+			}
+
+			std::wstring Utf8ToWide(const std::string& bytes)
+			{
+				const char* data = bytes.data();
+				size_t size = bytes.size();
+				if (size >= 3 && static_cast<unsigned char>(data[0]) == 0xEF && static_cast<unsigned char>(data[1]) == 0xBB && static_cast<unsigned char>(data[2]) == 0xBF)
+				{
+					data += 3;
+					size -= 3;
+				}
+				if (size == 0)
+				{
+					return L"";
+				}
+				if (size > static_cast<size_t>((std::numeric_limits<int>::max)()))
+				{
+					throw std::runtime_error("INI_File::Parse: File Too Large!");
+				}
+
+				int length = MultiByteToWideChar(CP_UTF8, 0, data, static_cast<int>(size), nullptr, 0);
+				if (length <= 0)
+				{
+					throw std::runtime_error("INI_File::Parse: UTF8 Decode Error!");
+				}
+				std::wstring result(length, L'\0');
+				MultiByteToWideChar(CP_UTF8, 0, data, static_cast<int>(size), &result[0], length);
+				return result;
+			}
+
+			std::string WideToUtf8(const std::wstring& text)
+			{
+				std::string result("\xEF\xBB\xBF", 3);
+				if (text.empty())
+				{
+					return result;
+				}
+				if (text.size() > static_cast<size_t>((std::numeric_limits<int>::max)()))
+				{
+					throw std::runtime_error("INI_File::Save: File Too Large!");
+				}
+
+				int length = WideCharToMultiByte(CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()), nullptr, 0, nullptr, nullptr);
+				if (length <= 0)
+				{
+					throw std::runtime_error("INI_File::Save: UTF8 Encode Error!");
+				}
+				size_t offset = result.size();
+				result.resize(offset + length);
+				WideCharToMultiByte(CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()), &result[offset], length, nullptr, nullptr);
+				return result;
+			}
+		}
 
 		INI_File::INI_File()
 		{
-
 		}
 
-		INI_File::INI_File(const std::wstring & wsINI)
+		INI_File::INI_File(const std::wstring& wsINI)
 		{
 			Parse(wsINI);
 		}
 
 		void INI_File::Parse(const std::wstring& wsINI)
 		{
-			std::wifstream wifs_ini = OpenFileUTF8Stream(wsINI);
-
-			std::size_t pos = -1;
+			std::wstring content = Utf8ToWide(ReadAllBytes(wsINI));
+			std::size_t pos = std::wstring::npos;
 			std::wstring node_name;
-			for (std::wstring line; std::getline(wifs_ini, line);)
+			std::size_t start = 0;
+
+			while (start < content.size())
 			{
+				std::size_t end = content.find(L'\n', start);
+				std::wstring line = end == std::wstring::npos
+					? content.substr(start)
+					: content.substr(start, end - start);
+				if (!line.empty() && line.back() == L'\r')
+				{
+					line.pop_back();
+				}
+				start = end == std::wstring::npos ? content.size() : end + 1;
+
 				if (line.empty()) { continue; }
 
 				switch (line[0])
 				{
-				case L'#':case L';':case L'/': // Comment Char
+				case L'#':case L';':case L'/':
 					break;
 
-				case L'[': // [Node]
+				case L'[':
 				{
 					pos = line.find_first_of(L']');
 					if (pos == std::wstring::npos) { throw std::runtime_error("INI_File:Parse: Get Node Error!"); }
@@ -45,7 +157,7 @@ namespace Rcf
 				}
 				break;
 
-				default:// Key = Value
+				default:
 				{
 					pos = line.find_first_of(L'=');
 					if ((pos == std::wstring::npos) || (pos == 0)) { throw std::runtime_error("INI_File::Parse: Get Key Error!"); }
@@ -58,22 +170,28 @@ namespace Rcf
 
 		void INI_File::Save(const std::wstring& wsFile)
 		{
-			std::wofstream wofs_ini = CreateFileUTF8Stream(wsFile);
-			wofs_ini << Dump();
+			WriteAllBytes(wsFile, WideToUtf8(Dump()));
 		}
 
 		std::wstring INI_File::Dump()
 		{
-			std::wstringstream ss;
+			std::wstring result;
 			for (auto& node : m_mpNodes)
 			{
-				ss << L"[" << node.first << L"]" << L'\n';
-				for (auto& key : node.second) { ss << key.first << L"=" << std::wstring(key.second) << L'\n'; }
-				ss << L'\n';
+				result += L"[";
+				result += node.first;
+				result += L"]\n";
+				for (auto& key : node.second)
+				{
+					result += key.first;
+					result += L"=";
+					result += std::wstring(key.second);
+					result += L"\n";
+				}
+				result += L"\n";
 			}
-			return ss.str();
+			return result;
 		}
-
 
 		NodesMap::iterator INI_File::At(const std::wstring& wsNode)
 		{

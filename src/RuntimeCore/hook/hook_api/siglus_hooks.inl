@@ -1,4 +1,4 @@
-		//*********START Siglus XOR Key Extract*********
+﻿		//*********START Siglus XOR Key Extract*********
 		class HardwareBreakpoint
 		{
 		public:
@@ -323,7 +323,7 @@
 			return queried == sizeof(mbi) && mbi.AllocationBase == GetModuleHandleW(nullptr);
 		}
 
-		static HANDLE WINAPI newCreateFileW_KeyExtract(
+		static HANDLE WINAPI newCreateFileW_KeyExtract_SehImpl(
 			LPCWSTR lpFileName,
 			DWORD dwDesiredAccess,
 			DWORD dwShareMode,
@@ -331,7 +331,7 @@
 			DWORD dwCreationDisposition,
 			DWORD dwFlagsAndAttributes,
 			HANDLE hTemplateFile)
-		{
+{
 			HANDLE hFile = rawCreateFileW_KeyExtract
 				? rawCreateFileW_KeyExtract(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile)
 				: INVALID_HANDLE_VALUE;
@@ -348,14 +348,27 @@
 
 			return hFile;
 		}
+		static HANDLE WINAPI newCreateFileW_KeyExtract(
+			LPCWSTR lpFileName,
+			DWORD dwDesiredAccess,
+			DWORD dwShareMode,
+			LPSECURITY_ATTRIBUTES lpSecurityAttributes,
+			DWORD dwCreationDisposition,
+			DWORD dwFlagsAndAttributes,
+			HANDLE hTemplateFile)
+		{
+			__try { return newCreateFileW_KeyExtract_SehImpl(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawCreateFileW_KeyExtract(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile); }
+		}
 
-		static BOOL WINAPI newReadFile_KeyExtract(
+
+		static BOOL WINAPI newReadFile_KeyExtract_SehImpl(
 			HANDLE hFile,
 			LPVOID lpBuffer,
 			DWORD nNumberOfBytesToRead,
 			LPDWORD lpNumberOfBytesRead,
 			LPOVERLAPPED lpOverlapped)
-		{
+{
 			DWORD offset = SetFilePointer(hFile, 0, nullptr, FILE_CURRENT);
 			BOOL result = rawReadFile_KeyExtract
 				? rawReadFile_KeyExtract(hFile, lpBuffer, nNumberOfBytesToRead, lpNumberOfBytesRead, lpOverlapped)
@@ -378,6 +391,17 @@
 
 			return result;
 		}
+		static BOOL WINAPI newReadFile_KeyExtract(
+			HANDLE hFile,
+			LPVOID lpBuffer,
+			DWORD nNumberOfBytesToRead,
+			LPDWORD lpNumberOfBytesRead,
+			LPOVERLAPPED lpOverlapped)
+		{
+			__try { return newReadFile_KeyExtract_SehImpl(hFile, lpBuffer, nNumberOfBytesToRead, lpNumberOfBytesRead, lpOverlapped); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawReadFile_KeyExtract(hFile, lpBuffer, nNumberOfBytesToRead, lpNumberOfBytesRead, lpOverlapped); }
+		}
+
 
 		static bool DetectNeedKeyExtract()
 		{

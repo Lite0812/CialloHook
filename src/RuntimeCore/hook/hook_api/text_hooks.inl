@@ -1,4 +1,4 @@
-		//*********Start Text Replace*********
+﻿		//*********Start Text Replace*********
 		// 通配符匹配函数（ANSI版本）
 		static bool WildcardMatchA(const char* pattern, const char* text)
 		{
@@ -405,6 +405,57 @@
 			return true;
 		}
 
+		/* Parse Furoshiki uif_config.json character_substitution format:
+		 * source_characters is the original text, target_characters is the replacement glyph text. */
+		static bool TryParseCnJpMapUifJson(const std::wstring& text)
+		{
+			ClearCnJpMap();
+
+			auto extractField = [&](const wchar_t* fieldName, std::wstring& out) -> bool {
+				std::wstring needle = std::wstring(L"\"") + fieldName + L"\"";
+				size_t keyPos = text.find(needle);
+				if (keyPos == std::wstring::npos) return false;
+				size_t colonPos = text.find(L':', keyPos + needle.size());
+				if (colonPos == std::wstring::npos) return false;
+				size_t pos = colonPos + 1;
+				SkipJsonWhitespace(text, pos);
+				return TryParseJsonString(text, pos, out);
+			};
+
+			std::wstring source, target;
+			if (!extractField(L"source_characters", source) || !extractField(L"target_characters", target))
+			{
+				return false;
+			}
+
+			if (source.empty() || target.empty())
+			{
+				LogMessage(LogLevel::Error, L"CnJpMap(UIF): source or target characters is empty");
+				return false;
+			}
+
+			size_t len = (source.size() < target.size()) ? source.size() : target.size();
+			if (source.size() != target.size())
+			{
+				LogMessage(LogLevel::Warn, L"CnJpMap(UIF): source(%u) and target(%u) length mismatch, using min",
+					(uint32_t)source.size(), (uint32_t)target.size());
+			}
+
+			for (size_t i = 0; i < len; ++i)
+			{
+				wchar_t s = source[i], t = target[i];
+				if (s != t)
+				{
+					sg_mapCnJpGlyphCharReverse[s] = t;
+					sg_mapCnJpGlyphCharForward[t] = s;
+				}
+			}
+
+			LogMessage(LogLevel::Info, L"CnJpMap(UIF): parsed %u chars, %u mappings",
+				(uint32_t)len, (uint32_t)sg_mapCnJpGlyphCharForward.size());
+			return !sg_mapCnJpGlyphCharForward.empty();
+		}
+
 		void EnableCnJpMap(bool enable)
 		{
 			sg_enableCnJpMap = enable;
@@ -719,9 +770,27 @@
 				return false;
 			}
 
-			if (!TryParseCnJpMapJson(jsonText))
+			/* Auto-detect format: UIF (character_substitution) vs CialloHook (flat key-value) */
+			bool parsed = false;
+			if (jsonText.find(L"\"character_substitution\"") != std::wstring::npos
+				|| jsonText.find(L"\"source_characters\"") != std::wstring::npos)
 			{
-				LogMessage(LogLevel::Error, L"CnJpMap: failed to parse json object from %s", jsonFilePath);
+				LogMessage(LogLevel::Info, L"CnJpMap: detected UIF character_substitution format in %s", jsonFilePath);
+				parsed = TryParseCnJpMapUifJson(jsonText);
+				if (!parsed)
+				{
+					LogMessage(LogLevel::Warn, L"CnJpMap: UIF format parse failed, fallback to CialloHook format");
+					parsed = TryParseCnJpMapJson(jsonText);
+				}
+			}
+			else
+			{
+				parsed = TryParseCnJpMapJson(jsonText);
+			}
+
+			if (!parsed)
+			{
+				LogMessage(LogLevel::Error, L"CnJpMap: failed to parse json from %s", jsonFilePath);
 				return false;
 			}
 
@@ -1418,8 +1487,8 @@
 			}
 		};
 
-		BOOL WINAPI newTextOutA(HDC hdc, int x, int y, LPCSTR lpString, int c)
-		{
+		BOOL WINAPI newTextOutA_SehImpl(HDC hdc, int x, int y, LPCSTR lpString, int c)
+{
 			int previousExtra = ApplySpacingExtra(hdc);
 			ScopedDrawHdcFontOverride fontOverride(hdc);
 			int length = c < 0 ? (lpString ? (int)strlen(lpString) : 0) : c;
@@ -1444,6 +1513,12 @@
 			RestoreSpacingExtra(hdc, previousExtra);
 			return ret;
 		}
+		BOOL WINAPI newTextOutA(HDC hdc, int x, int y, LPCSTR lpString, int c)
+		{
+			__try { return newTextOutA_SehImpl(hdc, x, y, lpString, c); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawTextOutA(hdc, x, y, lpString, c); }
+		}
+
 
 		bool HookTextOutA()
 		{
@@ -1476,8 +1551,8 @@
 			return rawTextOutW(hdc, ApplyGlyphOffsetX(x), ApplyGlyphOffsetY(y), glyphStage.mappedWide.c_str(), (int)glyphStage.mappedWide.length());
 		}
 
-		BOOL WINAPI newTextOutW(HDC hdc, int x, int y, LPCWSTR lpString, int c)
-		{
+		BOOL WINAPI newTextOutW_SehImpl(HDC hdc, int x, int y, LPCWSTR lpString, int c)
+{
 			int previousExtra = ApplySpacingExtra(hdc);
 			int length = c < 0 ? (lpString ? (int)wcslen(lpString) : 0) : c;
 			std::wstring replaced = ProcessGlyphStageW(lpString, length);
@@ -1505,6 +1580,12 @@
 			RestoreSpacingExtra(hdc, previousExtra);
 			return ret;
 		}
+		BOOL WINAPI newTextOutW(HDC hdc, int x, int y, LPCWSTR lpString, int c)
+		{
+			__try { return newTextOutW_SehImpl(hdc, x, y, lpString, c); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawTextOutW(hdc, x, y, lpString, c); }
+		}
+
 
 		bool HookTextOutW()
 		{
@@ -1515,8 +1596,8 @@
 		//*********Hook ExtTextOutA*********
 		static pExtTextOutA rawExtTextOutA = ExtTextOutA;
 
-		BOOL WINAPI newExtTextOutA(HDC hdc, int x, int y, UINT options, CONST RECT* lprect, LPCSTR lpString, UINT c, CONST INT* lpDx)
-		{
+		BOOL WINAPI newExtTextOutA_SehImpl(HDC hdc, int x, int y, UINT options, CONST RECT* lprect, LPCSTR lpString, UINT c, CONST INT* lpDx)
+{
 			int previousExtra = lpDx == nullptr ? ApplySpacingExtra(hdc) : kSpacingExtraNotApplied;
 			int dxExtra = lpDx == nullptr ? 0 : ComputeSpacingExtra(hdc);
 			std::vector<INT> adjustedDx;
@@ -1565,6 +1646,12 @@
 			RestoreSpacingExtra(hdc, previousExtra);
 			return ret;
 		}
+		BOOL WINAPI newExtTextOutA(HDC hdc, int x, int y, UINT options, CONST RECT* lprect, LPCSTR lpString, UINT c, CONST INT* lpDx)
+		{
+			__try { return newExtTextOutA_SehImpl(hdc, x, y, options, lprect, lpString, c, lpDx); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawExtTextOutA(hdc, x, y, options, lprect, lpString, c, lpDx); }
+		}
+
 
 		bool HookExtTextOutA()
 		{
@@ -1599,8 +1686,8 @@
 			return rawExtTextOutW(hdc, ApplyGlyphOffsetX(x), ApplyGlyphOffsetY(y), options, lprect, glyphStage.mappedWide.c_str(), (UINT)glyphStage.mappedWide.length(), nullptr);
 		}
 
-		BOOL WINAPI newExtTextOutW(HDC hdc, int x, int y, UINT options, CONST RECT* lprect, LPCWSTR lpString, UINT c, CONST INT* lpDx)
-		{
+		BOOL WINAPI newExtTextOutW_SehImpl(HDC hdc, int x, int y, UINT options, CONST RECT* lprect, LPCWSTR lpString, UINT c, CONST INT* lpDx)
+{
 			int previousExtra = lpDx == nullptr ? ApplySpacingExtra(hdc) : kSpacingExtraNotApplied;
 			int dxExtra = lpDx == nullptr ? 0 : ComputeSpacingExtra(hdc);
 			std::vector<INT> adjustedDx;
@@ -1652,6 +1739,12 @@
 			RestoreSpacingExtra(hdc, previousExtra);
 			return ret;
 		}
+		BOOL WINAPI newExtTextOutW(HDC hdc, int x, int y, UINT options, CONST RECT* lprect, LPCWSTR lpString, UINT c, CONST INT* lpDx)
+		{
+			__try { return newExtTextOutW_SehImpl(hdc, x, y, options, lprect, lpString, c, lpDx); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawExtTextOutW(hdc, x, y, options, lprect, lpString, c, lpDx); }
+		}
+
 
 		bool HookExtTextOutW()
 		{
@@ -1662,8 +1755,8 @@
 		//*********Hook DrawTextA*********
 		static pDrawTextA rawDrawTextA = DrawTextA;
 
-		int WINAPI newDrawTextA(HDC hdc, LPCSTR lpchText, int cchText, LPRECT lprc, UINT format)
-		{
+		int WINAPI newDrawTextA_SehImpl(HDC hdc, LPCSTR lpchText, int cchText, LPRECT lprc, UINT format)
+{
 			int previousExtra = ApplySpacingExtra(hdc);
 			int length = cchText == -1 ? (int)strlen(lpchText) : cchText;
 			std::string replaced = ProcessGlyphStageA(lpchText, length);
@@ -1697,6 +1790,12 @@
 			RestoreSpacingExtra(hdc, previousExtra);
 			return ret;
 		}
+		int WINAPI newDrawTextA(HDC hdc, LPCSTR lpchText, int cchText, LPRECT lprc, UINT format)
+		{
+			__try { return newDrawTextA_SehImpl(hdc, lpchText, cchText, lprc, format); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawDrawTextA(hdc, lpchText, cchText, lprc, format); }
+		}
+
 
 		bool HookDrawTextA()
 		{
@@ -1727,8 +1826,8 @@
 			return rawDrawTextW(hdc, glyphStage.mappedWide.c_str(), (int)glyphStage.mappedWide.length(), lprc, format);
 		}
 
-		int WINAPI newDrawTextW(HDC hdc, LPCWSTR lpchText, int cchText, LPRECT lprc, UINT format)
-		{
+		int WINAPI newDrawTextW_SehImpl(HDC hdc, LPCWSTR lpchText, int cchText, LPRECT lprc, UINT format)
+{
 			int previousExtra = ApplySpacingExtra(hdc);
 			int length = cchText == -1 ? (int)wcslen(lpchText) : cchText;
 			std::wstring replaced = ProcessGlyphStageW(lpchText, length);
@@ -1754,6 +1853,12 @@
 			RestoreSpacingExtra(hdc, previousExtra);
 			return ret;
 		}
+		int WINAPI newDrawTextW(HDC hdc, LPCWSTR lpchText, int cchText, LPRECT lprc, UINT format)
+		{
+			__try { return newDrawTextW_SehImpl(hdc, lpchText, cchText, lprc, format); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawDrawTextW(hdc, lpchText, cchText, lprc, format); }
+		}
+
 
 		bool HookDrawTextW()
 		{
@@ -1764,8 +1869,8 @@
 		//*********Hook DrawTextExA*********
 		static pDrawTextExA rawDrawTextExA = DrawTextExA;
 
-		int WINAPI newDrawTextExA(HDC hdc, LPSTR lpchText, int cchText, LPRECT lprc, UINT format, LPDRAWTEXTPARAMS lpdtp)
-		{
+		int WINAPI newDrawTextExA_SehImpl(HDC hdc, LPSTR lpchText, int cchText, LPRECT lprc, UINT format, LPDRAWTEXTPARAMS lpdtp)
+{
 			int previousExtra = ApplySpacingExtra(hdc);
 			int length = cchText == -1 ? (int)strlen(lpchText) : cchText;
 			std::string replaced = ProcessGlyphStageA(lpchText, length);
@@ -1801,6 +1906,12 @@
 			RestoreSpacingExtra(hdc, previousExtra);
 			return ret;
 		}
+		int WINAPI newDrawTextExA(HDC hdc, LPSTR lpchText, int cchText, LPRECT lprc, UINT format, LPDRAWTEXTPARAMS lpdtp)
+		{
+			__try { return newDrawTextExA_SehImpl(hdc, lpchText, cchText, lprc, format, lpdtp); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawDrawTextExA(hdc, lpchText, cchText, lprc, format, lpdtp); }
+		}
+
 
 		bool HookDrawTextExA()
 		{
@@ -1833,8 +1944,8 @@
 			return rawDrawTextExW(hdc, buffer.data(), (int)glyphStage.mappedWide.length(), lprc, format, lpdtp);
 		}
 
-		int WINAPI newDrawTextExW(HDC hdc, LPWSTR lpchText, int cchText, LPRECT lprc, UINT format, LPDRAWTEXTPARAMS lpdtp)
-		{
+		int WINAPI newDrawTextExW_SehImpl(HDC hdc, LPWSTR lpchText, int cchText, LPRECT lprc, UINT format, LPDRAWTEXTPARAMS lpdtp)
+{
 			int previousExtra = ApplySpacingExtra(hdc);
 			int length = cchText == -1 ? (int)wcslen(lpchText) : cchText;
 			std::wstring replaced = ProcessGlyphStageW(lpchText, length);
@@ -1862,6 +1973,12 @@
 			RestoreSpacingExtra(hdc, previousExtra);
 			return ret;
 		}
+		int WINAPI newDrawTextExW(HDC hdc, LPWSTR lpchText, int cchText, LPRECT lprc, UINT format, LPDRAWTEXTPARAMS lpdtp)
+		{
+			__try { return newDrawTextExW_SehImpl(hdc, lpchText, cchText, lprc, format, lpdtp); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawDrawTextExW(hdc, lpchText, cchText, lprc, format, lpdtp); }
+		}
+
 
 		bool HookDrawTextExW()
 		{
@@ -1871,8 +1988,8 @@
 
 		static pPolyTextOutA rawPolyTextOutA = PolyTextOutA;
 
-		BOOL WINAPI newPolyTextOutA(HDC hdc, const POLYTEXTA* ppt, int nStrings)
-		{
+		BOOL WINAPI newPolyTextOutA_SehImpl(HDC hdc, const POLYTEXTA* ppt, int nStrings)
+{
 			if (!ppt || nStrings <= 0)
 			{
 				return rawPolyTextOutA(hdc, ppt, nStrings);
@@ -1901,6 +2018,12 @@
 			ScopedDrawHdcFontOverride fontOverride(hdc);
 			return rawPolyTextOutA(hdc, texts.data(), nStrings);
 		}
+		BOOL WINAPI newPolyTextOutA(HDC hdc, const POLYTEXTA* ppt, int nStrings)
+		{
+			__try { return newPolyTextOutA_SehImpl(hdc, ppt, nStrings); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawPolyTextOutA(hdc, ppt, nStrings); }
+		}
+
 
 		bool HookPolyTextOutA()
 		{
@@ -1909,8 +2032,8 @@
 
 		static pPolyTextOutW rawPolyTextOutW = PolyTextOutW;
 
-		BOOL WINAPI newPolyTextOutW(HDC hdc, const POLYTEXTW* ppt, int nStrings)
-		{
+		BOOL WINAPI newPolyTextOutW_SehImpl(HDC hdc, const POLYTEXTW* ppt, int nStrings)
+{
 			if (!ppt || nStrings <= 0)
 			{
 				return rawPolyTextOutW(hdc, ppt, nStrings);
@@ -1939,6 +2062,12 @@
 			ScopedDrawHdcFontOverride fontOverride(hdc);
 			return rawPolyTextOutW(hdc, texts.data(), nStrings);
 		}
+		BOOL WINAPI newPolyTextOutW(HDC hdc, const POLYTEXTW* ppt, int nStrings)
+		{
+			__try { return newPolyTextOutW_SehImpl(hdc, ppt, nStrings); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawPolyTextOutW(hdc, ppt, nStrings); }
+		}
+
 
 		bool HookPolyTextOutW()
 		{
@@ -1947,8 +2076,8 @@
 
 		static pTabbedTextOutA rawTabbedTextOutA = TabbedTextOutA;
 
-		LONG WINAPI newTabbedTextOutA(HDC hdc, int x, int y, LPCSTR lpString, int chCount, int nTabPositions, const INT* lpnTabStopPositions, int nTabOrigin)
-		{
+		LONG WINAPI newTabbedTextOutA_SehImpl(HDC hdc, int x, int y, LPCSTR lpString, int chCount, int nTabPositions, const INT* lpnTabStopPositions, int nTabOrigin)
+{
 			int length = chCount == -1 ? (lpString ? (int)strlen(lpString) : 0) : chCount;
 			std::string replaced = ProcessGlyphStageA(lpString, length);
 			ScopedDrawHdcFontOverride fontOverride(hdc);
@@ -1959,6 +2088,12 @@
 			}
 			return rawTabbedTextOutA(hdc, ApplyGlyphOffsetX(x), ApplyGlyphOffsetY(y), lpString, chCount, nTabPositions, lpnTabStopPositions, nTabOrigin);
 		}
+		LONG WINAPI newTabbedTextOutA(HDC hdc, int x, int y, LPCSTR lpString, int chCount, int nTabPositions, const INT* lpnTabStopPositions, int nTabOrigin)
+		{
+			__try { return newTabbedTextOutA_SehImpl(hdc, x, y, lpString, chCount, nTabPositions, lpnTabStopPositions, nTabOrigin); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawTabbedTextOutA(hdc, x, y, lpString, chCount, nTabPositions, lpnTabStopPositions, nTabOrigin); }
+		}
+
 
 		bool HookTabbedTextOutA()
 		{
@@ -1967,8 +2102,8 @@
 
 		static pTabbedTextOutW rawTabbedTextOutW = TabbedTextOutW;
 
-		LONG WINAPI newTabbedTextOutW(HDC hdc, int x, int y, LPCWSTR lpString, int chCount, int nTabPositions, const INT* lpnTabStopPositions, int nTabOrigin)
-		{
+		LONG WINAPI newTabbedTextOutW_SehImpl(HDC hdc, int x, int y, LPCWSTR lpString, int chCount, int nTabPositions, const INT* lpnTabStopPositions, int nTabOrigin)
+{
 			int length = chCount == -1 ? (lpString ? (int)wcslen(lpString) : 0) : chCount;
 			std::wstring replaced = ProcessGlyphStageW(lpString, length);
 			ScopedDrawHdcFontOverride fontOverride(hdc);
@@ -1979,6 +2114,12 @@
 			}
 			return rawTabbedTextOutW(hdc, ApplyGlyphOffsetX(x), ApplyGlyphOffsetY(y), lpString, chCount, nTabPositions, lpnTabStopPositions, nTabOrigin);
 		}
+		LONG WINAPI newTabbedTextOutW(HDC hdc, int x, int y, LPCWSTR lpString, int chCount, int nTabPositions, const INT* lpnTabStopPositions, int nTabOrigin)
+		{
+			__try { return newTabbedTextOutW_SehImpl(hdc, x, y, lpString, chCount, nTabPositions, lpnTabStopPositions, nTabOrigin); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawTabbedTextOutW(hdc, x, y, lpString, chCount, nTabPositions, lpnTabStopPositions, nTabOrigin); }
+		}
+
 
 		bool HookTabbedTextOutW()
 		{
@@ -1987,8 +2128,8 @@
 
 		static pGetTabbedTextExtentA rawGetTabbedTextExtentA = GetTabbedTextExtentA;
 
-		DWORD WINAPI newGetTabbedTextExtentA(HDC hdc, LPCSTR lpString, int chCount, int nTabPositions, const INT* lpnTabStopPositions)
-		{
+		DWORD WINAPI newGetTabbedTextExtentA_SehImpl(HDC hdc, LPCSTR lpString, int chCount, int nTabPositions, const INT* lpnTabStopPositions)
+{
 			int previousExtra = ApplySpacingExtra(hdc);
 			int length = chCount == -1 ? (lpString ? (int)strlen(lpString) : 0) : chCount;
 			std::string replaced = ProcessGlyphStageA(lpString, length);
@@ -2005,6 +2146,12 @@
 			RestoreSpacingExtra(hdc, previousExtra);
 			return ret;
 		}
+		DWORD WINAPI newGetTabbedTextExtentA(HDC hdc, LPCSTR lpString, int chCount, int nTabPositions, const INT* lpnTabStopPositions)
+		{
+			__try { return newGetTabbedTextExtentA_SehImpl(hdc, lpString, chCount, nTabPositions, lpnTabStopPositions); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetTabbedTextExtentA(hdc, lpString, chCount, nTabPositions, lpnTabStopPositions); }
+		}
+
 
 		bool HookGetTabbedTextExtentA()
 		{
@@ -2013,8 +2160,8 @@
 
 		static pGetTabbedTextExtentW rawGetTabbedTextExtentW = GetTabbedTextExtentW;
 
-		DWORD WINAPI newGetTabbedTextExtentW(HDC hdc, LPCWSTR lpString, int chCount, int nTabPositions, const INT* lpnTabStopPositions)
-		{
+		DWORD WINAPI newGetTabbedTextExtentW_SehImpl(HDC hdc, LPCWSTR lpString, int chCount, int nTabPositions, const INT* lpnTabStopPositions)
+{
 			int previousExtra = ApplySpacingExtra(hdc);
 			int length = chCount == -1 ? (lpString ? (int)wcslen(lpString) : 0) : chCount;
 			std::wstring replaced = ProcessGlyphStageW(lpString, length);
@@ -2031,6 +2178,12 @@
 			RestoreSpacingExtra(hdc, previousExtra);
 			return ret;
 		}
+		DWORD WINAPI newGetTabbedTextExtentW(HDC hdc, LPCWSTR lpString, int chCount, int nTabPositions, const INT* lpnTabStopPositions)
+		{
+			__try { return newGetTabbedTextExtentW_SehImpl(hdc, lpString, chCount, nTabPositions, lpnTabStopPositions); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetTabbedTextExtentW(hdc, lpString, chCount, nTabPositions, lpnTabStopPositions); }
+		}
+
 
 		bool HookGetTabbedTextExtentW()
 		{
@@ -2039,8 +2192,8 @@
 
 		static pGetTextExtentPoint32A rawGetTextExtentPoint32A = GetTextExtentPoint32A;
 
-		BOOL WINAPI newGetTextExtentPoint32A(HDC hdc, LPCSTR lpString, int c, LPSIZE psizl)
-		{
+		BOOL WINAPI newGetTextExtentPoint32A_SehImpl(HDC hdc, LPCSTR lpString, int c, LPSIZE psizl)
+{
 			int previousExtra = ApplySpacingExtra(hdc);
 			LPCSTR safeString = lpString;
 			int safeCount = c;
@@ -2076,6 +2229,12 @@
 			RestoreSpacingExtra(hdc, previousExtra);
 			return ret;
 		}
+		BOOL WINAPI newGetTextExtentPoint32A(HDC hdc, LPCSTR lpString, int c, LPSIZE psizl)
+		{
+			__try { return newGetTextExtentPoint32A_SehImpl(hdc, lpString, c, psizl); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetTextExtentPoint32A(hdc, lpString, c, psizl); }
+		}
+
 
 		bool HookGetTextExtentPoint32A()
 		{
@@ -2099,8 +2258,8 @@
 			return rawGetTextExtentPoint32W(hdc, glyphStage.mappedWide.c_str(), (int)glyphStage.mappedWide.length(), psizl);
 		}
 
-		BOOL WINAPI newGetTextExtentPoint32W(HDC hdc, LPCWSTR lpString, int c, LPSIZE psizl)
-		{
+		BOOL WINAPI newGetTextExtentPoint32W_SehImpl(HDC hdc, LPCWSTR lpString, int c, LPSIZE psizl)
+{
 			int previousExtra = ApplySpacingExtra(hdc);
 			int length = c == -1 ? (lpString ? (int)wcslen(lpString) : 0) : c;
 			std::wstring replaced = ProcessGlyphStageW(lpString, length);
@@ -2118,6 +2277,12 @@
 			RestoreSpacingExtra(hdc, previousExtra);
 			return ret;
 		}
+		BOOL WINAPI newGetTextExtentPoint32W(HDC hdc, LPCWSTR lpString, int c, LPSIZE psizl)
+		{
+			__try { return newGetTextExtentPoint32W_SehImpl(hdc, lpString, c, psizl); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetTextExtentPoint32W(hdc, lpString, c, psizl); }
+		}
+
 
 		bool HookGetTextExtentPoint32W()
 		{
@@ -2126,8 +2291,8 @@
 
 		static pGetTextExtentExPointA rawGetTextExtentExPointA = GetTextExtentExPointA;
 
-		BOOL WINAPI newGetTextExtentExPointA(HDC hdc, LPCSTR lpszStr, int cchString, int nMaxExtent, LPINT lpnFit, LPINT lpnDx, LPSIZE lpSize)
-		{
+		BOOL WINAPI newGetTextExtentExPointA_SehImpl(HDC hdc, LPCSTR lpszStr, int cchString, int nMaxExtent, LPINT lpnFit, LPINT lpnDx, LPSIZE lpSize)
+{
 			int previousExtra = ApplySpacingExtra(hdc);
 			int length = cchString == -1 ? (lpszStr ? (int)strlen(lpszStr) : 0) : cchString;
 			BOOL handled = FALSE;
@@ -2152,6 +2317,12 @@
 			RestoreSpacingExtra(hdc, previousExtra);
 			return ret;
 		}
+		BOOL WINAPI newGetTextExtentExPointA(HDC hdc, LPCSTR lpszStr, int cchString, int nMaxExtent, LPINT lpnFit, LPINT lpnDx, LPSIZE lpSize)
+		{
+			__try { return newGetTextExtentExPointA_SehImpl(hdc, lpszStr, cchString, nMaxExtent, lpnFit, lpnDx, lpSize); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetTextExtentExPointA(hdc, lpszStr, cchString, nMaxExtent, lpnFit, lpnDx, lpSize); }
+		}
+
 
 		bool HookGetTextExtentExPointA()
 		{
@@ -2230,8 +2401,8 @@
 			return ret;
 		}
 
-		BOOL WINAPI newGetTextExtentExPointW(HDC hdc, LPCWSTR lpszStr, int cchString, int nMaxExtent, LPINT lpnFit, LPINT lpnDx, LPSIZE lpSize)
-		{
+		BOOL WINAPI newGetTextExtentExPointW_SehImpl(HDC hdc, LPCWSTR lpszStr, int cchString, int nMaxExtent, LPINT lpnFit, LPINT lpnDx, LPSIZE lpSize)
+{
 			int previousExtra = ApplySpacingExtra(hdc);
 			int length = cchString == -1 ? (lpszStr ? (int)wcslen(lpszStr) : 0) : cchString;
 			std::wstring replaced = ProcessGlyphStageW(lpszStr, length);
@@ -2249,6 +2420,12 @@
 			RestoreSpacingExtra(hdc, previousExtra);
 			return ret;
 		}
+		BOOL WINAPI newGetTextExtentExPointW(HDC hdc, LPCWSTR lpszStr, int cchString, int nMaxExtent, LPINT lpnFit, LPINT lpnDx, LPSIZE lpSize)
+		{
+			__try { return newGetTextExtentExPointW_SehImpl(hdc, lpszStr, cchString, nMaxExtent, lpnFit, lpnDx, lpSize); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetTextExtentExPointW(hdc, lpszStr, cchString, nMaxExtent, lpnFit, lpnDx, lpSize); }
+		}
+
 
 		bool HookGetTextExtentExPointW()
 		{
@@ -2257,8 +2434,8 @@
 
 		static pGetTextExtentPointA rawGetTextExtentPointA = GetTextExtentPointA;
 
-		BOOL WINAPI newGetTextExtentPointA(HDC hdc, LPCSTR lpString, int c, LPSIZE lpsz)
-		{
+		BOOL WINAPI newGetTextExtentPointA_SehImpl(HDC hdc, LPCSTR lpString, int c, LPSIZE lpsz)
+{
 			int previousExtra = ApplySpacingExtra(hdc);
 			int length = c == -1 ? (lpString ? (int)strlen(lpString) : 0) : c;
 			BOOL handled = FALSE;
@@ -2283,6 +2460,12 @@
 			RestoreSpacingExtra(hdc, previousExtra);
 			return ret;
 		}
+		BOOL WINAPI newGetTextExtentPointA(HDC hdc, LPCSTR lpString, int c, LPSIZE lpsz)
+		{
+			__try { return newGetTextExtentPointA_SehImpl(hdc, lpString, c, lpsz); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetTextExtentPointA(hdc, lpString, c, lpsz); }
+		}
+
 
 		bool HookGetTextExtentPointA()
 		{
@@ -2306,8 +2489,8 @@
 			return rawGetTextExtentPointW(hdc, glyphStage.mappedWide.c_str(), (int)glyphStage.mappedWide.length(), lpsz);
 		}
 
-		BOOL WINAPI newGetTextExtentPointW(HDC hdc, LPCWSTR lpString, int c, LPSIZE lpsz)
-		{
+		BOOL WINAPI newGetTextExtentPointW_SehImpl(HDC hdc, LPCWSTR lpString, int c, LPSIZE lpsz)
+{
 			int previousExtra = ApplySpacingExtra(hdc);
 			int length = c == -1 ? (lpString ? (int)wcslen(lpString) : 0) : c;
 			std::wstring replaced = ProcessGlyphStageW(lpString, length);
@@ -2325,6 +2508,12 @@
 			RestoreSpacingExtra(hdc, previousExtra);
 			return ret;
 		}
+		BOOL WINAPI newGetTextExtentPointW(HDC hdc, LPCWSTR lpString, int c, LPSIZE lpsz)
+		{
+			__try { return newGetTextExtentPointW_SehImpl(hdc, lpString, c, lpsz); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetTextExtentPointW(hdc, lpString, c, lpsz); }
+		}
+
 
 		bool HookGetTextExtentPointW()
 		{
@@ -2333,8 +2522,8 @@
 
 		static pGetCharacterPlacementA rawGetCharacterPlacementA = GetCharacterPlacementA;
 
-		DWORD WINAPI newGetCharacterPlacementA(HDC hdc, LPCSTR lpString, int nCount, int nMaxExtent, LPGCP_RESULTSA lpResults, DWORD dwFlags)
-		{
+		DWORD WINAPI newGetCharacterPlacementA_SehImpl(HDC hdc, LPCSTR lpString, int nCount, int nMaxExtent, LPGCP_RESULTSA lpResults, DWORD dwFlags)
+{
 			int length = nCount == -1 ? (lpString ? (int)strlen(lpString) : 0) : nCount;
 			std::string replaced = ProcessGlyphStageA(lpString, length);
 			ScopedDrawHdcFontOverride fontOverride(hdc);
@@ -2345,6 +2534,12 @@
 			}
 			return rawGetCharacterPlacementA(hdc, lpString, nCount, nMaxExtent, lpResults, dwFlags);
 		}
+		DWORD WINAPI newGetCharacterPlacementA(HDC hdc, LPCSTR lpString, int nCount, int nMaxExtent, LPGCP_RESULTSA lpResults, DWORD dwFlags)
+		{
+			__try { return newGetCharacterPlacementA_SehImpl(hdc, lpString, nCount, nMaxExtent, lpResults, dwFlags); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetCharacterPlacementA(hdc, lpString, nCount, nMaxExtent, lpResults, dwFlags); }
+		}
+
 
 		bool HookGetCharacterPlacementA()
 		{
@@ -2353,8 +2548,8 @@
 
 		static pGetCharacterPlacementW rawGetCharacterPlacementW = GetCharacterPlacementW;
 
-		DWORD WINAPI newGetCharacterPlacementW(HDC hdc, LPCWSTR lpString, int nCount, int nMaxExtent, LPGCP_RESULTSW lpResults, DWORD dwFlags)
-		{
+		DWORD WINAPI newGetCharacterPlacementW_SehImpl(HDC hdc, LPCWSTR lpString, int nCount, int nMaxExtent, LPGCP_RESULTSW lpResults, DWORD dwFlags)
+{
 			int length = nCount == -1 ? (lpString ? (int)wcslen(lpString) : 0) : nCount;
 			std::wstring replaced = ProcessGlyphStageW(lpString, length);
 			ScopedDrawHdcFontOverride fontOverride(hdc);
@@ -2365,6 +2560,12 @@
 			}
 			return rawGetCharacterPlacementW(hdc, lpString, nCount, nMaxExtent, lpResults, dwFlags);
 		}
+		DWORD WINAPI newGetCharacterPlacementW(HDC hdc, LPCWSTR lpString, int nCount, int nMaxExtent, LPGCP_RESULTSW lpResults, DWORD dwFlags)
+		{
+			__try { return newGetCharacterPlacementW_SehImpl(hdc, lpString, nCount, nMaxExtent, lpResults, dwFlags); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetCharacterPlacementW(hdc, lpString, nCount, nMaxExtent, lpResults, dwFlags); }
+		}
+
 
 		bool HookGetCharacterPlacementW()
 		{
@@ -2373,8 +2574,8 @@
 
 		static pGetGlyphIndicesA rawGetGlyphIndicesA = GetGlyphIndicesA;
 
-		DWORD WINAPI newGetGlyphIndicesA(HDC hdc, LPCSTR lpstr, int c, LPWORD pgi, DWORD fl)
-		{
+		DWORD WINAPI newGetGlyphIndicesA_SehImpl(HDC hdc, LPCSTR lpstr, int c, LPWORD pgi, DWORD fl)
+{
 			int length = c == -1 ? (lpstr ? (int)strlen(lpstr) : 0) : c;
 			std::string replaced = ProcessGlyphStageA(lpstr, length);
 			ScopedDrawHdcFontOverride fontOverride(hdc);
@@ -2385,14 +2586,20 @@
 			}
 			return rawGetGlyphIndicesA(hdc, lpstr, c, pgi, fl);
 		}
+		DWORD WINAPI newGetGlyphIndicesA(HDC hdc, LPCSTR lpstr, int c, LPWORD pgi, DWORD fl)
+		{
+			__try { return newGetGlyphIndicesA_SehImpl(hdc, lpstr, c, pgi, fl); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetGlyphIndicesA(hdc, lpstr, c, pgi, fl); }
+		}
+
 
 		bool HookGetGlyphIndicesA()
 		{
 			return !TryDetourAttach(&rawGetGlyphIndicesA, newGetGlyphIndicesA);
 		}
 
-		DWORD WINAPI newGetGlyphIndicesW(HDC hdc, LPCWSTR lpstr, int c, LPWORD pgi, DWORD fl)
-		{
+		DWORD WINAPI newGetGlyphIndicesW_SehImpl(HDC hdc, LPCWSTR lpstr, int c, LPWORD pgi, DWORD fl)
+{
 			int length = c == -1 ? (lpstr ? (int)wcslen(lpstr) : 0) : c;
 			std::wstring replaced = ProcessGlyphStageW(lpstr, length);
 			ScopedDrawHdcFontOverride fontOverride(hdc);
@@ -2403,6 +2610,12 @@
 			}
 			return rawGetGlyphIndicesW(hdc, lpstr, c, pgi, fl);
 		}
+		DWORD WINAPI newGetGlyphIndicesW(HDC hdc, LPCWSTR lpstr, int c, LPWORD pgi, DWORD fl)
+		{
+			__try { return newGetGlyphIndicesW_SehImpl(hdc, lpstr, c, pgi, fl); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetGlyphIndicesW(hdc, lpstr, c, pgi, fl); }
+		}
+
 
 		bool HookGetGlyphIndicesW()
 		{
@@ -2414,8 +2627,8 @@
 		// 存储字符映射缓存，避免重复转换
 		static std::map<UINT, UINT> sg_mapCharReplaceCache;
 
-		DWORD WINAPI newGetGlyphOutlineA(HDC hdc, UINT uChar, UINT fuFormat, LPGLYPHMETRICS lpgm, DWORD cjBuffer, LPVOID pvBuffer, const MAT2* lpmat2)
-		{
+		DWORD WINAPI newGetGlyphOutlineA_SehImpl(HDC hdc, UINT uChar, UINT fuFormat, LPGLYPHMETRICS lpgm, DWORD cjBuffer, LPVOID pvBuffer, const MAT2* lpmat2)
+{
 			HFONT hOld = nullptr;
 			HFONT hNew = ReplaceHdcFont(hdc, &hOld);
 			DWORD ret = 0;
@@ -2515,6 +2728,12 @@
 			RestoreHdcFont(hdc, hOld, hNew);
 			return ret;
 		}
+		DWORD WINAPI newGetGlyphOutlineA(HDC hdc, UINT uChar, UINT fuFormat, LPGLYPHMETRICS lpgm, DWORD cjBuffer, LPVOID pvBuffer, const MAT2* lpmat2)
+		{
+			__try { return newGetGlyphOutlineA_SehImpl(hdc, uChar, fuFormat, lpgm, cjBuffer, pvBuffer, lpmat2); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetGlyphOutlineA(hdc, uChar, fuFormat, lpgm, cjBuffer, pvBuffer, lpmat2); }
+		}
+
 
 		bool HookGetGlyphOutlineA()
 		{
@@ -2557,8 +2776,8 @@
 			return rawGetGlyphOutlineW(hdc, (UINT)glyphStage.mappedWide[0], fuFormat, lpgm, cjBuffer, pvBuffer, lpmat2);
 		}
 
-		DWORD WINAPI newGetGlyphOutlineW(HDC hdc, UINT uChar, UINT fuFormat, LPGLYPHMETRICS lpgm, DWORD cjBuffer, LPVOID pvBuffer, const MAT2* lpmat2)
-		{
+		DWORD WINAPI newGetGlyphOutlineW_SehImpl(HDC hdc, UINT uChar, UINT fuFormat, LPGLYPHMETRICS lpgm, DWORD cjBuffer, LPVOID pvBuffer, const MAT2* lpmat2)
+{
 			HFONT hOld = nullptr;
 			HFONT hNew = ReplaceHdcFont(hdc, &hOld);
 			DWORD ret = 0;
@@ -2611,6 +2830,12 @@
 			RestoreHdcFont(hdc, hOld, hNew);
 			return ret;
 		}
+		DWORD WINAPI newGetGlyphOutlineW(HDC hdc, UINT uChar, UINT fuFormat, LPGLYPHMETRICS lpgm, DWORD cjBuffer, LPVOID pvBuffer, const MAT2* lpmat2)
+		{
+			__try { return newGetGlyphOutlineW_SehImpl(hdc, uChar, fuFormat, lpgm, cjBuffer, pvBuffer, lpmat2); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetGlyphOutlineW(hdc, uChar, fuFormat, lpgm, cjBuffer, pvBuffer, lpmat2); }
+		}
+
 
 		bool HookGetGlyphOutlineW()
 		{

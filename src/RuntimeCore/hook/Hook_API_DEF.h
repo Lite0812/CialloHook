@@ -1,6 +1,11 @@
 #pragma once
 #include <Windows.h>
 #include <commdlg.h>
+#include <commctrl.h>
+#include <uxtheme.h>
+#include <d2d1.h>
+#include <d2d1_1.h>
+#include <dwrite.h>
 #include <shlobj_core.h>
 
 
@@ -127,6 +132,9 @@ typedef HMODULE(WINAPI* pLoadLibraryW)(LPCWSTR lpLibFileName);
 typedef HMODULE(WINAPI* pLoadLibraryExW)(LPCWSTR lpLibFileName, HANDLE hFile, DWORD dwFlags);
 
 typedef HRESULT(WINAPI* pDWriteCreateFactory)(UINT factoryType, REFIID iid, IUnknown** factory);
+typedef HRESULT(WINAPI* pD2D1CreateFactory)(D2D1_FACTORY_TYPE factoryType, REFIID riid, const D2D1_FACTORY_OPTIONS* pFactoryOptions, void** ppIFactory);
+typedef HRESULT(WINAPI* pD2D1CreateDevice)(IDXGIDevice* dxgiDevice, const D2D1_CREATION_PROPERTIES* creationProperties, void** d2dDevice);
+typedef HRESULT(WINAPI* pD2D1CreateDeviceContext)(IDXGISurface* dxgiSurface, const D2D1_CREATION_PROPERTIES* creationProperties, void** d2dDeviceContext);
 
 typedef HRESULT(__stdcall* pDWriteFactoryCreateTextFormat)(void* factory,
 	LPCWSTR fontFamilyName,
@@ -137,6 +145,33 @@ typedef HRESULT(__stdcall* pDWriteFactoryCreateTextFormat)(void* factory,
 	float fontSize,
 	LPCWSTR localeName,
 	void** textFormat);
+typedef HRESULT(__stdcall* pDWriteFactoryCreateTextLayout)(void* factory,
+	const WCHAR* string,
+	UINT32 stringLength,
+	void* textFormat,
+	float maxWidth,
+	float maxHeight,
+	void** textLayout);
+typedef HRESULT(__stdcall* pDWriteFactoryCreateGdiCompatibleTextLayout)(void* factory,
+	const WCHAR* string,
+	UINT32 stringLength,
+	void* textFormat,
+	float layoutWidth,
+	float layoutHeight,
+	float pixelsPerDip,
+	const void* transform,
+	BOOL useGdiNatural,
+	void** textLayout);
+typedef HRESULT(__stdcall* pDWriteTextLayoutSetFontFamilyName)(void* textLayout, LPCWSTR fontFamilyName, DWRITE_TEXT_RANGE textRange);
+typedef HRESULT(__stdcall* pDWriteTextLayoutSetFontSize)(void* textLayout, FLOAT fontSize, DWRITE_TEXT_RANGE textRange);
+typedef HRESULT(__stdcall* pD2D1FactoryCreateHwndRenderTarget)(void* factory, const D2D1_RENDER_TARGET_PROPERTIES* renderTargetProperties, const D2D1_HWND_RENDER_TARGET_PROPERTIES* hwndRenderTargetProperties, void** hwndRenderTarget);
+typedef HRESULT(__stdcall* pD2D1FactoryCreateDxgiSurfaceRenderTarget)(void* factory, IDXGISurface* dxgiSurface, const D2D1_RENDER_TARGET_PROPERTIES* renderTargetProperties, void** renderTarget);
+typedef HRESULT(__stdcall* pD2D1FactoryCreateDCRenderTarget)(void* factory, const D2D1_RENDER_TARGET_PROPERTIES* renderTargetProperties, void** dcRenderTarget);
+typedef HRESULT(__stdcall* pD2D1FactoryCreateWicBitmapRenderTarget)(void* factory, IWICBitmap* target, const D2D1_RENDER_TARGET_PROPERTIES* renderTargetProperties, void** renderTarget);
+typedef HRESULT(__stdcall* pD2D1Factory1CreateDevice)(void* factory, IDXGIDevice* dxgiDevice, void** d2dDevice);
+typedef HRESULT(__stdcall* pD2D1DeviceCreateDeviceContext)(void* device, D2D1_DEVICE_CONTEXT_OPTIONS options, void** deviceContext);
+typedef void(__stdcall* pD2D1RenderTargetDrawText)(void* renderTarget, const WCHAR* string, UINT32 stringLength, void* textFormat, const D2D1_RECT_F* layoutRect, void* defaultFillBrush, D2D1_DRAW_TEXT_OPTIONS options, DWRITE_MEASURING_MODE measuringMode);
+typedef void(__stdcall* pD2D1RenderTargetDrawTextLayout)(void* renderTarget, D2D1_POINT_2F origin, void* textLayout, void* defaultFillBrush, D2D1_DRAW_TEXT_OPTIONS options);
 
 typedef int (WINAPI* pGdipCreateFontFamilyFromName)(LPCWSTR name, void* fontCollection, void** fontFamily);
 
@@ -216,6 +251,8 @@ typedef HWND(WINAPI* pCreateWindowExA)(DWORD dwExStyle, LPCSTR lpClassName, LPCS
 
 typedef HWND(WINAPI* pCreateWindowExW)(DWORD dwExStyle, LPCWSTR lpClassName, LPCWSTR lpWindowName, DWORD dwStyle, int X, int Y, int nWidth, int nHeight, HWND hWndParent, HMENU hMenu, HINSTANCE hInstance, LPVOID lpParam);
 
+typedef LRESULT(WINAPI* pDefWindowProcA)(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam);
+typedef LRESULT(WINAPI* pDefWindowProcW)(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam);
 typedef BOOL(WINAPI* pSetWindowTextA)(HWND hWnd, LPCSTR lpString);
 
 typedef BOOL(WINAPI* pSetWindowTextW)(HWND hWnd, LPCWSTR lpString);
@@ -225,6 +262,29 @@ typedef BOOL(WINAPI* pShowWindow)(HWND hWnd, int nCmdShow);
 typedef BOOL(WINAPI* pShowWindowAsync)(HWND hWnd, int nCmdShow);
 
 typedef BOOL(WINAPI* pSetWindowPos)(HWND hWnd, HWND hWndInsertAfter, int X, int Y, int cx, int cy, UINT uFlags);
+typedef BOOL(WINAPI* pSetDlgItemTextA)(HWND hDlg, int nIDDlgItem, LPCSTR lpString);
+typedef LRESULT(WINAPI* pSendDlgItemMessageA)(HWND hDlg, int nIDDlgItem, UINT Msg, WPARAM wParam, LPARAM lParam);
+typedef LRESULT(WINAPI* pSendDlgItemMessageW)(HWND hDlg, int nIDDlgItem, UINT Msg, WPARAM wParam, LPARAM lParam);
+typedef LRESULT(WINAPI* pSendMessageA)(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam);
+typedef LRESULT(WINAPI* pSendMessageW)(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam);
+typedef BOOL(WINAPI* pAppendMenuA)(HMENU hMenu, UINT uFlags, UINT_PTR uIDNewItem, LPCSTR lpNewItem);
+typedef BOOL(WINAPI* pModifyMenuA)(HMENU hMnu, UINT uPosition, UINT uFlags, UINT_PTR uIDNewItem, LPCSTR lpNewItem);
+typedef BOOL(WINAPI* pInsertMenuA)(HMENU hMenu, UINT uPosition, UINT uFlags, UINT_PTR uIDNewItem, LPCSTR lpNewItem);
+typedef BOOL(WINAPI* pInsertMenuItemA)(HMENU hmenu, UINT item, BOOL fByPosition, LPCMENUITEMINFOA lpmi);
+typedef BOOL(WINAPI* pSetMenuItemInfoA)(HMENU hmenu, UINT item, BOOL fByPositon, LPCMENUITEMINFOA lpmii);
+typedef INT_PTR(WINAPI* pDialogBoxParamA)(HINSTANCE hInstance, LPCSTR lpTemplateName, HWND hWndParent, DLGPROC lpDialogFunc, LPARAM dwInitParam);
+typedef INT_PTR(WINAPI* pDialogBoxParamW)(HINSTANCE hInstance, LPCWSTR lpTemplateName, HWND hWndParent, DLGPROC lpDialogFunc, LPARAM dwInitParam);
+typedef HWND(WINAPI* pCreateDialogParamA)(HINSTANCE hInstance, LPCSTR lpTemplateName, HWND hWndParent, DLGPROC lpDialogFunc, LPARAM dwInitParam);
+typedef HWND(WINAPI* pCreateDialogParamW)(HINSTANCE hInstance, LPCWSTR lpTemplateName, HWND hWndParent, DLGPROC lpDialogFunc, LPARAM dwInitParam);
+typedef INT_PTR(WINAPI* pDialogBoxIndirectParamA)(HINSTANCE hInstance, LPCDLGTEMPLATEA hDialogTemplate, HWND hWndParent, DLGPROC lpDialogFunc, LPARAM dwInitParam);
+typedef INT_PTR(WINAPI* pDialogBoxIndirectParamW)(HINSTANCE hInstance, LPCDLGTEMPLATEW hDialogTemplate, HWND hWndParent, DLGPROC lpDialogFunc, LPARAM dwInitParam);
+typedef HWND(WINAPI* pCreateDialogIndirectParamA)(HINSTANCE hInstance, LPCDLGTEMPLATEA lpTemplate, HWND hWndParent, DLGPROC lpDialogFunc, LPARAM dwInitParam);
+typedef HWND(WINAPI* pCreateDialogIndirectParamW)(HINSTANCE hInstance, LPCDLGTEMPLATEW lpTemplate, HWND hWndParent, DLGPROC lpDialogFunc, LPARAM dwInitParam);
+typedef INT(WINAPI* pMessageBoxIndirectA)(const MSGBOXPARAMSA* lpmbp);
+typedef HRESULT(WINAPI* pDrawThemeText)(HTHEME hTheme, HDC hdc, int iPartId, int iStateId, LPCWSTR pszText, int iCharCount, DWORD dwTextFlags, DWORD dwTextFlags2, const RECT* pRect);
+typedef HRESULT(WINAPI* pDrawThemeTextEx)(HTHEME hTheme, HDC hdc, int iPartId, int iStateId, LPCWSTR pszText, int iCharCount, DWORD dwTextFlags, LPRECT pRect, const DTTOPTS* pOptions);
+typedef INT_PTR(WINAPI* pPropertySheetA)(LPCPROPSHEETHEADERA lppsh);
+typedef VOID(WINAPI* pExitProcess)(UINT uExitCode);
 
 // 文件热补丁相关API类型定义
 typedef HANDLE(WINAPI* pCreateFileA_File)(LPCSTR lpFileName, DWORD dwDesiredAccess, DWORD dwShareMode, LPSECURITY_ATTRIBUTES lpSecurityAttributes, DWORD dwCreationDisposition, DWORD dwFlagsAndAttributes, HANDLE hTemplateFile);

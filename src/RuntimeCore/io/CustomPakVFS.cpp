@@ -391,6 +391,43 @@ namespace Rut
 				return !relativePath.empty();
 			}
 
+			static bool BuildRelativePathAllowRoot(const std::wstring& gameDir, const std::wstring& gameDirLower, const wchar_t* originalPath, std::wstring& relativePath)
+			{
+				relativePath.clear();
+				if (!originalPath)
+				{
+					return false;
+				}
+				std::wstring source = NormalizeSlashesW(originalPath);
+				if (source.empty() || source == L"." || source == L"\\")
+				{
+					return true;
+				}
+				bool isAbs = IsAbsPath(source);
+				if (!isAbs)
+				{
+					relativePath = source;
+				}
+				else
+				{
+					std::wstring sourceLower = ToLowerCopyW(source);
+					if (!StartsWithNoCase(sourceLower, gameDirLower))
+					{
+						return false;
+					}
+					relativePath = source.substr(gameDir.size());
+				}
+				while (!relativePath.empty() && (relativePath[0] == L'.' || relativePath[0] == L'\\'))
+				{
+					relativePath.erase(relativePath.begin());
+				}
+				while (!relativePath.empty() && relativePath.back() == L'\\')
+				{
+					relativePath.pop_back();
+				}
+				return true;
+			}
+
 			static std::string WToUtf8(const std::wstring& ws)
 			{
 				if (ws.empty())
@@ -1620,6 +1657,62 @@ namespace Rut
 				return &itHash->second;
 			}
 
+			static bool CollectArchiveDirectoryEntries(const PakArchive& archive, const std::wstring& relativeDirectory, std::unordered_map<std::wstring, CustomPakVFSDirectoryEntry>& outEntries)
+			{
+				if (archive.format != PakArchiveFormat::Xp3)
+				{
+					return false;
+				}
+				std::wstring normalizedDir = NormalizeXp3EntryPath(relativeDirectory);
+				std::wstring prefix = normalizedDir.empty() ? L"" : (normalizedDir + L"\\");
+				bool found = false;
+				for (const auto& pair : archive.pathEntries)
+				{
+					const std::wstring& entryPath = pair.first;
+					if (!prefix.empty())
+					{
+						if (!StartsWithNoCase(entryPath, prefix))
+						{
+							continue;
+						}
+					}
+					else if (entryPath.empty())
+					{
+						continue;
+					}
+					std::wstring remainder = prefix.empty() ? entryPath : entryPath.substr(prefix.size());
+					if (remainder.empty())
+					{
+						continue;
+					}
+					size_t sep = remainder.find(L'\\');
+					CustomPakVFSDirectoryEntry child = {};
+					if (sep == std::wstring::npos)
+					{
+						child.name = remainder;
+						child.isDirectory = false;
+						child.size = pair.second.origSize;
+					}
+					else
+					{
+						child.name = remainder.substr(0, sep);
+						child.isDirectory = true;
+						child.size = 0;
+					}
+					if (child.name.empty())
+					{
+						continue;
+					}
+					std::wstring key = ToLowerCopyW(child.name);
+					if (outEntries.find(key) == outEntries.end())
+					{
+						outEntries.emplace(std::move(key), std::move(child));
+					}
+					found = true;
+				}
+				return found;
+			}
+
 			static bool SplitArchiveChainPath(const std::wstring& archivePath, std::wstring& outerArchivePath, std::vector<std::wstring>& nestedArchivePaths)
 			{
 				outerArchivePath.clear();
@@ -2102,7 +2195,78 @@ namespace Rut
 			return ok;
 		}
 
-		bool IsCustomPakArchivePath(const wchar_t* path)
+					static bool EnumerateCustomPakVFSDirectoryLocked(const wchar_t* directoryPath, std::vector<CustomPakVFSDirectoryEntry>& outEntries)
+			{
+				outEntries.clear();
+				if (!sg_enabled)
+				{
+					return false;
+				}
+				std::wstring relativeDirectory;
+				if (!BuildRelativePathAllowRoot(sg_gameDir, sg_gameDirLower, directoryPath, relativeDirectory))
+				{
+					return false;
+				}
+				relativeDirectory = NormalizeXp3EntryPath(relativeDirectory);
+				std::unordered_map<std::wstring, CustomPakVFSDirectoryEntry> mergedEntries;
+				for (size_t idx = sg_archives.size(); idx > 0; --idx)
+				{
+					PakArchive& archive = sg_archives[idx - 1];
+					if (!EnsureArchiveIndexLoaded(archive))
+					{
+						continue;
+					}
+					CollectArchiveDirectoryEntries(archive, relativeDirectory, mergedEntries);
+				}
+				if (mergedEntries.empty())
+				{
+					return false;
+				}
+				outEntries.reserve(mergedEntries.size());
+				for (auto& pair : mergedEntries)
+				{
+					outEntries.push_back(std::move(pair.second));
+				}
+				std::sort(outEntries.begin(), outEntries.end(), [](const CustomPakVFSDirectoryEntry& a, const CustomPakVFSDirectoryEntry& b)
+					{
+						return _wcsicmp(a.name.c_str(), b.name.c_str()) < 0;
+					});
+				return true;
+			}
+
+			bool QueryCustomPakVFSPathInfo(const wchar_t* originalPath, bool& isDirectory, uint64_t& outSize)
+			{
+				isDirectory = false;
+				outSize = 0;
+				EnsureLock();
+				EnterCriticalSection(&sg_lock);
+				if (ResolveCustomPakVFSFileSizeLocked(originalPath, outSize))
+				{
+					LeaveCriticalSection(&sg_lock);
+					return true;
+				}
+				std::vector<CustomPakVFSDirectoryEntry> entries;
+				bool foundDirectory = EnumerateCustomPakVFSDirectoryLocked(originalPath, entries);
+				LeaveCriticalSection(&sg_lock);
+				if (foundDirectory)
+				{
+					isDirectory = true;
+					outSize = 0;
+					return true;
+				}
+				return false;
+			}
+
+			bool EnumerateCustomPakVFSDirectory(const wchar_t* directoryPath, std::vector<CustomPakVFSDirectoryEntry>& outEntries)
+			{
+				EnsureLock();
+				EnterCriticalSection(&sg_lock);
+				bool ok = EnumerateCustomPakVFSDirectoryLocked(directoryPath, outEntries);
+				LeaveCriticalSection(&sg_lock);
+				return ok;
+			}
+
+bool IsCustomPakArchivePath(const wchar_t* path)
 		{
 			if (!path || path[0] == L'\0')
 			{

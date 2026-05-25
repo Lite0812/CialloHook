@@ -3,6 +3,7 @@
 
 extern "C" __declspec(dllexport) int HookFontWinMMExportAnchor = 1;
 
+#ifndef _WIN64
 using Fn_mciGetErrorStringA = decltype(&mciGetErrorStringA);
 using Fn_mciGetErrorStringW = decltype(&mciGetErrorStringW);
 using Fn_mciSendCommandA = decltype(&mciSendCommandA);
@@ -148,6 +149,80 @@ static Fn_waveOutRestart g_waveOutRestart = nullptr;
 static Fn_waveOutSetVolume g_waveOutSetVolume = nullptr;
 static Fn_waveOutUnprepareHeader g_waveOutUnprepareHeader = nullptr;
 static Fn_waveOutWrite g_waveOutWrite = nullptr;
+#endif
+
+#define BASE_WINMM_EXPORTS(X) \
+	X(mciGetErrorStringA) \
+	X(mciGetErrorStringW) \
+	X(mciSendCommandA) \
+	X(mciSendCommandW) \
+	X(mciSendStringA) \
+	X(mciSendStringW) \
+	X(midiOutClose) \
+	X(midiOutGetNumDevs) \
+	X(midiOutLongMsg) \
+	X(midiOutMessage) \
+	X(midiOutOpen) \
+	X(midiOutPrepareHeader) \
+	X(midiOutReset) \
+	X(midiOutSetVolume) \
+	X(midiOutShortMsg) \
+	X(midiOutUnprepareHeader) \
+	X(midiInAddBuffer) \
+	X(midiInClose) \
+	X(midiInGetNumDevs) \
+	X(midiInMessage) \
+	X(midiInOpen) \
+	X(midiInPrepareHeader) \
+	X(midiInReset) \
+	X(midiInStart) \
+	X(midiInStop) \
+	X(midiInUnprepareHeader) \
+	X(mixerClose) \
+	X(mixerGetControlDetailsA) \
+	X(mixerGetControlDetailsW) \
+	X(mixerGetDevCapsA) \
+	X(mixerGetDevCapsW) \
+	X(mixerGetLineControlsA) \
+	X(mixerGetLineControlsW) \
+	X(mixerGetLineInfoA) \
+	X(mixerGetLineInfoW) \
+	X(mixerGetNumDevs) \
+	X(mixerMessage) \
+	X(mixerOpen) \
+	X(mixerSetControlDetails) \
+	X(timeBeginPeriod) \
+	X(timeEndPeriod) \
+	X(timeGetDevCaps) \
+	X(timeGetSystemTime) \
+	X(timeGetTime) \
+	X(timeKillEvent) \
+	X(timeSetEvent) \
+	X(waveInAddBuffer) \
+	X(waveInClose) \
+	X(waveInGetNumDevs) \
+	X(waveInGetPosition) \
+	X(waveInMessage) \
+	X(waveInOpen) \
+	X(waveInPrepareHeader) \
+	X(waveInReset) \
+	X(waveInStart) \
+	X(waveInStop) \
+	X(waveInUnprepareHeader) \
+	X(waveOutBreakLoop) \
+	X(waveOutClose) \
+	X(waveOutGetNumDevs) \
+	X(waveOutGetPosition) \
+	X(waveOutGetVolume) \
+	X(waveOutMessage) \
+	X(waveOutOpen) \
+	X(waveOutPause) \
+	X(waveOutPrepareHeader) \
+	X(waveOutReset) \
+	X(waveOutRestart) \
+	X(waveOutSetVolume) \
+	X(waveOutUnprepareHeader) \
+	X(waveOutWrite)
 
 #define FORWARDED_WINMM_EXPORTS(X) \
 	X(mciExecute) \
@@ -294,6 +369,7 @@ extern "C" __declspec(naked) void __cdecl HookFont_Ordinal2()
 #undef DEFINE_FORWARD_STUB
 #endif
 
+#ifndef _WIN64
 static BOOL CALLBACK InitRealWinmm(PINIT_ONCE, PVOID, PVOID*)
 {
 	wchar_t realDllPath[MAX_PATH] = {};
@@ -846,83 +922,13 @@ extern "C" MMRESULT WINAPI HookFont_waveOutWrite(HWAVEOUT hwo, LPWAVEHDR pwh, UI
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_waveOutWrite(hwo, pwh, cbwh);
 }
+#endif
 
 #ifdef _WIN64
 #define EXPORT_FORWARD_WINMM(fn) __pragma(comment(linker, "/EXPORT:" #fn "=C:\\Windows\\System32\\winmm." #fn))
 FORWARDED_WINMM_EXPORTS(EXPORT_FORWARD_WINMM)
+BASE_WINMM_EXPORTS(EXPORT_FORWARD_WINMM)
 #undef EXPORT_FORWARD_WINMM
-
-#pragma comment(linker, "/EXPORT:mciGetErrorStringA=HookFont_mciGetErrorStringA")
-#pragma comment(linker, "/EXPORT:mciGetErrorStringW=HookFont_mciGetErrorStringW")
-#pragma comment(linker, "/EXPORT:mciSendCommandA=HookFont_mciSendCommandA")
-#pragma comment(linker, "/EXPORT:mciSendCommandW=HookFont_mciSendCommandW")
-#pragma comment(linker, "/EXPORT:mciSendStringA=HookFont_mciSendStringA")
-#pragma comment(linker, "/EXPORT:mciSendStringW=HookFont_mciSendStringW")
-#pragma comment(linker, "/EXPORT:midiOutClose=HookFont_midiOutClose")
-#pragma comment(linker, "/EXPORT:midiOutGetNumDevs=HookFont_midiOutGetNumDevs")
-#pragma comment(linker, "/EXPORT:midiOutLongMsg=HookFont_midiOutLongMsg")
-#pragma comment(linker, "/EXPORT:midiOutMessage=HookFont_midiOutMessage")
-#pragma comment(linker, "/EXPORT:midiOutOpen=HookFont_midiOutOpen")
-#pragma comment(linker, "/EXPORT:midiOutPrepareHeader=HookFont_midiOutPrepareHeader")
-#pragma comment(linker, "/EXPORT:midiOutReset=HookFont_midiOutReset")
-#pragma comment(linker, "/EXPORT:midiOutSetVolume=HookFont_midiOutSetVolume")
-#pragma comment(linker, "/EXPORT:midiOutShortMsg=HookFont_midiOutShortMsg")
-#pragma comment(linker, "/EXPORT:midiOutUnprepareHeader=HookFont_midiOutUnprepareHeader")
-#pragma comment(linker, "/EXPORT:midiInAddBuffer=HookFont_midiInAddBuffer")
-#pragma comment(linker, "/EXPORT:midiInClose=HookFont_midiInClose")
-#pragma comment(linker, "/EXPORT:midiInGetNumDevs=HookFont_midiInGetNumDevs")
-#pragma comment(linker, "/EXPORT:midiInMessage=HookFont_midiInMessage")
-#pragma comment(linker, "/EXPORT:midiInOpen=HookFont_midiInOpen")
-#pragma comment(linker, "/EXPORT:midiInPrepareHeader=HookFont_midiInPrepareHeader")
-#pragma comment(linker, "/EXPORT:midiInReset=HookFont_midiInReset")
-#pragma comment(linker, "/EXPORT:midiInStart=HookFont_midiInStart")
-#pragma comment(linker, "/EXPORT:midiInStop=HookFont_midiInStop")
-#pragma comment(linker, "/EXPORT:midiInUnprepareHeader=HookFont_midiInUnprepareHeader")
-#pragma comment(linker, "/EXPORT:mixerClose=HookFont_mixerClose")
-#pragma comment(linker, "/EXPORT:mixerGetControlDetailsA=HookFont_mixerGetControlDetailsA")
-#pragma comment(linker, "/EXPORT:mixerGetControlDetailsW=HookFont_mixerGetControlDetailsW")
-#pragma comment(linker, "/EXPORT:mixerGetDevCapsA=HookFont_mixerGetDevCapsA")
-#pragma comment(linker, "/EXPORT:mixerGetDevCapsW=HookFont_mixerGetDevCapsW")
-#pragma comment(linker, "/EXPORT:mixerGetLineControlsA=HookFont_mixerGetLineControlsA")
-#pragma comment(linker, "/EXPORT:mixerGetLineControlsW=HookFont_mixerGetLineControlsW")
-#pragma comment(linker, "/EXPORT:mixerGetLineInfoA=HookFont_mixerGetLineInfoA")
-#pragma comment(linker, "/EXPORT:mixerGetLineInfoW=HookFont_mixerGetLineInfoW")
-#pragma comment(linker, "/EXPORT:mixerGetNumDevs=HookFont_mixerGetNumDevs")
-#pragma comment(linker, "/EXPORT:mixerMessage=HookFont_mixerMessage")
-#pragma comment(linker, "/EXPORT:mixerOpen=HookFont_mixerOpen")
-#pragma comment(linker, "/EXPORT:mixerSetControlDetails=HookFont_mixerSetControlDetails")
-#pragma comment(linker, "/EXPORT:timeBeginPeriod=HookFont_timeBeginPeriod")
-#pragma comment(linker, "/EXPORT:timeEndPeriod=HookFont_timeEndPeriod")
-#pragma comment(linker, "/EXPORT:timeGetDevCaps=HookFont_timeGetDevCaps")
-#pragma comment(linker, "/EXPORT:timeGetSystemTime=HookFont_timeGetSystemTime")
-#pragma comment(linker, "/EXPORT:timeGetTime=HookFont_timeGetTime")
-#pragma comment(linker, "/EXPORT:timeKillEvent=HookFont_timeKillEvent")
-#pragma comment(linker, "/EXPORT:timeSetEvent=HookFont_timeSetEvent")
-#pragma comment(linker, "/EXPORT:waveInAddBuffer=HookFont_waveInAddBuffer")
-#pragma comment(linker, "/EXPORT:waveInClose=HookFont_waveInClose")
-#pragma comment(linker, "/EXPORT:waveInGetNumDevs=HookFont_waveInGetNumDevs")
-#pragma comment(linker, "/EXPORT:waveInGetPosition=HookFont_waveInGetPosition")
-#pragma comment(linker, "/EXPORT:waveInMessage=HookFont_waveInMessage")
-#pragma comment(linker, "/EXPORT:waveInOpen=HookFont_waveInOpen")
-#pragma comment(linker, "/EXPORT:waveInPrepareHeader=HookFont_waveInPrepareHeader")
-#pragma comment(linker, "/EXPORT:waveInReset=HookFont_waveInReset")
-#pragma comment(linker, "/EXPORT:waveInStart=HookFont_waveInStart")
-#pragma comment(linker, "/EXPORT:waveInStop=HookFont_waveInStop")
-#pragma comment(linker, "/EXPORT:waveInUnprepareHeader=HookFont_waveInUnprepareHeader")
-#pragma comment(linker, "/EXPORT:waveOutBreakLoop=HookFont_waveOutBreakLoop")
-#pragma comment(linker, "/EXPORT:waveOutClose=HookFont_waveOutClose")
-#pragma comment(linker, "/EXPORT:waveOutGetNumDevs=HookFont_waveOutGetNumDevs")
-#pragma comment(linker, "/EXPORT:waveOutGetPosition=HookFont_waveOutGetPosition")
-#pragma comment(linker, "/EXPORT:waveOutGetVolume=HookFont_waveOutGetVolume")
-#pragma comment(linker, "/EXPORT:waveOutMessage=HookFont_waveOutMessage")
-#pragma comment(linker, "/EXPORT:waveOutOpen=HookFont_waveOutOpen")
-#pragma comment(linker, "/EXPORT:waveOutPause=HookFont_waveOutPause")
-#pragma comment(linker, "/EXPORT:waveOutPrepareHeader=HookFont_waveOutPrepareHeader")
-#pragma comment(linker, "/EXPORT:waveOutReset=HookFont_waveOutReset")
-#pragma comment(linker, "/EXPORT:waveOutRestart=HookFont_waveOutRestart")
-#pragma comment(linker, "/EXPORT:waveOutSetVolume=HookFont_waveOutSetVolume")
-#pragma comment(linker, "/EXPORT:waveOutUnprepareHeader=HookFont_waveOutUnprepareHeader")
-#pragma comment(linker, "/EXPORT:waveOutWrite=HookFont_waveOutWrite")
 #endif
 
 #ifndef _WIN64

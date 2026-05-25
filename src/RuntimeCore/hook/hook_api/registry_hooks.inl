@@ -1,4 +1,4 @@
-		static pRegOpenKeyExW rawRegOpenKeyExW = RegOpenKeyExW;
+﻿		static pRegOpenKeyExW rawRegOpenKeyExW = RegOpenKeyExW;
 		static pRegOpenKeyExA rawRegOpenKeyExA = RegOpenKeyExA;
 		static pRegOpenKeyW rawRegOpenKeyW = RegOpenKeyW;
 		static pRegOpenKeyA rawRegOpenKeyA = RegOpenKeyA;
@@ -1229,8 +1229,8 @@
 			return true;
 		}
 
-		static LSTATUS WINAPI newRegOpenKeyExW(HKEY hKey, LPCWSTR lpSubKey, DWORD ulOptions, REGSAM samDesired, PHKEY phkResult)
-		{
+		static LSTATUS WINAPI newRegOpenKeyExW_SehImpl(HKEY hKey, LPCWSTR lpSubKey, DWORD ulOptions, REGSAM samDesired, PHKEY phkResult)
+{
 			if (!phkResult)
 			{
 				return ERROR_INVALID_PARAMETER;
@@ -1249,24 +1249,48 @@
 			}
 			return rawRegOpenKeyExW(hKey, lpSubKey, ulOptions, samDesired, phkResult);
 		}
-
-		static LSTATUS WINAPI newRegOpenKeyExA(HKEY hKey, LPCSTR lpSubKey, DWORD ulOptions, REGSAM samDesired, PHKEY phkResult)
+		static LSTATUS WINAPI newRegOpenKeyExW(HKEY hKey, LPCWSTR lpSubKey, DWORD ulOptions, REGSAM samDesired, PHKEY phkResult)
 		{
+			__try { return newRegOpenKeyExW_SehImpl(hKey, lpSubKey, ulOptions, samDesired, phkResult); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawRegOpenKeyExW(hKey, lpSubKey, ulOptions, samDesired, phkResult); }
+		}
+
+
+		static LSTATUS WINAPI newRegOpenKeyExA_SehImpl(HKEY hKey, LPCSTR lpSubKey, DWORD ulOptions, REGSAM samDesired, PHKEY phkResult)
+{
 			std::wstring subKey = lpSubKey ? AnsiToWideCodePage(lpSubKey, -1) : L"";
 			return newRegOpenKeyExW(hKey, subKey.c_str(), ulOptions, samDesired, phkResult);
 		}
-
-		static LSTATUS WINAPI newRegOpenKeyW(HKEY hKey, LPCWSTR lpSubKey, PHKEY phkResult)
+		static LSTATUS WINAPI newRegOpenKeyExA(HKEY hKey, LPCSTR lpSubKey, DWORD ulOptions, REGSAM samDesired, PHKEY phkResult)
 		{
+			__try { return newRegOpenKeyExA_SehImpl(hKey, lpSubKey, ulOptions, samDesired, phkResult); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawRegOpenKeyExA(hKey, lpSubKey, ulOptions, samDesired, phkResult); }
+		}
+
+
+		static LSTATUS WINAPI newRegOpenKeyW_SehImpl(HKEY hKey, LPCWSTR lpSubKey, PHKEY phkResult)
+{
 			return newRegOpenKeyExW(hKey, lpSubKey, 0, KEY_READ, phkResult);
 		}
-
-		static LSTATUS WINAPI newRegOpenKeyA(HKEY hKey, LPCSTR lpSubKey, PHKEY phkResult)
+		static LSTATUS WINAPI newRegOpenKeyW(HKEY hKey, LPCWSTR lpSubKey, PHKEY phkResult)
 		{
-			return newRegOpenKeyExA(hKey, lpSubKey, 0, KEY_READ, phkResult);
+			__try { return newRegOpenKeyW_SehImpl(hKey, lpSubKey, phkResult); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawRegOpenKeyW(hKey, lpSubKey, phkResult); }
 		}
 
-		static LSTATUS WINAPI newRegCreateKeyExW(
+
+		static LSTATUS WINAPI newRegOpenKeyA_SehImpl(HKEY hKey, LPCSTR lpSubKey, PHKEY phkResult)
+{
+			return newRegOpenKeyExA(hKey, lpSubKey, 0, KEY_READ, phkResult);
+		}
+		static LSTATUS WINAPI newRegOpenKeyA(HKEY hKey, LPCSTR lpSubKey, PHKEY phkResult)
+		{
+			__try { return newRegOpenKeyA_SehImpl(hKey, lpSubKey, phkResult); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawRegOpenKeyA(hKey, lpSubKey, phkResult); }
+		}
+
+
+		static LSTATUS WINAPI newRegCreateKeyExW_SehImpl(
 			HKEY hKey,
 			LPCWSTR lpSubKey,
 			DWORD Reserved,
@@ -1276,7 +1300,7 @@
 			CONST LPSECURITY_ATTRIBUTES lpSecurityAttributes,
 			PHKEY phkResult,
 			LPDWORD lpdwDisposition)
-		{
+{
 			ScopedVirtualRegistryLock lock;
 			std::shared_ptr<VirtualRegistryKey> key;
 			bool created = false;
@@ -1298,7 +1322,36 @@
 			}
 			return rawRegCreateKeyExW(hKey, lpSubKey, Reserved, lpClass, dwOptions, samDesired, lpSecurityAttributes, phkResult, lpdwDisposition);
 		}
+		static LSTATUS WINAPI newRegCreateKeyExW(
+			HKEY hKey,
+			LPCWSTR lpSubKey,
+			DWORD Reserved,
+			LPWSTR lpClass,
+			DWORD dwOptions,
+			REGSAM samDesired,
+			CONST LPSECURITY_ATTRIBUTES lpSecurityAttributes,
+			PHKEY phkResult,
+			LPDWORD lpdwDisposition)
+		{
+			__try { return newRegCreateKeyExW_SehImpl(hKey, lpSubKey, Reserved, lpClass, dwOptions, samDesired, lpSecurityAttributes, phkResult, lpdwDisposition); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawRegCreateKeyExW(hKey, lpSubKey, Reserved, lpClass, dwOptions, samDesired, lpSecurityAttributes, phkResult, lpdwDisposition); }
+		}
 
+
+		static LSTATUS WINAPI newRegCreateKeyExA_SehImpl(
+			HKEY hKey,
+			LPCSTR lpSubKey,
+			DWORD Reserved,
+			LPSTR lpClass,
+			DWORD dwOptions,
+			REGSAM samDesired,
+			CONST LPSECURITY_ATTRIBUTES lpSecurityAttributes,
+			PHKEY phkResult,
+			LPDWORD lpdwDisposition)
+{
+			std::wstring subKey = lpSubKey ? AnsiToWideCodePage(lpSubKey, -1) : L"";
+			return newRegCreateKeyExW(hKey, subKey.c_str(), Reserved, nullptr, dwOptions, samDesired, lpSecurityAttributes, phkResult, lpdwDisposition);
+		}
 		static LSTATUS WINAPI newRegCreateKeyExA(
 			HKEY hKey,
 			LPCSTR lpSubKey,
@@ -1310,22 +1363,35 @@
 			PHKEY phkResult,
 			LPDWORD lpdwDisposition)
 		{
-			std::wstring subKey = lpSubKey ? AnsiToWideCodePage(lpSubKey, -1) : L"";
-			return newRegCreateKeyExW(hKey, subKey.c_str(), Reserved, nullptr, dwOptions, samDesired, lpSecurityAttributes, phkResult, lpdwDisposition);
+			__try { return newRegCreateKeyExA_SehImpl(hKey, lpSubKey, Reserved, lpClass, dwOptions, samDesired, lpSecurityAttributes, phkResult, lpdwDisposition); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawRegCreateKeyExA(hKey, lpSubKey, Reserved, lpClass, dwOptions, samDesired, lpSecurityAttributes, phkResult, lpdwDisposition); }
 		}
 
-		static LSTATUS WINAPI newRegCreateKeyW(HKEY hKey, LPCWSTR lpSubKey, PHKEY phkResult)
-		{
+
+		static LSTATUS WINAPI newRegCreateKeyW_SehImpl(HKEY hKey, LPCWSTR lpSubKey, PHKEY phkResult)
+{
 			return newRegCreateKeyExW(hKey, lpSubKey, 0, nullptr, 0, KEY_ALL_ACCESS, nullptr, phkResult, nullptr);
 		}
-
-		static LSTATUS WINAPI newRegCreateKeyA(HKEY hKey, LPCSTR lpSubKey, PHKEY phkResult)
+		static LSTATUS WINAPI newRegCreateKeyW(HKEY hKey, LPCWSTR lpSubKey, PHKEY phkResult)
 		{
-			return newRegCreateKeyExA(hKey, lpSubKey, 0, nullptr, 0, KEY_ALL_ACCESS, nullptr, phkResult, nullptr);
+			__try { return newRegCreateKeyW_SehImpl(hKey, lpSubKey, phkResult); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawRegCreateKeyW(hKey, lpSubKey, phkResult); }
 		}
 
-		static LSTATUS WINAPI newRegCloseKey(HKEY hKey)
+
+		static LSTATUS WINAPI newRegCreateKeyA_SehImpl(HKEY hKey, LPCSTR lpSubKey, PHKEY phkResult)
+{
+			return newRegCreateKeyExA(hKey, lpSubKey, 0, nullptr, 0, KEY_ALL_ACCESS, nullptr, phkResult, nullptr);
+		}
+		static LSTATUS WINAPI newRegCreateKeyA(HKEY hKey, LPCSTR lpSubKey, PHKEY phkResult)
 		{
+			__try { return newRegCreateKeyA_SehImpl(hKey, lpSubKey, phkResult); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawRegCreateKeyA(hKey, lpSubKey, phkResult); }
+		}
+
+
+		static LSTATUS WINAPI newRegCloseKey_SehImpl(HKEY hKey)
+{
 			ScopedVirtualRegistryLock lock;
 			auto it = sg_virtualRegistryHandleMap.find(reinterpret_cast<ULONG_PTR>(hKey));
 			if (it != sg_virtualRegistryHandleMap.end())
@@ -1335,9 +1401,15 @@
 			}
 			return rawRegCloseKey(hKey);
 		}
-
-		static LSTATUS WINAPI newRegQueryValueExW(HKEY hKey, LPCWSTR lpValueName, LPDWORD lpReserved, LPDWORD lpType, LPBYTE lpData, LPDWORD lpcbData)
+		static LSTATUS WINAPI newRegCloseKey(HKEY hKey)
 		{
+			__try { return newRegCloseKey_SehImpl(hKey); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawRegCloseKey(hKey); }
+		}
+
+
+		static LSTATUS WINAPI newRegQueryValueExW_SehImpl(HKEY hKey, LPCWSTR lpValueName, LPDWORD lpReserved, LPDWORD lpType, LPBYTE lpData, LPDWORD lpcbData)
+{
 			ScopedVirtualRegistryLock lock;
 			if (std::shared_ptr<VirtualRegistryKey> key = GetVirtualRegistryKeyByHandleLocked(hKey))
 			{
@@ -1345,9 +1417,15 @@
 			}
 			return rawRegQueryValueExW(hKey, lpValueName, lpReserved, lpType, lpData, lpcbData);
 		}
-
-		static LSTATUS WINAPI newRegQueryValueExA(HKEY hKey, LPCSTR lpValueName, LPDWORD lpReserved, LPDWORD lpType, LPBYTE lpData, LPDWORD lpcbData)
+		static LSTATUS WINAPI newRegQueryValueExW(HKEY hKey, LPCWSTR lpValueName, LPDWORD lpReserved, LPDWORD lpType, LPBYTE lpData, LPDWORD lpcbData)
 		{
+			__try { return newRegQueryValueExW_SehImpl(hKey, lpValueName, lpReserved, lpType, lpData, lpcbData); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawRegQueryValueExW(hKey, lpValueName, lpReserved, lpType, lpData, lpcbData); }
+		}
+
+
+		static LSTATUS WINAPI newRegQueryValueExA_SehImpl(HKEY hKey, LPCSTR lpValueName, LPDWORD lpReserved, LPDWORD lpType, LPBYTE lpData, LPDWORD lpcbData)
+{
 			ScopedVirtualRegistryLock lock;
 			if (std::shared_ptr<VirtualRegistryKey> key = GetVirtualRegistryKeyByHandleLocked(hKey))
 			{
@@ -1356,9 +1434,15 @@
 			}
 			return rawRegQueryValueExA(hKey, lpValueName, lpReserved, lpType, lpData, lpcbData);
 		}
-
-		static LSTATUS WINAPI newRegGetValueW(HKEY hKey, LPCWSTR lpSubKey, LPCWSTR lpValue, DWORD dwFlags, LPDWORD pdwType, PVOID pvData, LPDWORD pcbData)
+		static LSTATUS WINAPI newRegQueryValueExA(HKEY hKey, LPCSTR lpValueName, LPDWORD lpReserved, LPDWORD lpType, LPBYTE lpData, LPDWORD lpcbData)
 		{
+			__try { return newRegQueryValueExA_SehImpl(hKey, lpValueName, lpReserved, lpType, lpData, lpcbData); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawRegQueryValueExA(hKey, lpValueName, lpReserved, lpType, lpData, lpcbData); }
+		}
+
+
+		static LSTATUS WINAPI newRegGetValueW_SehImpl(HKEY hKey, LPCWSTR lpSubKey, LPCWSTR lpValue, DWORD dwFlags, LPDWORD pdwType, PVOID pvData, LPDWORD pcbData)
+{
 			ScopedVirtualRegistryLock lock;
 			std::shared_ptr<VirtualRegistryKey> key;
 			if (sg_virtualRegistryLoaded && TryResolveVirtualRegistryPathLocked(hKey, lpSubKey ? lpSubKey : L"", key))
@@ -1367,9 +1451,15 @@
 			}
 			return rawRegGetValueW(hKey, lpSubKey, lpValue, dwFlags, pdwType, pvData, pcbData);
 		}
-
-		static LSTATUS WINAPI newRegGetValueA(HKEY hKey, LPCSTR lpSubKey, LPCSTR lpValue, DWORD dwFlags, LPDWORD pdwType, PVOID pvData, LPDWORD pcbData)
+		static LSTATUS WINAPI newRegGetValueW(HKEY hKey, LPCWSTR lpSubKey, LPCWSTR lpValue, DWORD dwFlags, LPDWORD pdwType, PVOID pvData, LPDWORD pcbData)
 		{
+			__try { return newRegGetValueW_SehImpl(hKey, lpSubKey, lpValue, dwFlags, pdwType, pvData, pcbData); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawRegGetValueW(hKey, lpSubKey, lpValue, dwFlags, pdwType, pvData, pcbData); }
+		}
+
+
+		static LSTATUS WINAPI newRegGetValueA_SehImpl(HKEY hKey, LPCSTR lpSubKey, LPCSTR lpValue, DWORD dwFlags, LPDWORD pdwType, PVOID pvData, LPDWORD pcbData)
+{
 			std::wstring subKey = lpSubKey ? AnsiToWideCodePage(lpSubKey, -1) : L"";
 			std::wstring valueName = lpValue ? AnsiToWideCodePage(lpValue, -1) : L"";
 
@@ -1381,9 +1471,15 @@
 			}
 			return rawRegGetValueA(hKey, lpSubKey, lpValue, dwFlags, pdwType, pvData, pcbData);
 		}
-
-		static LSTATUS WINAPI newRegSetValueExW(HKEY hKey, LPCWSTR lpValueName, DWORD Reserved, DWORD dwType, CONST BYTE* lpData, DWORD cbData)
+		static LSTATUS WINAPI newRegGetValueA(HKEY hKey, LPCSTR lpSubKey, LPCSTR lpValue, DWORD dwFlags, LPDWORD pdwType, PVOID pvData, LPDWORD pcbData)
 		{
+			__try { return newRegGetValueA_SehImpl(hKey, lpSubKey, lpValue, dwFlags, pdwType, pvData, pcbData); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawRegGetValueA(hKey, lpSubKey, lpValue, dwFlags, pdwType, pvData, pcbData); }
+		}
+
+
+		static LSTATUS WINAPI newRegSetValueExW_SehImpl(HKEY hKey, LPCWSTR lpValueName, DWORD Reserved, DWORD dwType, CONST BYTE* lpData, DWORD cbData)
+{
 			ScopedVirtualRegistryLock lock;
 			if (std::shared_ptr<VirtualRegistryKey> key = GetVirtualRegistryKeyByHandleLocked(hKey))
 			{
@@ -1396,9 +1492,15 @@
 			}
 			return rawRegSetValueExW(hKey, lpValueName, Reserved, dwType, lpData, cbData);
 		}
-
-		static LSTATUS WINAPI newRegSetValueExA(HKEY hKey, LPCSTR lpValueName, DWORD Reserved, DWORD dwType, CONST BYTE* lpData, DWORD cbData)
+		static LSTATUS WINAPI newRegSetValueExW(HKEY hKey, LPCWSTR lpValueName, DWORD Reserved, DWORD dwType, CONST BYTE* lpData, DWORD cbData)
 		{
+			__try { return newRegSetValueExW_SehImpl(hKey, lpValueName, Reserved, dwType, lpData, cbData); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawRegSetValueExW(hKey, lpValueName, Reserved, dwType, lpData, cbData); }
+		}
+
+
+		static LSTATUS WINAPI newRegSetValueExA_SehImpl(HKEY hKey, LPCSTR lpValueName, DWORD Reserved, DWORD dwType, CONST BYTE* lpData, DWORD cbData)
+{
 			ScopedVirtualRegistryLock lock;
 			if (std::shared_ptr<VirtualRegistryKey> key = GetVirtualRegistryKeyByHandleLocked(hKey))
 			{
@@ -1412,9 +1514,15 @@
 			}
 			return rawRegSetValueExA(hKey, lpValueName, Reserved, dwType, lpData, cbData);
 		}
-
-		static LSTATUS WINAPI newRegEnumKeyExW(HKEY hKey, DWORD dwIndex, LPWSTR lpName, LPDWORD lpcName, LPDWORD lpReserved, LPWSTR lpClass, LPDWORD lpcClass, PFILETIME lpftLastWriteTime)
+		static LSTATUS WINAPI newRegSetValueExA(HKEY hKey, LPCSTR lpValueName, DWORD Reserved, DWORD dwType, CONST BYTE* lpData, DWORD cbData)
 		{
+			__try { return newRegSetValueExA_SehImpl(hKey, lpValueName, Reserved, dwType, lpData, cbData); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawRegSetValueExA(hKey, lpValueName, Reserved, dwType, lpData, cbData); }
+		}
+
+
+		static LSTATUS WINAPI newRegEnumKeyExW_SehImpl(HKEY hKey, DWORD dwIndex, LPWSTR lpName, LPDWORD lpcName, LPDWORD lpReserved, LPWSTR lpClass, LPDWORD lpcClass, PFILETIME lpftLastWriteTime)
+{
 			ScopedVirtualRegistryLock lock;
 			if (std::shared_ptr<VirtualRegistryKey> key = GetVirtualRegistryKeyByHandleLocked(hKey))
 			{
@@ -1457,9 +1565,15 @@
 			}
 			return rawRegEnumKeyExW(hKey, dwIndex, lpName, lpcName, lpReserved, lpClass, lpcClass, lpftLastWriteTime);
 		}
-
-		static LSTATUS WINAPI newRegEnumKeyExA(HKEY hKey, DWORD dwIndex, LPSTR lpName, LPDWORD lpcName, LPDWORD lpReserved, LPSTR lpClass, LPDWORD lpcClass, PFILETIME lpftLastWriteTime)
+		static LSTATUS WINAPI newRegEnumKeyExW(HKEY hKey, DWORD dwIndex, LPWSTR lpName, LPDWORD lpcName, LPDWORD lpReserved, LPWSTR lpClass, LPDWORD lpcClass, PFILETIME lpftLastWriteTime)
 		{
+			__try { return newRegEnumKeyExW_SehImpl(hKey, dwIndex, lpName, lpcName, lpReserved, lpClass, lpcClass, lpftLastWriteTime); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawRegEnumKeyExW(hKey, dwIndex, lpName, lpcName, lpReserved, lpClass, lpcClass, lpftLastWriteTime); }
+		}
+
+
+		static LSTATUS WINAPI newRegEnumKeyExA_SehImpl(HKEY hKey, DWORD dwIndex, LPSTR lpName, LPDWORD lpcName, LPDWORD lpReserved, LPSTR lpClass, LPDWORD lpcClass, PFILETIME lpftLastWriteTime)
+{
 			ScopedVirtualRegistryLock lock;
 			if (std::shared_ptr<VirtualRegistryKey> key = GetVirtualRegistryKeyByHandleLocked(hKey))
 			{
@@ -1502,9 +1616,15 @@
 			}
 			return rawRegEnumKeyExA(hKey, dwIndex, lpName, lpcName, lpReserved, lpClass, lpcClass, lpftLastWriteTime);
 		}
-
-		static LSTATUS WINAPI newRegEnumValueW(HKEY hKey, DWORD dwIndex, LPWSTR lpValueName, LPDWORD lpcchValueName, LPDWORD lpReserved, LPDWORD lpType, LPBYTE lpData, LPDWORD lpcbData)
+		static LSTATUS WINAPI newRegEnumKeyExA(HKEY hKey, DWORD dwIndex, LPSTR lpName, LPDWORD lpcName, LPDWORD lpReserved, LPSTR lpClass, LPDWORD lpcClass, PFILETIME lpftLastWriteTime)
 		{
+			__try { return newRegEnumKeyExA_SehImpl(hKey, dwIndex, lpName, lpcName, lpReserved, lpClass, lpcClass, lpftLastWriteTime); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawRegEnumKeyExA(hKey, dwIndex, lpName, lpcName, lpReserved, lpClass, lpcClass, lpftLastWriteTime); }
+		}
+
+
+		static LSTATUS WINAPI newRegEnumValueW_SehImpl(HKEY hKey, DWORD dwIndex, LPWSTR lpValueName, LPDWORD lpcchValueName, LPDWORD lpReserved, LPDWORD lpType, LPBYTE lpData, LPDWORD lpcbData)
+{
 			ScopedVirtualRegistryLock lock;
 			if (std::shared_ptr<VirtualRegistryKey> key = GetVirtualRegistryKeyByHandleLocked(hKey))
 			{
@@ -1538,9 +1658,15 @@
 			}
 			return rawRegEnumValueW(hKey, dwIndex, lpValueName, lpcchValueName, lpReserved, lpType, lpData, lpcbData);
 		}
-
-		static LSTATUS WINAPI newRegEnumValueA(HKEY hKey, DWORD dwIndex, LPSTR lpValueName, LPDWORD lpcchValueName, LPDWORD lpReserved, LPDWORD lpType, LPBYTE lpData, LPDWORD lpcbData)
+		static LSTATUS WINAPI newRegEnumValueW(HKEY hKey, DWORD dwIndex, LPWSTR lpValueName, LPDWORD lpcchValueName, LPDWORD lpReserved, LPDWORD lpType, LPBYTE lpData, LPDWORD lpcbData)
 		{
+			__try { return newRegEnumValueW_SehImpl(hKey, dwIndex, lpValueName, lpcchValueName, lpReserved, lpType, lpData, lpcbData); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawRegEnumValueW(hKey, dwIndex, lpValueName, lpcchValueName, lpReserved, lpType, lpData, lpcbData); }
+		}
+
+
+		static LSTATUS WINAPI newRegEnumValueA_SehImpl(HKEY hKey, DWORD dwIndex, LPSTR lpValueName, LPDWORD lpcchValueName, LPDWORD lpReserved, LPDWORD lpType, LPBYTE lpData, LPDWORD lpcbData)
+{
 			ScopedVirtualRegistryLock lock;
 			if (std::shared_ptr<VirtualRegistryKey> key = GetVirtualRegistryKeyByHandleLocked(hKey))
 			{
@@ -1574,8 +1700,14 @@
 			}
 			return rawRegEnumValueA(hKey, dwIndex, lpValueName, lpcchValueName, lpReserved, lpType, lpData, lpcbData);
 		}
+		static LSTATUS WINAPI newRegEnumValueA(HKEY hKey, DWORD dwIndex, LPSTR lpValueName, LPDWORD lpcchValueName, LPDWORD lpReserved, LPDWORD lpType, LPBYTE lpData, LPDWORD lpcbData)
+		{
+			__try { return newRegEnumValueA_SehImpl(hKey, dwIndex, lpValueName, lpcchValueName, lpReserved, lpType, lpData, lpcbData); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawRegEnumValueA(hKey, dwIndex, lpValueName, lpcchValueName, lpReserved, lpType, lpData, lpcbData); }
+		}
 
-		static LSTATUS WINAPI newRegQueryInfoKeyW(
+
+		static LSTATUS WINAPI newRegQueryInfoKeyW_SehImpl(
 			HKEY hKey,
 			LPWSTR lpClass,
 			LPDWORD lpcchClass,
@@ -1588,7 +1720,7 @@
 			LPDWORD lpcbMaxValueLen,
 			LPDWORD lpcbSecurityDescriptor,
 			PFILETIME lpftLastWriteTime)
-		{
+{
 			ScopedVirtualRegistryLock lock;
 			if (std::shared_ptr<VirtualRegistryKey> key = GetVirtualRegistryKeyByHandleLocked(hKey))
 			{
@@ -1612,8 +1744,26 @@
 			}
 			return rawRegQueryInfoKeyW(hKey, lpClass, lpcchClass, lpReserved, lpcSubKeys, lpcbMaxSubKeyLen, lpcbMaxClassLen, lpcValues, lpcbMaxValueNameLen, lpcbMaxValueLen, lpcbSecurityDescriptor, lpftLastWriteTime);
 		}
+		static LSTATUS WINAPI newRegQueryInfoKeyW(
+			HKEY hKey,
+			LPWSTR lpClass,
+			LPDWORD lpcchClass,
+			LPDWORD lpReserved,
+			LPDWORD lpcSubKeys,
+			LPDWORD lpcbMaxSubKeyLen,
+			LPDWORD lpcbMaxClassLen,
+			LPDWORD lpcValues,
+			LPDWORD lpcbMaxValueNameLen,
+			LPDWORD lpcbMaxValueLen,
+			LPDWORD lpcbSecurityDescriptor,
+			PFILETIME lpftLastWriteTime)
+		{
+			__try { return newRegQueryInfoKeyW_SehImpl(hKey, lpClass, lpcchClass, lpReserved, lpcSubKeys, lpcbMaxSubKeyLen, lpcbMaxClassLen, lpcValues, lpcbMaxValueNameLen, lpcbMaxValueLen, lpcbSecurityDescriptor, lpftLastWriteTime); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawRegQueryInfoKeyW(hKey, lpClass, lpcchClass, lpReserved, lpcSubKeys, lpcbMaxSubKeyLen, lpcbMaxClassLen, lpcValues, lpcbMaxValueNameLen, lpcbMaxValueLen, lpcbSecurityDescriptor, lpftLastWriteTime); }
+		}
 
-		static LSTATUS WINAPI newRegQueryInfoKeyA(
+
+		static LSTATUS WINAPI newRegQueryInfoKeyA_SehImpl(
 			HKEY hKey,
 			LPSTR lpClass,
 			LPDWORD lpcchClass,
@@ -1626,7 +1776,7 @@
 			LPDWORD lpcbMaxValueLen,
 			LPDWORD lpcbSecurityDescriptor,
 			PFILETIME lpftLastWriteTime)
-		{
+{
 			ScopedVirtualRegistryLock lock;
 			if (std::shared_ptr<VirtualRegistryKey> key = GetVirtualRegistryKeyByHandleLocked(hKey))
 			{
@@ -1650,6 +1800,24 @@
 			}
 			return rawRegQueryInfoKeyA(hKey, lpClass, lpcchClass, lpReserved, lpcSubKeys, lpcbMaxSubKeyLen, lpcbMaxClassLen, lpcValues, lpcbMaxValueNameLen, lpcbMaxValueLen, lpcbSecurityDescriptor, lpftLastWriteTime);
 		}
+		static LSTATUS WINAPI newRegQueryInfoKeyA(
+			HKEY hKey,
+			LPSTR lpClass,
+			LPDWORD lpcchClass,
+			LPDWORD lpReserved,
+			LPDWORD lpcSubKeys,
+			LPDWORD lpcbMaxSubKeyLen,
+			LPDWORD lpcbMaxClassLen,
+			LPDWORD lpcValues,
+			LPDWORD lpcbMaxValueNameLen,
+			LPDWORD lpcbMaxValueLen,
+			LPDWORD lpcbSecurityDescriptor,
+			PFILETIME lpftLastWriteTime)
+		{
+			__try { return newRegQueryInfoKeyA_SehImpl(hKey, lpClass, lpcchClass, lpReserved, lpcSubKeys, lpcbMaxSubKeyLen, lpcbMaxClassLen, lpcValues, lpcbMaxValueNameLen, lpcbMaxValueLen, lpcbSecurityDescriptor, lpftLastWriteTime); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawRegQueryInfoKeyA(hKey, lpClass, lpcchClass, lpReserved, lpcSubKeys, lpcbMaxSubKeyLen, lpcbMaxClassLen, lpcValues, lpcbMaxValueNameLen, lpcbMaxValueLen, lpcbSecurityDescriptor, lpftLastWriteTime); }
+		}
+
 
 		bool HookRegistryAPIs()
 		{
@@ -1677,3 +1845,30 @@
 			hasFailed |= !TryDetourAttach(&rawRegQueryInfoKeyA, newRegQueryInfoKeyA);
 			return !hasFailed;
 		}
+
+			bool UnhookRegistryAPIs()
+			{
+				bool hasFailed = false;
+				hasFailed |= !TryDetourDetach(&rawRegOpenKeyExW, newRegOpenKeyExW);
+				hasFailed |= !TryDetourDetach(&rawRegOpenKeyExA, newRegOpenKeyExA);
+				hasFailed |= !TryDetourDetach(&rawRegOpenKeyW, newRegOpenKeyW);
+				hasFailed |= !TryDetourDetach(&rawRegOpenKeyA, newRegOpenKeyA);
+				hasFailed |= !TryDetourDetach(&rawRegCreateKeyExW, newRegCreateKeyExW);
+				hasFailed |= !TryDetourDetach(&rawRegCreateKeyExA, newRegCreateKeyExA);
+				hasFailed |= !TryDetourDetach(&rawRegCreateKeyW, newRegCreateKeyW);
+				hasFailed |= !TryDetourDetach(&rawRegCreateKeyA, newRegCreateKeyA);
+				hasFailed |= !TryDetourDetach(&rawRegCloseKey, newRegCloseKey);
+				hasFailed |= !TryDetourDetach(&rawRegQueryValueExW, newRegQueryValueExW);
+				hasFailed |= !TryDetourDetach(&rawRegQueryValueExA, newRegQueryValueExA);
+				hasFailed |= !TryDetourDetach(&rawRegGetValueW, newRegGetValueW);
+				hasFailed |= !TryDetourDetach(&rawRegGetValueA, newRegGetValueA);
+				hasFailed |= !TryDetourDetach(&rawRegSetValueExW, newRegSetValueExW);
+				hasFailed |= !TryDetourDetach(&rawRegSetValueExA, newRegSetValueExA);
+				hasFailed |= !TryDetourDetach(&rawRegEnumKeyExW, newRegEnumKeyExW);
+				hasFailed |= !TryDetourDetach(&rawRegEnumKeyExA, newRegEnumKeyExA);
+				hasFailed |= !TryDetourDetach(&rawRegEnumValueW, newRegEnumValueW);
+				hasFailed |= !TryDetourDetach(&rawRegEnumValueA, newRegEnumValueA);
+				hasFailed |= !TryDetourDetach(&rawRegQueryInfoKeyW, newRegQueryInfoKeyW);
+				hasFailed |= !TryDetourDetach(&rawRegQueryInfoKeyA, newRegQueryInfoKeyA);
+				return !hasFailed;
+			}

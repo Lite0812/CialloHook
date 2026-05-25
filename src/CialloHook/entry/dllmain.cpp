@@ -15,11 +15,30 @@ struct HookInitContext
 	HMODULE module;
 	DWORD delayMs;
 	bool waitForGuiReady;
+	bool waitForEntryPoint;
+	bool startupSettingsLoaded;
+	CialloHook::AppSettings startupSettings;
 };
 
 static volatile LONG sg_isProcessDetaching = 0;
 static volatile LONG sg_inTopLevelExceptionFilter = 0;
+static volatile LONG sg_waitForEntryPointAttach = 0;
 static LPTOP_LEVEL_EXCEPTION_FILTER sg_previousTopLevelExceptionFilter = nullptr;
+static HANDLE sg_entryPointAttachEvent = nullptr;
+static bool sg_splashEntryPointHookInstalled = false;
+
+/* ---- Stack overflow crash dump helper ----
+ * MiniDumpWriteDump needs significant stack space. When EXCEPTION_STACK_OVERFLOW
+ * fires, the faulting thread's stack is nearly exhausted, so we must delegate
+ * the dump to a fresh thread with its own stack. */
+struct StackOverflowDumpContext
+{
+	EXCEPTION_POINTERS* exceptionInfo;
+	DWORD faultingThreadId;
+	HANDLE faultingThread;
+	volatile LONG done;
+};
+static StackOverflowDumpContext sg_soDumpCtx = {};
 
 extern "C" __declspec(dllexport) VOID CALLBACK DetourFinishHelperProcess(HWND, HINSTANCE, LPSTR, int)
 {
@@ -176,6 +195,41 @@ static bool ShouldAbortHookInitialization(const wchar_t* stage)
 	return true;
 }
 
+static bool WriteCrashDump(EXCEPTION_POINTERS* exceptionInfo, const wchar_t* stage);
+
+static DWORD WINAPI StackOverflowDumpThread(LPVOID param)
+{
+	StackOverflowDumpContext* ctx = reinterpret_cast<StackOverflowDumpContext*>(param);
+	if (ctx)
+	{
+		BootstrapLog(L"StackOverflowDumpThread: writing crash dump for thread %lu", ctx->faultingThreadId);
+		WriteCrashDump(ctx->exceptionInfo, L"StackOverflowDumpThread");
+		InterlockedExchange(&ctx->done, 1);
+	}
+	return 0;
+}
+
+static bool WriteCrashDumpForStackOverflow(EXCEPTION_POINTERS* exceptionInfo)
+{
+	sg_soDumpCtx.exceptionInfo = exceptionInfo;
+	sg_soDumpCtx.faultingThreadId = GetCurrentThreadId();
+	sg_soDumpCtx.faultingThread = GetCurrentThread();
+	InterlockedExchange(&sg_soDumpCtx.done, 0);
+
+	/* Create a helper thread with its own fresh stack (default 1MB) to write the dump */
+	HANDLE hThread = CreateThread(nullptr, 0, StackOverflowDumpThread, &sg_soDumpCtx, 0, nullptr);
+	if (!hThread)
+	{
+		BootstrapLog(L"WriteCrashDumpForStackOverflow: CreateThread failed (GetLastError=%lu)", GetLastError());
+		return false;
+	}
+
+	/* Wait up to 10 seconds for the dump to complete */
+	WaitForSingleObject(hThread, 10000);
+	CloseHandle(hThread);
+	return InterlockedCompareExchange(&sg_soDumpCtx.done, 0, 0) != 0;
+}
+
 static bool WriteCrashDump(EXCEPTION_POINTERS* exceptionInfo, const wchar_t* stage)
 {
 	if (IsProcessShuttingDown())
@@ -266,7 +320,22 @@ static LONG WINAPI TopLevelExceptionFilter(EXCEPTION_POINTERS* exceptionInfo)
 	}
 	BootstrapLog(L"TopLevelExceptionFilter triggered");
 	Rut::HookX::SetHookRuntimeShuttingDown(true);
-	WriteCrashDump(exceptionInfo, L"TopLevelExceptionFilter");
+
+	/* For stack overflow, the faulting thread's stack is nearly exhausted.
+	 * WriteCrashDump uses std::wstring and other heavy operations,
+	 * so we delegate to a helper thread with a fresh stack. */
+	DWORD code = (exceptionInfo && exceptionInfo->ExceptionRecord)
+		? exceptionInfo->ExceptionRecord->ExceptionCode : 0;
+	if (code == EXCEPTION_STACK_OVERFLOW)
+	{
+		BootstrapLog(L"TopLevelExceptionFilter: EXCEPTION_STACK_OVERFLOW detected, delegating dump to helper thread");
+		WriteCrashDumpForStackOverflow(exceptionInfo);
+	}
+	else
+	{
+		WriteCrashDump(exceptionInfo, L"TopLevelExceptionFilter");
+	}
+
 	LONG previousResult = EXCEPTION_CONTINUE_SEARCH;
 	if (sg_previousTopLevelExceptionFilter && sg_previousTopLevelExceptionFilter != TopLevelExceptionFilter)
 	{
@@ -301,6 +370,33 @@ static void RunHookInitialization(HookInitContext* initContext)
 	if (ShouldAbortHookInitialization(L"HookInitThread: pre-start"))
 	{
 		return;
+	}
+
+	if (initContext->startupSettingsLoaded)
+	{
+		CialloHook::HookModules::ApplyEarlyStartupHooks(initContext->startupSettings, GetCurrentThreadId());
+	}
+
+	if (initContext->waitForEntryPoint && sg_entryPointAttachEvent)
+	{
+		while (true)
+		{
+			if (ShouldAbortHookInitialization(L"HookInitThread: waiting for entry point"))
+			{
+				return;
+			}
+			DWORD waitResult = WaitForSingleObject(sg_entryPointAttachEvent, 100);
+			if (waitResult == WAIT_OBJECT_0)
+			{
+				BootstrapLog(L"HookInitThread: entry point wait completed");
+				break;
+			}
+			if (waitResult != WAIT_TIMEOUT)
+			{
+				BootstrapLog(L"HookInitThread: entry point wait failed (result=%lu)", waitResult);
+				break;
+			}
+		}
 	}
 
 	if (initContext->waitForGuiReady)
@@ -348,6 +444,7 @@ static void RunHookInitialization(HookInitContext* initContext)
 		return;
 	}
 
+	InterlockedExchange(&sg_waitForEntryPointAttach, 0);
 	CialloHook::HookManager::Initialize(initContext->module);
 	BootstrapLog(L"HookInitThread: HookManager::Initialize completed");
 }
@@ -391,12 +488,94 @@ static DWORD WINAPI HookInitThread(LPVOID context)
 	return 0;
 }
 
+/* ---- Entry point hook for splash image ---- */
+extern "C" {
+	LONG WINAPI DetourTransactionBegin();
+	LONG WINAPI DetourTransactionCommit();
+	LONG WINAPI DetourTransactionAbort();
+	LONG WINAPI DetourUpdateThread(HANDLE hThread);
+	LONG WINAPI DetourAttach(PVOID* ppPointer, PVOID pDetour);
+	LONG WINAPI DetourDetach(PVOID* ppPointer, PVOID pDetour);
+}
+
+static HMODULE sg_splashDllModule = nullptr;
+typedef int (WINAPI* EntryPointFn)();
+static EntryPointFn sg_realEntryPoint = nullptr;
+
+static int WINAPI SplashEntryPointHook()
+{
+	DetourTransactionBegin();
+	DetourUpdateThread(GetCurrentThread());
+	DetourDetach((PVOID*)&sg_realEntryPoint, (PVOID)SplashEntryPointHook);
+	DetourTransactionCommit();
+	if (InterlockedCompareExchange(&sg_waitForEntryPointAttach, 0, 0) != 0 && sg_entryPointAttachEvent)
+	{
+		SetEvent(sg_entryPointAttachEvent);
+		BootstrapLog(L"SplashEntryPointHook: signaled delayed attach event");
+	}
+
+	__try { CialloHook::HookManager::ShowSplashFromEntryPoint(sg_splashDllModule); }
+	__except (EXCEPTION_EXECUTE_HANDLER) { BootstrapLog(L"SplashEntryPointHook: SEH exception, skip splash"); }
+
+	return sg_realEntryPoint();
+}
+
+static bool TryInstallSplashEntryPointHook(HMODULE dllModule)
+{
+	HMODULE exeModule = GetModuleHandleW(nullptr);
+	if (!exeModule) return false;
+	PIMAGE_DOS_HEADER dosHeader = (PIMAGE_DOS_HEADER)exeModule;
+	if (dosHeader->e_magic != IMAGE_DOS_SIGNATURE) return false;
+	PIMAGE_NT_HEADERS ntHeaders = (PIMAGE_NT_HEADERS)((BYTE*)exeModule + dosHeader->e_lfanew);
+	if (ntHeaders->Signature != IMAGE_NT_SIGNATURE) return false;
+	DWORD entryRVA = ntHeaders->OptionalHeader.AddressOfEntryPoint;
+	if (!entryRVA) return false;
+	sg_realEntryPoint = (EntryPointFn)((BYTE*)exeModule + entryRVA);
+	sg_splashDllModule = dllModule;
+	DetourTransactionBegin();
+	DetourUpdateThread(GetCurrentThread());
+	LONG result = DetourAttach((PVOID*)&sg_realEntryPoint, (PVOID)SplashEntryPointHook);
+	if (result != NO_ERROR) { DetourTransactionAbort(); sg_realEntryPoint = nullptr; sg_splashEntryPointHookInstalled = false; return false; }
+	DetourTransactionCommit();
+	sg_splashEntryPointHookInstalled = true;
+	BootstrapLog(L"SplashEntryPointHook: installed at entry point 0x%p", sg_realEntryPoint);
+	return true;
+}
+
 static void StartHookInitialization(HMODULE hModule)
 {
 	HookInitContext* initContext = new HookInitContext{};
 	initContext->module = hModule;
 	initContext->waitForGuiReady = false;
 	initContext->delayMs = 0;
+	initContext->waitForEntryPoint = false;
+	initContext->startupSettingsLoaded = CialloHook::HookManager::TryLoadStartupSettings(hModule, initContext->startupSettings);
+	if (initContext->startupSettingsLoaded)
+	{
+		const CialloHook::StartupTimingSettings& timing = initContext->startupSettings.startupTiming;
+		initContext->waitForGuiReady = timing.waitForGuiReady;
+		if (timing.attachMode == L"delay")
+		{
+			initContext->delayMs = timing.delayMs;
+		}
+		else if (timing.attachMode == L"entrypoint")
+		{
+			if (!sg_entryPointAttachEvent)
+			{
+				sg_entryPointAttachEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+			}
+			if (sg_entryPointAttachEvent && sg_splashEntryPointHookInstalled)
+			{
+				ResetEvent(sg_entryPointAttachEvent);
+				InterlockedExchange(&sg_waitForEntryPointAttach, 1);
+				initContext->waitForEntryPoint = true;
+			}
+			else
+			{
+				BootstrapLog(L"StartHookInitialization: entrypoint mode requested but splash entry hook unavailable, fallback to immediate");
+			}
+		}
+	}
 
 	HANDLE threadHandle = CreateThread(nullptr, 0, HookInitThread, initContext, 0, nullptr);
 	if (threadHandle)
@@ -409,14 +588,20 @@ static void StartHookInitialization(HMODULE hModule)
 	BootstrapLog(L"DllMain: CreateThread failed (GetLastError=%lu), skip direct initialize to avoid loader-lock risk", GetLastError());
 	delete initContext;
 }
-
-BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID)
+BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserved)
 {
 	switch (ul_reason_for_call)
 	{
 	case DLL_PROCESS_ATTACH:
 		DisableThreadLibraryCalls(hModule);
 		Rut::HookX::SetHookRuntimeShuttingDown(false);
+		/* Reserve extra stack space for exception handlers (esp. stack overflow).
+		 * SetThreadStackGuarantee is available on Vista+ (Win7 compatible).
+		 * This ensures VEH/SEH handlers have enough stack to run even after stack overflow. */
+		{
+			ULONG stackGuarantee = 32 * 1024;
+			SetThreadStackGuarantee(&stackGuarantee);
+		}
 		CialloHook::HookManager::RegisterLocaleEmulatorStagedFilesFromEnvironment();
 		{
 			wchar_t modulePath[MAX_PATH] = {};
@@ -448,18 +633,34 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID)
 			BootstrapLog(L"DllMain: startup consent declined during attach");
 			return FALSE;
 		}
+		TryInstallSplashEntryPointHook(hModule);
 		StartHookInitialization(hModule);
 		break;
 	case DLL_PROCESS_DETACH:
 		InterlockedExchange(&sg_isProcessDetaching, 1);
 		Rut::HookX::SetHookRuntimeShuttingDown(true);
+		if (lpReserved == nullptr)
 		{
-			Rut::HookX::ScopedDetourErrorDialogSuppression suppressDetourErrorDialog;
-			Rut::HookX::UnhookFileAPIs();
+			BootstrapLog(L"DLL_PROCESS_DETACH: dynamic unload, detach runtime hooks");
+			{
+				Rut::HookX::ScopedDetourErrorDialogSuppression suppressDetourErrorDialog;
+				Rut::HookX::UnhookFileAPIs();
+				Rut::HookX::UnhookRegistryAPIs();
+			}
+		}
+		else
+		{
+			BootstrapLog(L"DLL_PROCESS_DETACH: process termination, skip detour detach");
 		}
 		CialloHook::HookManager::CleanupLocaleEmulatorStagedFilesOnShutdown();
+		CialloHook::HookModules::CleanupRegistryBootstrap();
 		CialloHook::HookModules::CleanupLoadedFontTempFiles();
 		Rut::HookX::CleanupCustomPakCacheOnShutdown();
+			if (sg_entryPointAttachEvent)
+			{
+				CloseHandle(sg_entryPointAttachEvent);
+				sg_entryPointAttachEvent = nullptr;
+			}
 		SetUnhandledExceptionFilter(sg_previousTopLevelExceptionFilter);
 		BootstrapLog(L"DLL_PROCESS_DETACH");
 		Rut::HookX::ShutdownLogger();

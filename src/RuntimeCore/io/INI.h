@@ -1,6 +1,6 @@
 ﻿#pragma once
 #include <string>
-#include <fstream>
+#include <ostream>
 #include <unordered_map>
 
 #include "INI_Value.h"

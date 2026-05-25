@@ -1,4 +1,5 @@
 #pragma once
+#include <cstddef>
 #include <cstdint>
 
 #include "Hook_API.h"
@@ -8,6 +9,14 @@ namespace Rut
 {
 	namespace HookX
 	{
+		struct JumpPatchHandle
+		{
+			void* target = nullptr;
+			size_t patchSize = 0;
+			uint8_t originalBytes[16] = {};
+			bool installed = false;
+		};
+
 		class ScopedDetourErrorDialogSuppression
 		{
 		public:
@@ -22,5 +31,7 @@ namespace Rut
 		bool EndDetourBatch(const wchar_t* operationName);
 		bool TryDetourAttach(void* ppRawFunc, void* pNewFunc);
 		bool TryDetourDetach(void* ppRawFunc, void* pNewFunc);
+		bool InstallJumpPatch(void* target, void* detour, size_t patchSize, JumpPatchHandle& handle);
+		bool RemoveJumpPatch(JumpPatchHandle& handle);
 	}
 }

@@ -11,6 +11,7 @@ namespace CialloHook
 			bool enableKrkrPatch,
 			bool verboseLog,
 			bool bootstrapBypass,
+				bool enableCxdecBridge,
 			const std::wstring& gameDir,
 			const std::vector<std::wstring>& patchRoots,
 			const std::vector<std::wstring>& customPakFiles,

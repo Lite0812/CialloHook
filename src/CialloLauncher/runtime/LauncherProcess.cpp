@@ -91,6 +91,42 @@ namespace
 		return quoted;
 	}
 
+	bool IsExistingFilePath(const std::wstring& path)
+	{
+		if (path.empty())
+		{
+			return false;
+		}
+		DWORD attr = GetFileAttributesW(path.c_str());
+		return attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY) == 0;
+	}
+
+	bool IsSamePathIgnoreCase(const std::wstring& left, const std::wstring& right)
+	{
+		return !left.empty() && !right.empty() && _wcsicmp(left.c_str(), right.c_str()) == 0;
+	}
+
+	std::wstring FindLocalLocaleEmulatorDll(HMODULE loaderModule, const std::wstring& selfDir, const std::wstring& workDir)
+	{
+		std::wstring resolvedPath;
+		wchar_t loaderPath[MAX_PATH] = {};
+		if (loaderModule && GetModuleFileNameW(loaderModule, loaderPath, MAX_PATH))
+		{
+			if (TryResolveLocalLocaleEmulatorDependency(CialloLauncher::GetDirectoryPath(loaderPath), L"LocaleEmulator.dll", resolvedPath))
+			{
+				return resolvedPath;
+			}
+		}
+		if (TryResolveLocalLocaleEmulatorDependency(selfDir, L"LocaleEmulator.dll", resolvedPath))
+		{
+			return resolvedPath;
+		}
+		if (!IsSamePathIgnoreCase(selfDir, workDir) && TryResolveLocalLocaleEmulatorDependency(workDir, L"LocaleEmulator.dll", resolvedPath))
+		{
+			return resolvedPath;
+		}
+		return L"";
+	}
 }
 
 namespace CialloLauncher
@@ -111,6 +147,13 @@ namespace CialloLauncher
 		ML_PROCESS_INFORMATION pi = {};
 		si.cb = sizeof(si);
 		std::wstring targetExePath = ResolveTargetExePath(selfPath, config.targetExe);
+		if (!IsExistingFilePath(targetExePath))
+		{
+			std::wstring message = L"目标 EXE 不存在：\n" + targetExePath;
+			LogMessage(LogLevel::Error, L"%s", message.c_str());
+			MessageBoxW(nullptr, message.c_str(), L"CialloHook - Error", MB_OK | MB_ICONERROR);
+			return false;
+		}
 		std::wstring workDir = GetDirectoryPath(targetExePath);
 		if (workDir.empty())
 		{
@@ -120,6 +163,7 @@ namespace CialloLauncher
 
 		bool loaderFromCustomPak = false;
 		bool loaderCustomPakCandidateFound = false;
+		bool localeCandidateFound = false;
 		std::vector<std::wstring> preparedPaths;
 		std::vector<std::wstring> runtimeSearchDirs;
 		std::vector<std::wstring> stagedPaths;
@@ -135,7 +179,8 @@ namespace CialloLauncher
 			loaderFromCustomPak,
 			loaderCustomPakCandidateFound,
 			preparedPaths,
-			&runtimeSearchDirs);
+			&runtimeSearchDirs,
+			&localeCandidateFound);
 		if (!hLoaderDll)
 		{
 			DWORD err = GetLastError();
@@ -143,11 +188,11 @@ namespace CialloLauncher
 			wchar_t msg[512];
 			if (loaderCustomPakCandidateFound)
 			{
-				swprintf_s(msg, 512, L"Cannot load LoaderDll.dll!\nError: 0x%08X\n\nCustomPak 中已找到相关 DLL，但提取到运行时缓存或加载失败。", err);
+				swprintf_s(msg, 512, L"无法加载 LoaderDll.dll。\nError: 0x%08X\n\n已在 FilePatch / CustomPak 中找到候选 LE 依赖，但运行时加载失败。", err);
 			}
 			else
 			{
-				swprintf_s(msg, 512, L"Cannot load LoaderDll.dll!\nError: 0x%08X\n\nPlease check:\n1. LoaderDll.dll exists locally or in CustomPak\n2. LocaleEmulator.dll is also available", err);
+				swprintf_s(msg, 512, L"无法加载 LoaderDll.dll。\nError: 0x%08X\n\n请检查游戏目录或补丁资源中是否提供了 LoaderDll.dll。", err);
 			}
 			MessageBoxW(nullptr, msg, L"CialloHook - Error", MB_OK | MB_ICONERROR);
 			return false;
@@ -163,7 +208,18 @@ namespace CialloLauncher
 		if (!leCreateProcess)
 		{
 			LogMessage(LogLevel::Error, L"Cannot find LeCreateProcess in LoaderDll.dll");
-			MessageBoxW(nullptr, L"Cannot find LeCreateProcess function in LoaderDll.dll!", L"CialloHook - Error", MB_OK | MB_ICONERROR);
+			MessageBoxW(nullptr, L"LoaderDll.dll 中缺少 LeCreateProcess 导出，无法执行自动转区。", L"CialloHook - Error", MB_OK | MB_ICONERROR);
+			FreeLibrary(hLoaderDll);
+			CleanupPreparedRuntimeFiles(preparedPaths);
+			return false;
+		}
+
+		const std::wstring selfDir = GetDirectoryPath(selfPath);
+		const std::wstring localLocaleDllPath = FindLocalLocaleEmulatorDll(hLoaderDll, selfDir, workDir);
+		if (!localeCandidateFound && localLocaleDllPath.empty())
+		{
+			LogMessage(LogLevel::Error, L"LocaleEmulator.dll is unavailable for LE launch");
+			MessageBoxW(nullptr, L"未找到可用的 LocaleEmulator.dll，无法执行自动转区。", L"CialloHook - Error", MB_OK | MB_ICONERROR);
 			FreeLibrary(hLoaderDll);
 			CleanupPreparedRuntimeFiles(preparedPaths);
 			return false;
@@ -277,9 +333,12 @@ namespace CialloLauncher
 				{
 					DWORD err = GetLastError();
 					LogMessage(LogLevel::Warn, L"Inject user DLL failed, error=0x%08X", err);
-					wchar_t msg[512];
-					swprintf_s(msg, 512, L"Failed to inject user DLLs!\nError: 0x%08X\n\nThis may affect functionality.", err);
-					MessageBoxW(nullptr, msg, L"CialloHook - Warning", MB_OK | MB_ICONWARNING);
+					if (config.debugMode)
+					{
+						wchar_t msg[512];
+						swprintf_s(msg, 512, L"Failed to inject user DLLs!\nError: 0x%08X\n\nLE 已启动，但额外 DLL 注入失败。", err);
+						MessageBoxW(nullptr, msg, L"CialloHook - Warning", MB_OK | MB_ICONWARNING);
+					}
 				}
 				else if (config.debugMode)
 				{
@@ -307,7 +366,7 @@ namespace CialloLauncher
 		{
 			LogMessage(LogLevel::Error, L"LeCreateProcess failed, result=0x%08X", result);
 			wchar_t msg[512];
-			swprintf_s(msg, 512, L"LeCreateProcess Failed!\nError Code: 0x%08X\n\nPossible reasons:\n1. LoaderDll.dll and LocaleEmulator.dll are unavailable locally and in CustomPak\n2. Target EXE not found: %s\n3. DLL files corrupted", result, config.targetExe.c_str());
+			swprintf_s(msg, 512, L"LeCreateProcess 启动失败。\nError Code: 0x%08X\n\n目标: %s\n依赖预检已通过，请检查 LE 运行环境或 DLL 是否损坏。", result, targetExePath.c_str());
 			MessageBoxW(nullptr, msg, L"CialloHook - LE Error", MB_OK | MB_ICONERROR);
 		}
 

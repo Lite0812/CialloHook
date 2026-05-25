@@ -5,6 +5,7 @@
 #include "../../RuntimeCore/base/Str.h"
 #include "../../RuntimeCore/io/INI.h"
 #include "../../RuntimeCore/hook/Hook_API.h"
+#include "../../RuntimeCore/hook/LocaleEmulatorSupport.h"
 
 #include <cwctype>
 #include <limits>
@@ -417,14 +418,32 @@ namespace CialloLauncher
 				timezone = L"Tokyo Standard Time";
 			}
 
-			TIME_ZONE_INFORMATION tzi = {};
-			if (GetTimeZoneInformation(&tzi) != TIME_ZONE_ID_INVALID)
+			memset(&leb.Timezone, 0, sizeof(leb.Timezone));
+			if (!PopulateLocaleEmulatorTimeZone(
+				timezone,
+				reinterpret_cast<wchar_t*>(leb.Timezone.StandardName),
+				32,
+				reinterpret_cast<wchar_t*>(leb.Timezone.DaylightName),
+				32,
+				leb.Timezone.Bias,
+				leb.Timezone.StandardBias,
+				leb.Timezone.DaylightBias))
 			{
-				leb.Timezone.Bias = -540;
-				leb.Timezone.StandardBias = 0;
-				leb.Timezone.DaylightBias = 0;
-				wcsncpy_s(reinterpret_cast<wchar_t*>(leb.Timezone.StandardName), 32, timezone.c_str(), _TRUNCATE);
-				wcsncpy_s(reinterpret_cast<wchar_t*>(leb.Timezone.DaylightName), 32, timezone.c_str(), _TRUNCATE);
+				if (_wcsicmp(timezone.c_str(), L"Tokyo Standard Time") != 0)
+				{
+					AppendIniFallbackWarning(configWarnings, L"LocaleEmulator", L"Timezone", timezone, L"Tokyo Standard Time");
+					timezone = L"Tokyo Standard Time";
+					memset(&leb.Timezone, 0, sizeof(leb.Timezone));
+					PopulateLocaleEmulatorTimeZone(
+						timezone,
+						reinterpret_cast<wchar_t*>(leb.Timezone.StandardName),
+						32,
+						reinterpret_cast<wchar_t*>(leb.Timezone.DaylightName),
+						32,
+						leb.Timezone.Bias,
+						leb.Timezone.StandardBias,
+						leb.Timezone.DaylightBias);
+				}
 			}
 			memset(leb.DefaultFaceName, 0, sizeof(leb.DefaultFaceName));
 		}

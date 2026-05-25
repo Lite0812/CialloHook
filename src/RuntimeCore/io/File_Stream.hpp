@@ -1,8 +1,6 @@
 #pragma once
 #include <fstream>
-
-#include "../base/Str.h"
-
+#include <stdexcept>
 
 namespace Rut
 {
@@ -48,15 +46,6 @@ namespace Rut
 		}
 
 		template <typename T_FileName>
-		std::wofstream CreateFileUTF8Stream(const T_FileName& tFile)
-		{
-			std::wofstream ofs(tFile);
-			ofs.imbue(StrX::GetCVT_UTF8());
-			if (!ofs) { throw std::runtime_error("CreateFileUTF8Stream: Create File Error!"); }
-			return ofs;
-		}
-
-		template <typename T_FileName>
 		std::ifstream OpenFileBinaryStream(const T_FileName& tFile)
 		{
 			std::ifstream ifs(tFile, std::ios::binary);
@@ -69,15 +58,6 @@ namespace Rut
 		{
 			std::ifstream ifs(tFile);
 			if (!ifs) { throw std::runtime_error("OpenFileANSIStream: Open File Error!"); }
-			return ifs;
-		}
-
-		template <typename T_FileName>
-		std::wifstream OpenFileUTF8Stream(const T_FileName& tFile)
-		{
-			std::wifstream ifs(tFile);
-			ifs.imbue(StrX::GetCVT_UTF8());
-			if (!ifs) { throw std::runtime_error("OpenFileUTF8Stream: Open File Error!"); }
 			return ifs;
 		}
 	}

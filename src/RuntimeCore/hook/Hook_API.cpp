@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdarg>
+#include <cstring>
 #include <intrin.h>
 #include <share.h>
 #include <shlobj.h>
@@ -578,7 +579,7 @@ namespace Rut
 				return;
 			}
 
-			wchar_t buffer[4096] = {};
+			wchar_t buffer[1024] = {};
 			va_list args;
 			va_start(args, format);
 			_vsnwprintf_s(buffer, _countof(buffer), _TRUNCATE, format, args);
@@ -597,7 +598,7 @@ namespace Rut
 				return;
 			}
 
-			char buffer[4096] = {};
+			char buffer[1024] = {};
 			va_list args;
 			va_start(args, format);
 			vsnprintf_s(buffer, _countof(buffer), _TRUNCATE, format, args);
@@ -624,6 +625,7 @@ namespace Rut
 
 #include "hook_api/font_hooks.inl"
 #include "hook_api/text_hooks.inl"
+#include "hook_api/ui_text_hooks.inl"
 #include "hook_api/window_hooks.inl"
 #include "hook_api/file_hooks.inl"
 #include "hook_api/siglus_hooks.inl"

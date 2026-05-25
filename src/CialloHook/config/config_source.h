@@ -179,6 +179,32 @@ namespace CialloHook
 		settings.textReplace.hookGetGlyphIndicesW = true;
 		settings.textReplace.hookGetGlyphOutlineA = true;
 		settings.textReplace.hookGetGlyphOutlineW = true;
+			settings.textReplace.hookMessageBoxA = true;
+			settings.textReplace.hookSetDlgItemTextA = true;
+			settings.textReplace.hookSendDlgItemMessageA = true;
+			settings.textReplace.hookSendDlgItemMessageW = true;
+			settings.textReplace.hookSendMessageA = true;
+			settings.textReplace.hookSendMessageW = true;
+			settings.textReplace.hookAppendMenuA = true;
+			settings.textReplace.hookModifyMenuA = true;
+			settings.textReplace.hookInsertMenuA = true;
+			settings.textReplace.hookInsertMenuItemA = true;
+			settings.textReplace.hookSetMenuItemInfoA = true;
+			settings.textReplace.hookMessageBoxIndirectA = true;
+			settings.textReplace.hookDrawThemeText = true;
+			settings.textReplace.hookDrawThemeTextEx = true;
+			settings.textReplace.hookDefWindowProcA = true;
+			settings.textReplace.hookDefWindowProcW = true;
+			settings.textReplace.hookDialogBoxParamA = true;
+			settings.textReplace.hookDialogBoxParamW = true;
+			settings.textReplace.hookCreateDialogParamA = true;
+			settings.textReplace.hookCreateDialogParamW = true;
+			settings.textReplace.hookDialogBoxIndirectParamA = true;
+			settings.textReplace.hookDialogBoxIndirectParamW = true;
+			settings.textReplace.hookCreateDialogIndirectParamA = true;
+			settings.textReplace.hookCreateDialogIndirectParamW = true;
+			settings.textReplace.hookPropertySheetA = false;
+			settings.textReplace.hookExitProcessGuard = false;
 
 		// ---------------- [WindowTitle] 窗口标题 ----------------
 		settings.windowTitle.rules = {
@@ -196,6 +222,20 @@ namespace CialloHook
 		settings.startupMessage.title = L"CialloHook";
 		settings.startupMessage.author = L"";
 		settings.startupMessage.text = L"";
+
+		// ---------------- [SplashImage] 启动图片弹窗 ----------------
+		settings.splashImage.enable = false;
+		settings.splashImage.imageFile = L"splash.png";
+		settings.splashImage.width = 800;
+		settings.splashImage.height = 600;
+		settings.splashImage.entryEffect = 1;
+		settings.splashImage.exitEffect = 1;
+		settings.splashImage.entryMs = 1200;
+		settings.splashImage.holdMs = 1800;
+		settings.splashImage.exitMs = 1500;
+		settings.splashImage.durationMs = 0;
+		settings.splashImage.position = 1;
+		settings.splashImage.interactionMode = 0;
 
 		// ---------------- [SiglusKeyExtract] Siglus Key 提取 ----------------
 		settings.siglusKeyExtract.enable = false;
@@ -241,10 +281,20 @@ namespace CialloHook
 		};
 		settings.registry.enableLog = false;
 
+		// ---------------- [RegistryBootstrap] 临时注册表引导 ----------------
+		settings.registryBootstrap.enable = false;
+		settings.registryBootstrap.cleanupOnExit = true;
+		settings.registryBootstrap.enableLog = false;
+		settings.registryBootstrap.rules = {
+			// { L"HKCU", L"Software\\Vendor\\Game", L"InstallPath", L"SZ", L".\\" },
+		};
+
 		// ---------------- [CodePage] 代码页伪装 ----------------
 		settings.codePage.enable = false;
 		settings.codePage.fromCodePage = 932;
 		settings.codePage.toCodePage = 936;
+			settings.codePage.hookMultiByteToWideChar = true;
+			settings.codePage.hookWideCharToMultiByte = true;
 
 		// ---------------- [Debug] 调试日志 ----------------
 		settings.debug.enable = false;
@@ -253,6 +303,12 @@ namespace CialloHook
 
 		// ---------------- [LoadMode] 加载模式 ----------------
 		settings.loadMode.mode = L"proxy";
+
+			// ---------------- [StartupTiming] 延迟附加 ----------------
+			settings.startupTiming.attachMode = L"immediate";
+			settings.startupTiming.delayMs = 0;
+			settings.startupTiming.waitForGuiReady = false;
+			settings.startupTiming.enableStartupWindowGate = false;
 		// 如果使用 Loader 模式，这里改成：settings.loadMode.mode = L"loader";
 
 		// ---------------- [LocaleEmulator] 转区 ----------------
@@ -264,12 +320,27 @@ namespace CialloHook
 		settings.localeEmulator.hookUILanguageAPI = 0;
 		settings.localeEmulator.timezone = L"Tokyo Standard Time";
 
+		// ---------------- [RioShiina] RioShiina 引擎补丁 ----------------
+		settings.rioShiina.enable = false;
+		settings.rioShiina.mode = 0;
+		settings.rioShiina.patchNames = {
+			L"unencrypted",
+		};
+		settings.rioShiina.extractOutputDir = L"rio_extract";
+		settings.rioShiina.archivesToExtract = {};
+		settings.rioShiina.skipInvalidFileName = true;
+		settings.rioShiina.enableLog = false;
+		settings.rioShiina.processReg = true;
+		settings.rioShiina.processDvd = false;
+		settings.rioShiina.specDvdFileSize = 0;
+
 		// ---------------- [GLOBAL] / [EnginePatches] 引擎补丁 ----------------
 		settings.engineCache.med = false;
 		settings.engineCache.majiro = false;
 		settings.enginePatches.enableKrkrPatch = false;
 		settings.enginePatches.krkrPatchVerboseLog = false;
 		settings.enginePatches.krkrBootstrapBypass = false;
+		settings.enginePatches.enableKrkrCxdecBridge = false;
 		settings.enginePatches.krkrPatchNames = {
 			// L"patch.xp3",
 		};

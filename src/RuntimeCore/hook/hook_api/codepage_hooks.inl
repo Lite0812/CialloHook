@@ -1,4 +1,4 @@
-		//*********START CodePage Conversion*********
+﻿		//*********START CodePage Conversion*********
 		static UINT sg_uiFromCodePage = 0;
 		static UINT sg_uiToCodePage = 0;
 
@@ -12,8 +12,8 @@
 		//*********Hook MultiByteToWideChar*********
 		static pMultiByteToWideChar rawMultiByteToWideChar = MultiByteToWideChar;
 
-		int WINAPI newMultiByteToWideChar(UINT CodePage, DWORD dwFlags, LPCCH lpMultiByteStr, int cbMultiByte, LPWSTR lpWideCharStr, int cchWideChar)
-		{
+		int WINAPI newMultiByteToWideChar_SehImpl(UINT CodePage, DWORD dwFlags, LPCCH lpMultiByteStr, int cbMultiByte, LPWSTR lpWideCharStr, int cchWideChar)
+{
 			if (IsHookRuntimeShuttingDown())
 			{
 				return rawMultiByteToWideChar(CodePage, dwFlags, lpMultiByteStr, cbMultiByte, lpWideCharStr, cchWideChar);
@@ -26,6 +26,12 @@
 			
 			return rawMultiByteToWideChar(CodePage, dwFlags, lpMultiByteStr, cbMultiByte, lpWideCharStr, cchWideChar);
 		}
+		int WINAPI newMultiByteToWideChar(UINT CodePage, DWORD dwFlags, LPCCH lpMultiByteStr, int cbMultiByte, LPWSTR lpWideCharStr, int cchWideChar)
+		{
+			__try { return newMultiByteToWideChar_SehImpl(CodePage, dwFlags, lpMultiByteStr, cbMultiByte, lpWideCharStr, cchWideChar); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawMultiByteToWideChar(CodePage, dwFlags, lpMultiByteStr, cbMultiByte, lpWideCharStr, cchWideChar); }
+		}
+
 
 		bool HookMultiByteToWideChar()
 		{
@@ -36,8 +42,8 @@
 		//*********Hook WideCharToMultiByte*********
 		static pWideCharToMultiByte rawWideCharToMultiByte = WideCharToMultiByte;
 
-		int WINAPI newWideCharToMultiByte(UINT CodePage, DWORD dwFlags, LPCWCH lpWideCharStr, int cchWideChar, LPSTR lpMultiByteStr, int cbMultiByte, LPCCH lpDefaultChar, LPBOOL lpUsedDefaultChar)
-		{
+		int WINAPI newWideCharToMultiByte_SehImpl(UINT CodePage, DWORD dwFlags, LPCWCH lpWideCharStr, int cchWideChar, LPSTR lpMultiByteStr, int cbMultiByte, LPCCH lpDefaultChar, LPBOOL lpUsedDefaultChar)
+{
 			if (IsHookRuntimeShuttingDown())
 			{
 				return rawWideCharToMultiByte(CodePage, dwFlags, lpWideCharStr, cchWideChar, lpMultiByteStr, cbMultiByte, lpDefaultChar, lpUsedDefaultChar);
@@ -50,6 +56,12 @@
 			
 			return rawWideCharToMultiByte(CodePage, dwFlags, lpWideCharStr, cchWideChar, lpMultiByteStr, cbMultiByte, lpDefaultChar, lpUsedDefaultChar);
 		}
+		int WINAPI newWideCharToMultiByte(UINT CodePage, DWORD dwFlags, LPCWCH lpWideCharStr, int cchWideChar, LPSTR lpMultiByteStr, int cbMultiByte, LPCCH lpDefaultChar, LPBOOL lpUsedDefaultChar)
+		{
+			__try { return newWideCharToMultiByte_SehImpl(CodePage, dwFlags, lpWideCharStr, cchWideChar, lpMultiByteStr, cbMultiByte, lpDefaultChar, lpUsedDefaultChar); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawWideCharToMultiByte(CodePage, dwFlags, lpWideCharStr, cchWideChar, lpMultiByteStr, cbMultiByte, lpDefaultChar, lpUsedDefaultChar); }
+		}
+
 
 		bool HookWideCharToMultiByte()
 		{

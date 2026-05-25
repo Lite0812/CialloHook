@@ -27,6 +27,12 @@
     <ClCompile Include="hooks\hook_modules.cpp">
       <Filter>hooks</Filter>
     </ClCompile>
+    <ClCompile Include="hooks\krkr_plugin_bridge.cpp">
+      <Filter>hooks</Filter>
+    </ClCompile>
+    <ClCompile Include="hooks\rio_shiina_hooks.cpp">
+      <Filter>hooks</Filter>
+    </ClCompile>
     <ClCompile Include="entry\Proxy.cpp">
       <Filter>entry</Filter>
     </ClCompile>
@@ -48,6 +54,12 @@
       <Filter>core</Filter>
     </ClInclude>
     <ClInclude Include="hooks\hook_modules.h">
+      <Filter>hooks</Filter>
+    </ClInclude>
+    <ClInclude Include="hooks\krkr_plugin_bridge.h">
+      <Filter>hooks</Filter>
+    </ClInclude>
+    <ClInclude Include="hooks\rio_shiina_hooks.h">
       <Filter>hooks</Filter>
     </ClInclude>
     <ClInclude Include="entry\Proxy.h">

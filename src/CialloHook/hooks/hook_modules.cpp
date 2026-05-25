@@ -1,11 +1,17 @@
 #include "hook_modules.h"
 #include "krkr_plugin_bridge.h"
+#include "rio_shiina_hooks.h"
 
 #include <Windows.h>
+#include <gdiplus.h>
 #include <string>
 #include <cwctype>
 #include <vector>
 #include <memory>
+#include <algorithm>
+#include <unordered_set>
+
+#pragma comment(lib, "gdiplus.lib")
 
 #include "../../RuntimeCore/io/File.h"
 #include "../../RuntimeCore/io/CustomPakVFS.h"
@@ -31,7 +37,46 @@ namespace CialloHook
 			std::wstring targetFont;
 		};
 
-		static std::vector<std::wstring> sg_loadedTempFontFiles;
+		struct ResolvedFontFileSource
+		{
+			std::wstring resolvedDiskPath;
+			bool fromCustomPak = false;
+			bool usedTempCache = false;
+		};
+
+		struct ResolvedFontTarget
+		{
+			std::wstring effectiveFaceName;
+			std::vector<std::wstring> candidateFaces;
+			std::wstring sourcePath;
+			std::wstring discoveryMethod;
+			int selectedIndex = 0;
+			bool usedManualOverride = false;
+			bool usedFallbackBasename = false;
+		};
+
+		struct RegistryBootstrapKeyRecord
+			{
+				HKEY root = nullptr;
+				std::wstring keyPath;
+				bool keyExisted = false;
+			};
+
+			struct RegistryBootstrapValueRecord
+			{
+				HKEY root = nullptr;
+				std::wstring keyPath;
+				std::wstring valueName;
+				bool valueExisted = false;
+				DWORD originalType = REG_NONE;
+				std::vector<BYTE> originalData;
+			};
+
+			static std::vector<std::wstring> sg_loadedTempFontFiles;
+			static std::vector<std::wstring> sg_activeFontPatchFolders;
+			static std::vector<RegistryBootstrapKeyRecord> sg_registryBootstrapKeys;
+			static std::vector<RegistryBootstrapValueRecord> sg_registryBootstrapValues;
+			static bool sg_registryBootstrapCleanupOnExit = true;
 
 		static bool IsBlankText(const std::wstring& text)
 		{
@@ -64,7 +109,77 @@ namespace CialloHook
 			return !batchStarted || EndDetourBatch(operationName);
 		}
 
-		static std::string WideToCodePage(const std::wstring& text, uint32_t codePage)
+		static bool EqualsInsensitive(const std::wstring& left, const std::wstring& right)
+			{
+				return _wcsicmp(left.c_str(), right.c_str()) == 0;
+			}
+
+			static bool TryResolveRegistryRoot(const std::wstring& rootName, HKEY& rootKey)
+			{
+				if (EqualsInsensitive(rootName, L"HKCU") || EqualsInsensitive(rootName, L"HKEY_CURRENT_USER"))
+				{
+					rootKey = HKEY_CURRENT_USER;
+					return true;
+				}
+				if (EqualsInsensitive(rootName, L"HKLM") || EqualsInsensitive(rootName, L"HKEY_LOCAL_MACHINE"))
+				{
+					rootKey = HKEY_LOCAL_MACHINE;
+					return true;
+				}
+				return false;
+			}
+
+			static bool TryParseRegistryDword(const std::wstring& rawValue, DWORD& outValue)
+			{
+				std::wstring trimmed = Rut::StrX::Trim(rawValue);
+				if (trimmed.empty() || trimmed[0] == L'-')
+				{
+					return false;
+				}
+				try
+				{
+					size_t index = 0;
+					unsigned long long parsed = std::stoull(trimmed, &index, 0);
+					if (index != trimmed.size() || parsed > 0xFFFFFFFFull)
+					{
+						return false;
+					}
+					outValue = static_cast<DWORD>(parsed);
+					return true;
+				}
+				catch (...)
+				{
+					return false;
+				}
+			}
+
+			static bool HasRegistryBootstrapKeyRecord(HKEY rootKey, const std::wstring& keyPath)
+			{
+				for (const auto& record : sg_registryBootstrapKeys)
+				{
+					if (record.root == rootKey && EqualsInsensitive(record.keyPath, keyPath))
+					{
+						return true;
+					}
+				}
+				return false;
+			}
+
+			static bool HasRegistryBootstrapValueRecord(HKEY rootKey, const std::wstring& keyPath, const std::wstring& valueName)
+			{
+				for (const auto& record : sg_registryBootstrapValues)
+				{
+					if (record.root == rootKey
+						&& EqualsInsensitive(record.keyPath, keyPath)
+						&& EqualsInsensitive(record.valueName, valueName))
+					{
+						return true;
+					}
+				}
+				return false;
+			}
+
+			static std::string WideToCodePage(const std::wstring& text, uint32_t codePage)
 		{
 			if (text.empty())
 			{
@@ -225,6 +340,52 @@ namespace CialloHook
 				return inputPath;
 			}
 			return JoinPath(gameDir, inputPath);
+		}
+
+		static std::wstring NormalizeLocalPathSlashes(std::wstring path)
+		{
+			for (wchar_t& c : path)
+			{
+				if (c == L'/')
+				{
+					c = L'\\';
+				}
+			}
+			return path;
+		}
+
+		static bool TryBuildGameRelativePath(const std::wstring& gameDir, const std::wstring& inputPath, std::wstring& relativePath)
+		{
+			relativePath.clear();
+			if (inputPath.empty())
+			{
+				return false;
+			}
+
+			std::wstring normalizedInput = NormalizeLocalPathSlashes(inputPath);
+			if (!IsAbsolutePath(normalizedInput))
+			{
+				relativePath = normalizedInput;
+			}
+			else
+			{
+				std::wstring normalizedGameDir = NormalizeLocalPathSlashes(gameDir);
+				if (normalizedGameDir.empty() || _wcsnicmp(normalizedInput.c_str(), normalizedGameDir.c_str(), normalizedGameDir.size()) != 0)
+				{
+					return false;
+				}
+				if (normalizedInput.size() > normalizedGameDir.size() && normalizedInput[normalizedGameDir.size()] != L'\\')
+				{
+					return false;
+				}
+				relativePath = normalizedInput.substr(normalizedGameDir.size());
+			}
+
+			while (!relativePath.empty() && (relativePath[0] == L'.' || relativePath[0] == L'\\'))
+			{
+				relativePath.erase(relativePath.begin());
+			}
+			return !relativePath.empty();
 		}
 
 		static std::wstring TrimWide(std::wstring value)
@@ -532,7 +693,206 @@ namespace CialloHook
 			return attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY) == 0;
 		}
 
-		static bool TryLoadFontFromCustomPakPath(const std::wstring& path, bool& foundCandidate)
+		static std::wstring GetBaseNameWithoutExtension(const std::wstring& path)
+		{
+			std::wstring fileName = PathRemoveExtension(path);
+			size_t pos = fileName.find_last_of(L"\\/");
+			return (pos == std::wstring::npos) ? fileName : fileName.substr(pos + 1);
+		}
+
+		static void AppendUniqueFace(std::vector<std::wstring>& faces, const std::wstring& face)
+		{
+			if (face.empty())
+			{
+				return;
+			}
+			for (const std::wstring& existing : faces)
+			{
+				if (_wcsicmp(existing.c_str(), face.c_str()) == 0)
+				{
+					return;
+				}
+			}
+			faces.push_back(face);
+		}
+
+		static int CALLBACK CollectFontFaceProc(const LOGFONTW* logFont, const TEXTMETRICW*, DWORD, LPARAM lParam)
+		{
+			auto* faces = reinterpret_cast<std::vector<std::wstring>*>(lParam);
+			if (faces && logFont)
+			{
+				AppendUniqueFace(*faces, logFont->lfFaceName);
+			}
+			return 1;
+		}
+
+		static std::vector<std::wstring> EnumerateAllFontFacesSnapshot()
+		{
+			std::vector<std::wstring> faces;
+			HDC hdc = GetDC(nullptr);
+			if (!hdc)
+			{
+				return faces;
+			}
+			LOGFONTW lf = {};
+			lf.lfCharSet = DEFAULT_CHARSET;
+			EnumFontFamiliesExW(hdc, &lf, reinterpret_cast<FONTENUMPROCW>(CollectFontFaceProc), reinterpret_cast<LPARAM>(&faces), 0);
+			ReleaseDC(nullptr, hdc);
+			return faces;
+		}
+
+		static std::vector<std::wstring> DiffFontFaceSnapshots(const std::vector<std::wstring>& before, const std::vector<std::wstring>& after)
+		{
+			std::vector<std::wstring> diff;
+			for (const std::wstring& face : after)
+			{
+				bool exists = false;
+				for (const std::wstring& oldFace : before)
+				{
+					if (_wcsicmp(face.c_str(), oldFace.c_str()) == 0)
+					{
+						exists = true;
+						break;
+					}
+				}
+				if (!exists)
+				{
+					AppendUniqueFace(diff, face);
+				}
+			}
+			return diff;
+		}
+
+		struct ScopedGdiplusSession
+		{
+			ULONG_PTR token = 0;
+			bool started = false;
+
+			ScopedGdiplusSession()
+			{
+				Gdiplus::GdiplusStartupInput input;
+				started = Gdiplus::GdiplusStartup(&token, &input, nullptr) == Gdiplus::Ok;
+			}
+
+			~ScopedGdiplusSession()
+			{
+				if (started)
+				{
+					Gdiplus::GdiplusShutdown(token);
+				}
+			}
+		};
+
+		static std::vector<std::wstring> DiscoverSfntFontFaces(const std::wstring& fontFilePath)
+		{
+			std::vector<std::wstring> faces;
+			ScopedGdiplusSession gdiplus;
+			if (!gdiplus.started)
+			{
+				return faces;
+			}
+
+			std::vector<std::wstring> familyNames;
+			{
+				Gdiplus::PrivateFontCollection collection;
+				if (collection.AddFontFile(fontFilePath.c_str()) != Gdiplus::Ok)
+				{
+					return faces;
+				}
+				INT familyCount = collection.GetFamilyCount();
+				if (familyCount <= 0)
+				{
+					return faces;
+				}
+				std::vector<Gdiplus::FontFamily> families(static_cast<size_t>(familyCount));
+				INT foundFamilies = 0;
+				collection.GetFamilies(familyCount, families.data(), &foundFamilies);
+				for (INT i = 0; i < foundFamilies; ++i)
+				{
+					wchar_t familyName[LF_FACESIZE] = {};
+					if (families[static_cast<size_t>(i)].GetFamilyName(familyName, LANG_NEUTRAL) == Gdiplus::Ok)
+					{
+						AppendUniqueFace(familyNames, familyName);
+					}
+				}
+			}
+
+			if (familyNames.empty())
+			{
+				return faces;
+			}
+
+			if (AddFontResourceExW(fontFilePath.c_str(), FR_PRIVATE, nullptr) > 0)
+			{
+				HDC hdc = GetDC(nullptr);
+				if (hdc)
+				{
+					for (const std::wstring& familyName : familyNames)
+					{
+						LOGFONTW lf = {};
+						lf.lfCharSet = DEFAULT_CHARSET;
+						wcsncpy_s(lf.lfFaceName, familyName.c_str(), _TRUNCATE);
+						EnumFontFamiliesExW(hdc, &lf, reinterpret_cast<FONTENUMPROCW>(CollectFontFaceProc), reinterpret_cast<LPARAM>(&faces), 0);
+					}
+					ReleaseDC(nullptr, hdc);
+				}
+				RemoveFontResourceExW(fontFilePath.c_str(), FR_PRIVATE, nullptr);
+			}
+
+			if (faces.empty())
+			{
+				faces = familyNames;
+			}
+			return faces;
+		}
+
+		static std::vector<std::wstring> DiscoverRasterFontFaces(const std::wstring& fontFilePath)
+		{
+			std::vector<std::wstring> before = EnumerateAllFontFacesSnapshot();
+			if (AddFontResourceExW(fontFilePath.c_str(), FR_PRIVATE, nullptr) <= 0)
+			{
+				return {};
+			}
+			std::vector<std::wstring> after = EnumerateAllFontFacesSnapshot();
+			RemoveFontResourceExW(fontFilePath.c_str(), FR_PRIVATE, nullptr);
+			return DiffFontFaceSnapshots(before, after);
+		}
+
+		static std::vector<std::wstring> DiscoverFontFacesFromFile(const std::wstring& fontFilePath, const std::wstring& ext, std::wstring& discoveryMethod)
+		{
+			discoveryMethod.clear();
+			std::vector<std::wstring> faces;
+			if (ext == L".ttf" || ext == L".otf" || ext == L".ttc" || ext == L".otc")
+			{
+				discoveryMethod = L"sfnt-gdiplus+gdi";
+				faces = DiscoverSfntFontFaces(fontFilePath);
+				if (faces.empty())
+				{
+					discoveryMethod = L"sfnt-gdi-diff";
+					faces = DiscoverRasterFontFaces(fontFilePath);
+				}
+			}
+			else if (ext == L".fon" || ext == L".fnt")
+			{
+				discoveryMethod = L"raster-gdi-diff";
+				faces = DiscoverRasterFontFaces(fontFilePath);
+			}
+			else
+			{
+				/* Unknown extension (e.g. prefix-resolved font with .dll/.dat/etc).
+				 * Try sfnt first (covers TrueType/OpenType), then raster as fallback. */
+				discoveryMethod = L"universal-sfnt";
+				faces = DiscoverSfntFontFaces(fontFilePath);
+				if (faces.empty())
+				{
+					discoveryMethod = L"universal-gdi-diff";
+					faces = DiscoverRasterFontFaces(fontFilePath);
+				}
+			}
+			return faces;
+		}
+
+		static bool ResolveFontFileSourceFromCustomPakPath(const std::wstring& path, ResolvedFontFileSource& sourceOut, bool& foundCandidate)
 		{
 			foundCandidate = false;
 			std::shared_ptr<const std::vector<uint8_t>> data;
@@ -541,94 +901,520 @@ namespace CialloHook
 				return false;
 			}
 			foundCandidate = true;
-
 			std::wstring cachePath;
 			if (!TryGetCustomPakDiskCachePath(path.c_str(), cachePath) || cachePath.empty())
 			{
 				LogMessage(LogLevel::Error, L"Font CustomPak extraction failed: shared cache unavailable for %s", path.c_str());
 				return false;
 			}
+			sourceOut.resolvedDiskPath = cachePath;
+			sourceOut.fromCustomPak = true;
+			sourceOut.usedTempCache = true;
+			return true;
+		}
 
-			if (LoadFontFromFile(cachePath.c_str(), false))
+		static bool FindCustomPakFontFileByName(const std::wstring& fileName, std::wstring& virtualPathOut)
+		{
+			virtualPathOut.clear();
+			std::vector<std::wstring> pendingDirs;
+			pendingDirs.push_back(L"");
+			for (size_t index = 0; index < pendingDirs.size(); ++index)
 			{
-				TrackLoadedTempFontFile(cachePath);
-				return true;
+				const std::wstring currentDir = pendingDirs[index];
+				std::vector<CustomPakVFSDirectoryEntry> entries;
+				if (!EnumerateCustomPakVFSDirectory(currentDir.c_str(), entries))
+				{
+					continue;
+				}
+				for (const CustomPakVFSDirectoryEntry& entry : entries)
+				{
+					std::wstring childPath = currentDir.empty() ? entry.name : (currentDir + L"\\" + entry.name);
+					if (entry.isDirectory)
+					{
+						pendingDirs.push_back(childPath);
+						continue;
+					}
+					if (_wcsicmp(entry.name.c_str(), fileName.c_str()) == 0)
+					{
+						virtualPathOut = childPath;
+						return true;
+					}
+				}
 			}
-			LogMessage(LogLevel::Error, L"Font CustomPak extraction failed: AddFontResourceExW rejected %s", cachePath.c_str());
 			return false;
 		}
 
-		static bool TryLoadFontFilePreferLocal(const std::wstring& fontPathOrFileName)
+		/* ---- Font file prefix search ----
+		 * When Font config has no recognized extension (e.g. "我是可爱字体"),
+		 * search the game directory and VFS for any file whose stem matches.
+		 * This allows using arbitrary file extensions (e.g. .dll, .dat) for font files. */
+
+		static bool FindFontFileByPrefixLocal(const std::wstring& searchDir, const std::wstring& prefix, std::wstring& foundPath)
 		{
-			bool localFileExists = IsRegularFilePath(fontPathOrFileName);
-			if (localFileExists && LoadFontFromFile(fontPathOrFileName.c_str(), false))
+			if (prefix.empty() || searchDir.empty())
+			{
+				return false;
+			}
+			std::wstring pattern = JoinPath(searchDir, prefix) + L".*";
+			WIN32_FIND_DATAW fd = {};
+			HANDLE hFind = FindFirstFileW(pattern.c_str(), &fd);
+			if (hFind == INVALID_HANDLE_VALUE)
+			{
+				return false;
+			}
+			do
+			{
+				if ((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
+				{
+					continue;
+				}
+				/* Verify the stem matches exactly (case-insensitive) */
+				std::wstring candidateName = fd.cFileName;
+				size_t dot = candidateName.find_last_of(L'.');
+				std::wstring stem = (dot != std::wstring::npos) ? candidateName.substr(0, dot) : candidateName;
+				if (_wcsicmp(stem.c_str(), prefix.c_str()) == 0)
+				{
+					foundPath = JoinPath(searchDir, candidateName);
+					FindClose(hFind);
+					return true;
+				}
+			} while (FindNextFileW(hFind, &fd));
+			FindClose(hFind);
+			return false;
+		}
+
+		static bool FindFontFileByPrefixInCustomPak(const std::wstring& prefix, std::wstring& virtualPathOut)
+		{
+			virtualPathOut.clear();
+			if (prefix.empty())
+			{
+				return false;
+			}
+			std::vector<std::wstring> pendingDirs;
+			pendingDirs.push_back(L"");
+			for (size_t index = 0; index < pendingDirs.size(); ++index)
+			{
+				const std::wstring currentDir = pendingDirs[index];
+				std::vector<CustomPakVFSDirectoryEntry> entries;
+				if (!EnumerateCustomPakVFSDirectory(currentDir.c_str(), entries))
+				{
+					continue;
+				}
+				for (const CustomPakVFSDirectoryEntry& entry : entries)
+				{
+					std::wstring childPath = currentDir.empty() ? entry.name : (currentDir + L"\\" + entry.name);
+					if (entry.isDirectory)
+					{
+						pendingDirs.push_back(childPath);
+						continue;
+					}
+					/* Check if the file stem matches the prefix (case-insensitive) */
+					size_t dot = entry.name.find_last_of(L'.');
+					std::wstring stem = (dot != std::wstring::npos) ? entry.name.substr(0, dot) : entry.name;
+					if (_wcsicmp(stem.c_str(), prefix.c_str()) == 0)
+					{
+						virtualPathOut = childPath;
+						return true;
+					}
+				}
+			}
+			return false;
+		}
+
+		/* Try to load a candidate file as a font. Returns true if AddFontResourceExW accepts it. */
+		static bool TryLoadCandidateAsFont(const std::wstring& filePath)
+		{
+			if (filePath.empty())
+			{
+				return false;
+			}
+			int result = AddFontResourceExW(filePath.c_str(), FR_PRIVATE, nullptr);
+			if (result > 0)
+			{
+				/* It's a valid font file. Remove it now; the caller will load it properly later. */
+				RemoveFontResourceExW(filePath.c_str(), FR_PRIVATE, nullptr);
+				return true;
+			}
+			return false;
+		}
+
+		static bool IsSameOrNestedRelativePath(const std::wstring& path, const std::wstring& folder)
+		{
+			if (path.empty() || folder.empty())
+			{
+				return false;
+			}
+			std::wstring normalizedPath = NormalizeLocalPathSlashes(path);
+			std::wstring normalizedFolder = NormalizeLocalPathSlashes(folder);
+			if (_wcsicmp(normalizedPath.c_str(), normalizedFolder.c_str()) == 0)
+			{
+				return true;
+			}
+			std::wstring folderPrefix = normalizedFolder + L"\\";
+			return normalizedPath.size() >= folderPrefix.size()
+				&& _wcsnicmp(normalizedPath.c_str(), folderPrefix.c_str(), folderPrefix.size()) == 0;
+		}
+
+		static bool ResolveLocalFontFileSource(const std::wstring& fontPathOrFileName, ResolvedFontFileSource& sourceOut, bool& foundCandidate, bool includeGameFile)
+		{
+			foundCandidate = false;
+			std::wstring gameDir = GetGameDirectory();
+			std::wstring relativePath;
+			if (TryBuildGameRelativePath(gameDir, fontPathOrFileName, relativePath))
+			{
+				for (size_t i = sg_activeFontPatchFolders.size(); i > 0; --i)
+				{
+					const std::wstring& folder = sg_activeFontPatchFolders[i - 1];
+					if (folder.empty() || IsSameOrNestedRelativePath(relativePath, folder))
+					{
+						continue;
+					}
+					std::wstring patchCandidate = ToGameAbsolutePath(gameDir, JoinPath(folder, relativePath));
+					if (IsRegularFilePath(patchCandidate))
+					{
+						foundCandidate = true;
+						sourceOut.resolvedDiskPath = patchCandidate;
+						LogMessage(LogLevel::Info, L"Font local patch resolved: %s => %s", fontPathOrFileName.c_str(), patchCandidate.c_str());
+						return true;
+					}
+				}
+
+				if (includeGameFile)
+				{
+					std::wstring gameCandidate = ToGameAbsolutePath(gameDir, relativePath);
+					if (IsRegularFilePath(gameCandidate))
+					{
+						foundCandidate = true;
+						sourceOut.resolvedDiskPath = gameCandidate;
+						return true;
+					}
+				}
+			}
+			else if (includeGameFile && IsAbsolutePath(fontPathOrFileName) && IsRegularFilePath(fontPathOrFileName))
+			{
+				foundCandidate = true;
+				sourceOut.resolvedDiskPath = fontPathOrFileName;
+				return true;
+			}
+
+			return false;
+		}
+
+		static bool ResolveFontFileSourcePreferLocal(const std::wstring& fontPathOrFileName, ResolvedFontFileSource& sourceOut)
+		{
+			sourceOut = {};
+			bool localFileExists = false;
+			if (ResolveLocalFontFileSource(fontPathOrFileName, sourceOut, localFileExists, false))
 			{
 				return true;
 			}
 			bool customPakFound = false;
-			if (TryLoadFontFromCustomPakPath(fontPathOrFileName, customPakFound))
+			if (ResolveFontFileSourceFromCustomPakPath(fontPathOrFileName, sourceOut, customPakFound))
 			{
 				return true;
 			}
+
+			/* Try common font subdirectory prefixes in VFS */
 			if (!HasPathSeparator(fontPathOrFileName))
 			{
 				bool nestedCustomPakFound = false;
-				if (TryLoadFontFromCustomPakPath(L"fonts\\" + fontPathOrFileName, nestedCustomPakFound))
+				if (ResolveFontFileSourceFromCustomPakPath(L"fonts\\" + fontPathOrFileName, sourceOut, nestedCustomPakFound))
 				{
 					return true;
 				}
 				customPakFound = customPakFound || nestedCustomPakFound;
 				nestedCustomPakFound = false;
-				if (TryLoadFontFromCustomPakPath(L"font\\" + fontPathOrFileName, nestedCustomPakFound))
+				if (ResolveFontFileSourceFromCustomPakPath(L"font\\" + fontPathOrFileName, sourceOut, nestedCustomPakFound))
 				{
 					return true;
 				}
 				customPakFound = customPakFound || nestedCustomPakFound;
 			}
+
+			/* Always try VFS recursive search by filename, regardless of path separators.
+			 * This fixes the bug where fonts in VFS subdirectories could only be found
+			 * when placed at the root level. Extract the bare filename for the search. */
+			{
+				std::wstring bareFileName = fontPathOrFileName;
+				size_t lastSep = fontPathOrFileName.find_last_of(L"\\/");
+				if (lastSep != std::wstring::npos)
+				{
+					bareFileName = fontPathOrFileName.substr(lastSep + 1);
+				}
+				if (!bareFileName.empty())
+				{
+					std::wstring discoveredCustomPakPath;
+					if (FindCustomPakFontFileByName(bareFileName, discoveredCustomPakPath))
+					{
+						LogMessage(LogLevel::Info, L"Font CustomPak discovered by file name: %s => %s", fontPathOrFileName.c_str(), discoveredCustomPakPath.c_str());
+						bool discoveredCustomPakFound = false;
+						if (ResolveFontFileSourceFromCustomPakPath(discoveredCustomPakPath, sourceOut, discoveredCustomPakFound))
+						{
+							return true;
+						}
+						customPakFound = customPakFound || discoveredCustomPakFound;
+					}
+				}
+			}
+
+			if (!customPakFound && ResolveLocalFontFileSource(fontPathOrFileName, sourceOut, localFileExists, true))
+			{
+				return true;
+			}
+
 			if (localFileExists || customPakFound)
 			{
 				std::wstring errMsg = std::wstring(L"Failed to load font file: ") + fontPathOrFileName;
-				MessageBoxW(NULL, errMsg.c_str(), L"HookFont", MB_OK | MB_ICONERROR);
+				MessageBoxW(nullptr, errMsg.c_str(), L"HookFont", MB_OK | MB_ICONERROR);
 			}
 			else
 			{
 				std::wstring errMsg = std::wstring(L"Font file not found: ") + fontPathOrFileName;
-				MessageBoxW(NULL, errMsg.c_str(), L"HookFont", MB_OK | MB_ICONERROR);
+				MessageBoxW(nullptr, errMsg.c_str(), L"HookFont", MB_OK | MB_ICONERROR);
 			}
 			return false;
 		}
 
-		static std::wstring ResolveConfiguredFontName(const std::wstring& fontConfig, const std::wstring& fontNameOverride)
+		static std::wstring FormatFaceListForLog(const std::vector<std::wstring>& faces)
 		{
+			if (faces.empty())
+			{
+				return L"[]";
+			}
+			std::wstring text = L"[";
+			for (size_t i = 0; i < faces.size(); ++i)
+			{
+				if (i != 0)
+				{
+					text += L", ";
+				}
+				text += L"{";
+				text += std::to_wstring(i);
+				text += L":";
+				text += faces[i];
+				text += L"}";
+			}
+			text += L"]";
+			return text;
+		}
+
+		static void LogResolvedFontTarget(const std::wstring& logContext, const std::wstring& originalConfig, const ResolvedFontTarget& target)
+		{
+			LogMessage(LogLevel::Info,
+				L"ResolveFont: context=%s config=%s source=%s method=%s candidates=%s override=%d selectedIndex=%d selected=%s fallbackBasename=%d",
+				logContext.c_str(),
+				originalConfig.c_str(),
+				target.sourcePath.c_str(),
+				target.discoveryMethod.c_str(),
+				FormatFaceListForLog(target.candidateFaces).c_str(),
+				target.usedManualOverride ? 1 : 0,
+				target.selectedIndex,
+				target.effectiveFaceName.c_str(),
+				target.usedFallbackBasename ? 1 : 0);
+		}
+
+		static ResolvedFontTarget ResolveConfiguredFontTarget(const std::wstring& fontConfig, const std::wstring& fontNameOverride, const std::wstring& logContext)
+		{
+			ResolvedFontTarget result = {};
 			if (fontConfig.empty())
 			{
-				return fontConfig;
+				return result;
 			}
 
 			std::wstring ext = GetLowerExtension(fontConfig);
+			std::wstring resolvedFontFilePath;
+			bool resolvedViaPrefix = false;
+
 			if (!IsSupportedFontFileExtension(ext))
 			{
-				return fontConfig;
+				/* Extension is not a known font format. Before treating fontConfig as
+				 * a literal font family name, try prefix-based file search:
+				 * search the game directory and VFS for any file whose stem matches
+				 * fontConfig, then validate it as a font file. This allows font files
+				 * with arbitrary extensions (e.g. .dll, .dat) to be loaded by prefix. */
+
+				/* Only attempt prefix search when fontConfig has no extension at all,
+				 * or has a non-font extension (i.e. user is likely specifying a prefix) */
+				std::wstring prefix = fontConfig;
+				/* If fontConfig contains a dot but not a recognized font extension,
+				 * treat the whole thing as a prefix (stem) */
+				size_t lastSepPos = fontConfig.find_last_of(L"\\/");
+				size_t lastDotPos = fontConfig.find_last_of(L'.');
+				bool hasNonFontExt = (lastDotPos != std::wstring::npos
+					&& (lastSepPos == std::wstring::npos || lastDotPos > lastSepPos));
+				if (!hasNonFontExt)
+				{
+					/* No dot at all — pure prefix like "我是可爱字体" */
+				}
+				else
+				{
+					/* Has a dot but unrecognized extension — also treat as prefix search candidate.
+					 * Use the part before the extension as the prefix. */
+					prefix = fontConfig.substr(0, lastDotPos);
+				}
+
+				/* Extract just the stem name (no directory part) for file search */
+				std::wstring prefixStem = prefix;
+				size_t prefixSepPos = prefix.find_last_of(L"\\/");
+				if (prefixSepPos != std::wstring::npos)
+				{
+					prefixStem = prefix.substr(prefixSepPos + 1);
+				}
+
+				if (!prefixStem.empty())
+				{
+					std::wstring gameDir = GetGameDirectory();
+					std::wstring candidatePath;
+					bool found = false;
+
+					/* 1. Search game directory for file with matching stem */
+					if (!found && FindFontFileByPrefixLocal(gameDir, prefixStem, candidatePath))
+					{
+						if (TryLoadCandidateAsFont(candidatePath))
+						{
+							resolvedFontFilePath = candidatePath;
+							resolvedViaPrefix = true;
+							found = true;
+							LogMessage(LogLevel::Info, L"ResolveFont: context=%s prefix=%s found local file=%s",
+								logContext.c_str(), prefixStem.c_str(), candidatePath.c_str());
+						}
+						else
+						{
+							LogMessage(LogLevel::Debug, L"ResolveFont: context=%s prefix=%s local file=%s is not a valid font, skip",
+								logContext.c_str(), prefixStem.c_str(), candidatePath.c_str());
+						}
+					}
+
+					/* 2. Search VFS (CustomPak) for file with matching stem */
+					if (!found)
+					{
+						std::wstring virtualPath;
+						if (FindFontFileByPrefixInCustomPak(prefixStem, virtualPath))
+						{
+							ResolvedFontFileSource vfsSource = {};
+							bool vfsFound = false;
+							if (ResolveFontFileSourceFromCustomPakPath(virtualPath, vfsSource, vfsFound) && !vfsSource.resolvedDiskPath.empty())
+							{
+								if (TryLoadCandidateAsFont(vfsSource.resolvedDiskPath))
+								{
+									resolvedFontFilePath = vfsSource.resolvedDiskPath;
+									resolvedViaPrefix = true;
+									found = true;
+									LogMessage(LogLevel::Info, L"ResolveFont: context=%s prefix=%s found VFS file=%s (disk=%s)",
+										logContext.c_str(), prefixStem.c_str(), virtualPath.c_str(), vfsSource.resolvedDiskPath.c_str());
+									if (vfsSource.usedTempCache)
+									{
+										TrackLoadedTempFontFile(vfsSource.resolvedDiskPath);
+									}
+								}
+								else
+								{
+									LogMessage(LogLevel::Debug, L"ResolveFont: context=%s prefix=%s VFS file=%s is not a valid font, skip",
+										logContext.c_str(), prefixStem.c_str(), virtualPath.c_str());
+								}
+							}
+						}
+					}
+
+					if (!found)
+					{
+						/* No font file found by prefix; fall back to treating as font family name */
+						CIALLOHOOK_VERBOSE_INFO_LOG(L"ResolveFont: context=%s prefix=%s no matching font file found, treating as font family name",
+							logContext.c_str(), prefixStem.c_str());
+					}
+				}
+
+				if (!resolvedViaPrefix)
+				{
+					result.effectiveFaceName = fontConfig;
+					result.discoveryMethod = L"literal-font-name";
+					return result;
+				}
+
+				/* A font file was found via prefix. Determine its actual extension for face discovery. */
+				ext = GetLowerExtension(resolvedFontFilePath);
 			}
 
-			if (!TryLoadFontFilePreferLocal(fontConfig))
+			/* ---- Font file loading path ---- */
+			ResolvedFontFileSource source = {};
+			if (resolvedViaPrefix)
 			{
-				return L"SimSun";
+				/* Already resolved and validated above */
+				source.resolvedDiskPath = resolvedFontFilePath;
+			}
+			else if (!ResolveFontFileSourcePreferLocal(fontConfig, source))
+			{
+				result.effectiveFaceName = L"SimSun";
+				result.discoveryMethod = L"fallback-load-failed";
+				LogResolvedFontTarget(logContext, fontConfig, result);
+				return result;
+			}
+
+			result.sourcePath = source.resolvedDiskPath;
+			result.candidateFaces = DiscoverFontFacesFromFile(source.resolvedDiskPath, ext, result.discoveryMethod);
+			if (result.discoveryMethod.empty())
+			{
+				result.discoveryMethod = resolvedViaPrefix ? L"prefix-match" : L"fallback-basename";
+			}
+			else if (resolvedViaPrefix)
+			{
+				result.discoveryMethod = L"prefix-" + result.discoveryMethod;
+			}
+
+			if (!resolvedViaPrefix && !LoadFontFromFile(source.resolvedDiskPath.c_str(), false))
+			{
+				std::wstring errMsg = std::wstring(L"Failed to load font file: ") + fontConfig;
+				MessageBoxW(nullptr, errMsg.c_str(), L"HookFont", MB_OK | MB_ICONERROR);
+				LogMessage(LogLevel::Error, L"ResolveFont: context=%s AddFontResourceExW rejected source=%s", logContext.c_str(), source.resolvedDiskPath.c_str());
+				result.effectiveFaceName = L"SimSun";
+				LogResolvedFontTarget(logContext, fontConfig, result);
+				return result;
+			}
+			if (resolvedViaPrefix)
+			{
+				/* For prefix-resolved files, we already validated via TryLoadCandidateAsFont.
+				 * Now do the real load (the validate step removed it). */
+				if (!LoadFontFromFile(source.resolvedDiskPath.c_str(), false))
+				{
+					LogMessage(LogLevel::Error, L"ResolveFont: context=%s prefix-resolved file rejected on reload source=%s",
+						logContext.c_str(), source.resolvedDiskPath.c_str());
+					result.effectiveFaceName = L"SimSun";
+					result.discoveryMethod = L"prefix-fallback-load-failed";
+					LogResolvedFontTarget(logContext, fontConfig, result);
+					return result;
+				}
+			}
+			if (source.usedTempCache && !resolvedViaPrefix)
+			{
+				TrackLoadedTempFontFile(source.resolvedDiskPath);
 			}
 
 			if (!fontNameOverride.empty())
 			{
-				return fontNameOverride;
+				result.usedManualOverride = true;
+				result.effectiveFaceName = fontNameOverride;
+			}
+			else if (!result.candidateFaces.empty())
+			{
+				result.selectedIndex = 0;
+				result.effectiveFaceName = result.candidateFaces[0];
+			}
+			else
+			{
+				result.usedFallbackBasename = true;
+				result.selectedIndex = 0;
+				result.discoveryMethod = resolvedViaPrefix ? L"prefix-fallback-basename" : L"fallback-basename";
+				result.effectiveFaceName = GetBaseNameWithoutExtension(
+					resolvedViaPrefix ? resolvedFontFilePath : fontConfig);
 			}
 
-			std::wstring fileName = PathRemoveExtension(fontConfig);
-			size_t pos = fileName.find_last_of(L"\\/");
-			return (pos == std::wstring::npos) ? fileName : fileName.substr(pos + 1);
+			LogResolvedFontTarget(logContext, fontConfig, result);
+			return result;
 		}
 
-		static std::wstring ResolveFontName(const FontSettings& settings)
+		static ResolvedFontTarget ResolveFontTarget(const FontSettings& settings)
 		{
-			return ResolveConfiguredFontName(settings.font, settings.fontNameOverride);
+			return ResolveConfiguredFontTarget(settings.font, settings.fontNameOverride, L"Font");
 		}
 
 		void ApplyFontHooks(const FontSettings& settings)
@@ -663,14 +1449,20 @@ namespace CialloHook
 				}
 			}
 
-			std::wstring fontName = ResolveFontName(settings);
+			ResolvedFontTarget resolvedMainFont = ResolveFontTarget(settings);
+			std::wstring fontName = resolvedMainFont.effectiveFaceName;
 			std::vector<ResolvedFontRedirectRule> resolvedRedirectRules;
 			resolvedRedirectRules.reserve(settings.redirectRules.size());
-			for (const FontRedirectRule& rule : settings.redirectRules)
+			for (size_t i = 0; i < settings.redirectRules.size(); ++i)
 			{
+				const FontRedirectRule& rule = settings.redirectRules[i];
 				ResolvedFontRedirectRule resolvedRule;
 				resolvedRule.sourceFont = TrimWide(rule.sourceFont);
-				resolvedRule.targetFont = ResolveConfiguredFontName(rule.targetFont, rule.targetFontNameOverride);
+				ResolvedFontTarget resolvedTarget = ResolveConfiguredFontTarget(
+					rule.targetFont,
+					rule.targetFontNameOverride,
+					L"RedirectToFont_" + std::to_wstring(i));
+				resolvedRule.targetFont = resolvedTarget.effectiveFaceName;
 				if (resolvedRule.sourceFont.empty() || resolvedRule.targetFont.empty())
 				{
 					continue;
@@ -1010,6 +1802,7 @@ namespace CialloHook
 			if (settings.hookDWriteCreateFactory)
 			{
 				logHookAttach(L"HookDWriteCreateFactory", HookDWriteCreateFactory());
+					logHookAttach(L"HookD2D1CreateFactory", HookD2D1CreateFactory());
 			}
 
 			if (settings.hookGdipCreateFontFamilyFromName)
@@ -1175,6 +1968,32 @@ namespace CialloHook
 			hookAndLog(L"GetGlyphIndicesW", settings.hookGetGlyphIndicesW, HookGetGlyphIndicesW);
 			hookAndLog(L"GetGlyphOutlineA", settings.hookGetGlyphOutlineA, HookGetGlyphOutlineA);
 			hookAndLog(L"GetGlyphOutlineW", settings.hookGetGlyphOutlineW, HookGetGlyphOutlineW);
+				hookAndLog(L"MessageBoxA", settings.hookMessageBoxA, HookMessageBoxA);
+				hookAndLog(L"SetDlgItemTextA", settings.hookSetDlgItemTextA, HookSetDlgItemTextA);
+				hookAndLog(L"SendDlgItemMessageA", settings.hookSendDlgItemMessageA, HookSendDlgItemMessageA);
+				hookAndLog(L"SendDlgItemMessageW", settings.hookSendDlgItemMessageW, HookSendDlgItemMessageW);
+				hookAndLog(L"SendMessageA", settings.hookSendMessageA, HookSendMessageA);
+				hookAndLog(L"SendMessageW", settings.hookSendMessageW, HookSendMessageW);
+				hookAndLog(L"AppendMenuA", settings.hookAppendMenuA, HookAppendMenuA);
+				hookAndLog(L"ModifyMenuA", settings.hookModifyMenuA, HookModifyMenuA);
+				hookAndLog(L"InsertMenuA", settings.hookInsertMenuA, HookInsertMenuA);
+				hookAndLog(L"InsertMenuItemA", settings.hookInsertMenuItemA, HookInsertMenuItemA);
+				hookAndLog(L"SetMenuItemInfoA", settings.hookSetMenuItemInfoA, HookSetMenuItemInfoA);
+				hookAndLog(L"MessageBoxIndirectA", settings.hookMessageBoxIndirectA, HookMessageBoxIndirectA);
+				hookAndLog(L"DefWindowProcA", settings.hookDefWindowProcA, HookDefWindowProcA);
+				hookAndLog(L"DefWindowProcW", settings.hookDefWindowProcW, HookDefWindowProcW);
+				hookAndLog(L"DialogBoxParamA", settings.hookDialogBoxParamA, HookDialogBoxParamA);
+				hookAndLog(L"DialogBoxParamW", settings.hookDialogBoxParamW, HookDialogBoxParamW);
+				hookAndLog(L"CreateDialogParamA", settings.hookCreateDialogParamA, HookCreateDialogParamA);
+				hookAndLog(L"CreateDialogParamW", settings.hookCreateDialogParamW, HookCreateDialogParamW);
+				hookAndLog(L"DialogBoxIndirectParamA", settings.hookDialogBoxIndirectParamA, HookDialogBoxIndirectParamA);
+				hookAndLog(L"DialogBoxIndirectParamW", settings.hookDialogBoxIndirectParamW, HookDialogBoxIndirectParamW);
+				hookAndLog(L"CreateDialogIndirectParamA", settings.hookCreateDialogIndirectParamA, HookCreateDialogIndirectParamA);
+				hookAndLog(L"CreateDialogIndirectParamW", settings.hookCreateDialogIndirectParamW, HookCreateDialogIndirectParamW);
+				hookAndLog(L"DrawThemeText", settings.hookDrawThemeText, HookDrawThemeText);
+				hookAndLog(L"DrawThemeTextEx", settings.hookDrawThemeTextEx, HookDrawThemeTextEx);
+				hookAndLog(L"PropertySheetA", settings.hookPropertySheetA, HookPropertySheetA);
+				hookAndLog(L"ExitProcess", settings.hookExitProcessGuard, HookExitProcessGuard);
 
 			const bool detourBatchCommitted = CommitDetourBatchIfStarted(detourBatchStarted, L"ApplyTextHooks detour batch");
 			if (!detourBatchCommitted)
@@ -1225,6 +2044,49 @@ namespace CialloHook
 				(uint32_t)settings.rules.size(), settings.titleMode, titleReadCp, titleWriteCp, settings.enableVerboseLog ? 1 : 0);
 		}
 
+		static bool NeedsTextApiHooks(const AppSettings& settings)
+		{
+			const bool hasTextRules = !settings.textReplace.rules.empty();
+			const bool hasWaffleTextPatch = settings.enginePatches.enableWafflePatch && settings.enginePatches.waffleFixGetTextCrash;
+			const FontSettings& font = settings.font;
+			const bool hasFontTextWork = !IsBlankText(font.font)
+				|| font.enableCnJpMap
+				|| font.fontSpacingScale != 1.0f
+				|| font.glyphAspectRatio != 1.0f
+				|| font.glyphOffsetX != 0
+				|| font.glyphOffsetY != 0
+				|| font.metricsOffsetLeft != 0
+				|| font.metricsOffsetRight != 0
+				|| font.metricsOffsetTop != 0
+				|| font.metricsOffsetBottom != 0;
+			return hasTextRules || hasWaffleTextPatch || hasFontTextWork;
+		}
+
+		void ApplyEarlyStartupHooks(const AppSettings& settings, uint32_t bypassThreadId)
+		{
+			if (!settings.startupTiming.enableStartupWindowGate)
+			{
+				return;
+			}
+
+			EnableStartupWindowGate(true, bypassThreadId);
+			const bool detourBatchStarted = BeginDetourBatch();
+			bool hookOk = HookWindowTitleAPIs(0);
+			if (!hookOk)
+			{
+				LogMessage(LogLevel::Warn, L"ApplyEarlyStartupHooks: failed to attach startup gate window hooks");
+				ReleaseStartupWindowGate();
+				return;
+			}
+			if (!CommitDetourBatchIfStarted(detourBatchStarted, L"ApplyEarlyStartupHooks detour batch"))
+			{
+				LogMessage(LogLevel::Warn, L"ApplyEarlyStartupHooks: detour batch commit failed");
+				ReleaseStartupWindowGate();
+				return;
+			}
+			LogMessage(LogLevel::Info, L"ApplyEarlyStartupHooks: startup gate enabled with bypassTid=%lu", static_cast<unsigned long>(bypassThreadId));
+		}
+
 		void ApplyPostStartupHooks(const AppSettings& settings)
 		{
 			CIALLOHOOK_VERBOSE_INFO_LOG(L"Apply hooks: file patch");
@@ -1233,11 +2095,24 @@ namespace CialloHook
 			CIALLOHOOK_VERBOSE_INFO_LOG(L"Apply hooks: siglus key extract");
 			ApplySiglusKeyExtract(settings.siglusKeyExtract);
 
+			CIALLOHOOK_VERBOSE_INFO_LOG(L"Apply hooks: rio shiina");
+			ApplyRioShiinaHooks(settings.rioShiina, settings.filePatch);
+
 			CIALLOHOOK_VERBOSE_INFO_LOG(L"Apply hooks: text");
-			ApplyTextHooks(settings.textReplace, settings.enginePatches);
+			if (NeedsTextApiHooks(settings))
+			{
+				ApplyTextHooks(settings.textReplace, settings.enginePatches);
+			}
+			else
+			{
+				LogMessage(LogLevel::Debug, L"ApplyTextHooks: no text/font work, skip text api hooks");
+			}
 
 			CIALLOHOOK_VERBOSE_INFO_LOG(L"Apply hooks: window title");
 			ApplyWindowTitleHooks(settings.windowTitle);
+
+			CIALLOHOOK_VERBOSE_INFO_LOG(L"Apply hooks: registry bootstrap");
+			ApplyRegistryBootstrap(settings.registryBootstrap);
 
 			CIALLOHOOK_VERBOSE_INFO_LOG(L"Apply hooks: registry");
 			ApplyRegistryHooks(settings.registry);
@@ -1248,6 +2123,11 @@ namespace CialloHook
 			CIALLOHOOK_VERBOSE_INFO_LOG(L"Apply hooks: font");
 			ApplyFontHooks(settings.font);
 			ReleaseStartupWindowGate();
+		}
+
+		void ApplyRioShiinaHooks(const RioShiinaSettings& settings, const FilePatchSettings& filePatchSettings)
+		{
+			RioShiinaHooks::Apply(settings, filePatchSettings);
 		}
 
 		void ApplySiglusKeyExtract(const SiglusKeyExtractSettings& settings)
@@ -1298,6 +2178,7 @@ namespace CialloHook
 
 		void ApplyFilePatchHooks(const FilePatchSettings& patchSettings, const FileSpoofSettings& spoofSettings, const DirectoryRedirectSettings& directoryRedirectSettings, const EnginePatchSettings& enginePatchSettings)
 		{
+			sg_activeFontPatchFolders.clear();
 			if (!patchSettings.enable && !spoofSettings.enable && !directoryRedirectSettings.enable && !enginePatchSettings.enableKrkrPatch)
 			{
 				CIALLOHOOK_VERBOSE_INFO_LOG(L"ApplyFilePatchHooks: disabled (patch, spoof, redirect and krkrpatch)");
@@ -1400,6 +2281,7 @@ namespace CialloHook
 					AppendUniquePath(activePatchFolders, folder);
 				}
 			}
+			sg_activeFontPatchFolders = activePatchFolders;
 
 			std::vector<std::wstring> activeCustomPakFiles;
 			for (const std::wstring& pakFile : filePatchCustomPakFiles)
@@ -1481,6 +2363,7 @@ namespace CialloHook
 				enginePatchSettings.enableKrkrPatch,
 				enginePatchSettings.krkrPatchVerboseLog,
 				enginePatchSettings.krkrBootstrapBypass,
+				enginePatchSettings.enableKrkrCxdecBridge,
 				gameDir,
 				filePatchFolders,
 				filePatchCustomPakFiles,
@@ -1515,7 +2398,167 @@ namespace CialloHook
 			}
 		}
 
-		void ApplyRegistryHooks(const RegistrySettings& settings)
+		void ApplyRegistryBootstrap(const RegistryBootstrapSettings& settings)
+			{
+				sg_registryBootstrapCleanupOnExit = settings.cleanupOnExit;
+				sg_registryBootstrapKeys.clear();
+				sg_registryBootstrapValues.clear();
+				if (!settings.enable)
+				{
+					CIALLOHOOK_VERBOSE_INFO_LOG(L"ApplyRegistryBootstrap: disabled");
+					return;
+				}
+
+				uint32_t appliedCount = 0;
+				for (const auto& rule : settings.rules)
+				{
+					HKEY rootKey = nullptr;
+					if (!TryResolveRegistryRoot(rule.root, rootKey))
+					{
+						LogMessage(LogLevel::Warn, L"ApplyRegistryBootstrap: unsupported root=%s key=%s", rule.root.c_str(), rule.key.c_str());
+						continue;
+					}
+
+					std::wstring keyPath = Rut::StrX::Trim(rule.key);
+					if (keyPath.empty())
+					{
+						LogMessage(LogLevel::Warn, L"ApplyRegistryBootstrap: empty key path, skip");
+						continue;
+					}
+
+					if (!HasRegistryBootstrapKeyRecord(rootKey, keyPath))
+					{
+						bool keyExisted = false;
+						HKEY existingKey = nullptr;
+						LSTATUS openStatus = RegOpenKeyExW(rootKey, keyPath.c_str(), 0, KEY_READ, &existingKey);
+						if (openStatus == ERROR_SUCCESS)
+						{
+							keyExisted = true;
+							RegCloseKey(existingKey);
+						}
+						sg_registryBootstrapKeys.push_back({ rootKey, keyPath, keyExisted });
+					}
+
+					HKEY targetKey = nullptr;
+					DWORD disposition = 0;
+					LSTATUS createStatus = RegCreateKeyExW(rootKey, keyPath.c_str(), 0, nullptr, REG_OPTION_NON_VOLATILE, KEY_READ | KEY_WRITE, nullptr, &targetKey, &disposition);
+					if (createStatus != ERROR_SUCCESS || targetKey == nullptr)
+					{
+						LogMessage(LogLevel::Error, L"ApplyRegistryBootstrap: create key failed root=%s key=%s error=%ld", rule.root.c_str(), keyPath.c_str(), createStatus);
+						continue;
+					}
+
+					std::wstring valueName = rule.valueName;
+					if (!HasRegistryBootstrapValueRecord(rootKey, keyPath, valueName))
+					{
+						RegistryBootstrapValueRecord valueRecord = {};
+						valueRecord.root = rootKey;
+						valueRecord.keyPath = keyPath;
+						valueRecord.valueName = valueName;
+						DWORD originalType = REG_NONE;
+						DWORD dataSize = 0;
+						LSTATUS queryStatus = RegQueryValueExW(targetKey, valueName.empty() ? nullptr : valueName.c_str(), nullptr, &originalType, nullptr, &dataSize);
+						if (queryStatus == ERROR_SUCCESS)
+						{
+							valueRecord.valueExisted = true;
+							valueRecord.originalType = originalType;
+							valueRecord.originalData.resize(dataSize);
+							if (dataSize != 0)
+							{
+								RegQueryValueExW(targetKey, valueName.empty() ? nullptr : valueName.c_str(), nullptr, &valueRecord.originalType, valueRecord.originalData.data(), &dataSize);
+							}
+						}
+						sg_registryBootstrapValues.push_back(std::move(valueRecord));
+					}
+
+					std::wstring typeName = Rut::StrX::Trim(rule.type);
+					LSTATUS setStatus = ERROR_INVALID_DATA;
+					if (typeName.empty() || EqualsInsensitive(typeName, L"SZ") || EqualsInsensitive(typeName, L"STRING") || EqualsInsensitive(typeName, L"REG_SZ"))
+					{
+						const BYTE* dataPtr = reinterpret_cast<const BYTE*>(rule.data.c_str());
+						DWORD dataBytes = static_cast<DWORD>((rule.data.size() + 1) * sizeof(wchar_t));
+						setStatus = RegSetValueExW(targetKey, valueName.empty() ? nullptr : valueName.c_str(), 0, REG_SZ, dataPtr, dataBytes);
+					}
+					else if (EqualsInsensitive(typeName, L"DWORD") || EqualsInsensitive(typeName, L"REG_DWORD"))
+					{
+						DWORD dwordValue = 0;
+						if (TryParseRegistryDword(rule.data, dwordValue))
+						{
+							setStatus = RegSetValueExW(targetKey, valueName.empty() ? nullptr : valueName.c_str(), 0, REG_DWORD, reinterpret_cast<const BYTE*>(&dwordValue), sizeof(dwordValue));
+						}
+						else
+						{
+							LogMessage(LogLevel::Warn, L"ApplyRegistryBootstrap: invalid DWORD data root=%s key=%s value=%s data=%s", rule.root.c_str(), keyPath.c_str(), valueName.c_str(), rule.data.c_str());
+						}
+					}
+					else
+					{
+						LogMessage(LogLevel::Warn, L"ApplyRegistryBootstrap: unsupported type=%s root=%s key=%s value=%s", typeName.c_str(), rule.root.c_str(), keyPath.c_str(), valueName.c_str());
+					}
+
+					RegCloseKey(targetKey);
+					if (setStatus != ERROR_SUCCESS)
+					{
+						LogMessage(LogLevel::Error, L"ApplyRegistryBootstrap: set value failed root=%s key=%s value=%s error=%ld", rule.root.c_str(), keyPath.c_str(), valueName.c_str(), setStatus);
+						continue;
+					}
+
+					++appliedCount;
+					if (settings.enableLog)
+					{
+						LogMessage(LogLevel::Info, L"ApplyRegistryBootstrap: applied root=%s key=%s value=%s type=%s", rule.root.c_str(), keyPath.c_str(), valueName.c_str(), typeName.c_str());
+					}
+				}
+
+				LogMessage(LogLevel::Info, L"ApplyRegistryBootstrap: rules=%u applied=%u cleanupOnExit=%d", static_cast<uint32_t>(settings.rules.size()), appliedCount, settings.cleanupOnExit ? 1 : 0);
+			}
+
+			void CleanupRegistryBootstrap()
+			{
+				if (sg_registryBootstrapKeys.empty() && sg_registryBootstrapValues.empty())
+				{
+					return;
+				}
+				if (!sg_registryBootstrapCleanupOnExit)
+				{
+					sg_registryBootstrapKeys.clear();
+					sg_registryBootstrapValues.clear();
+					return;
+				}
+
+				for (auto it = sg_registryBootstrapValues.rbegin(); it != sg_registryBootstrapValues.rend(); ++it)
+				{
+					HKEY key = nullptr;
+					if (RegOpenKeyExW(it->root, it->keyPath.c_str(), 0, KEY_SET_VALUE, &key) != ERROR_SUCCESS || key == nullptr)
+					{
+						continue;
+					}
+					if (it->valueExisted)
+					{
+						const BYTE* dataPtr = it->originalData.empty() ? nullptr : it->originalData.data();
+						DWORD dataBytes = static_cast<DWORD>(it->originalData.size());
+						RegSetValueExW(key, it->valueName.empty() ? nullptr : it->valueName.c_str(), 0, it->originalType, dataPtr, dataBytes);
+					}
+					else
+					{
+						RegDeleteValueW(key, it->valueName.empty() ? nullptr : it->valueName.c_str());
+					}
+					RegCloseKey(key);
+				}
+
+				for (auto it = sg_registryBootstrapKeys.rbegin(); it != sg_registryBootstrapKeys.rend(); ++it)
+				{
+					if (!it->keyExisted)
+					{
+						RegDeleteTreeW(it->root, it->keyPath.c_str());
+					}
+				}
+
+				sg_registryBootstrapKeys.clear();
+				sg_registryBootstrapValues.clear();
+			}
+
+			void ApplyRegistryHooks(const RegistrySettings& settings)
 		{
 			if (!settings.enable)
 			{
@@ -1560,23 +2603,70 @@ namespace CialloHook
 		}
 
 		void ApplyCodePageHooks(const CodePageSettings& settings)
-		{
-			if (!settings.enable)
 			{
-				CIALLOHOOK_VERBOSE_INFO_LOG(L"ApplyCodePageHooks: disabled");
-				return;
-			}
+				if (!settings.enable)
+				{
+					CIALLOHOOK_VERBOSE_INFO_LOG(L"ApplyCodePageHooks: disabled");
+					return;
+				}
 
-			Rut::HookX::SetCodePageMapping(settings.fromCodePage, settings.toCodePage);
-			const bool detourBatchStarted = BeginDetourBatch();
-			bool hookSuccess = HookCodePageAPIs();
-			if (!CommitDetourBatchIfStarted(detourBatchStarted, L"ApplyCodePageHooks detour batch"))
-			{
-				hookSuccess = false;
-				LogMessage(LogLevel::Warn, L"ApplyCodePageHooks: detour batch commit failed");
+				if (!settings.hookMultiByteToWideChar && !settings.hookWideCharToMultiByte)
+				{
+					LogMessage(LogLevel::Warn, L"ApplyCodePageHooks: enabled but no API hooks selected");
+					return;
+				}
+
+				Rut::HookX::SetCodePageMapping(settings.fromCodePage, settings.toCodePage);
+				const bool detourBatchStarted = BeginDetourBatch();
+				uint32_t enabledCount = 0;
+				uint32_t successCount = 0;
+				uint32_t failCount = 0;
+				std::wstring failedApis;
+				auto hookAndLog = [&](const wchar_t* apiName, bool enabled, bool(*hookFunc)())
+				{
+					if (!enabled)
+					{
+						return;
+					}
+					++enabledCount;
+					if (hookFunc())
+					{
+						++successCount;
+					}
+					else
+					{
+						++failCount;
+						if (!failedApis.empty())
+						{
+							failedApis += L", ";
+						}
+						failedApis += apiName;
+					}
+				};
+				hookAndLog(L"MultiByteToWideChar", settings.hookMultiByteToWideChar, Rut::HookX::HookMultiByteToWideChar);
+				hookAndLog(L"WideCharToMultiByte", settings.hookWideCharToMultiByte, Rut::HookX::HookWideCharToMultiByte);
+				if (!CommitDetourBatchIfStarted(detourBatchStarted, L"ApplyCodePageHooks detour batch"))
+				{
+					successCount = 0;
+					failCount = enabledCount;
+					if (!failedApis.empty())
+					{
+						failedApis += L", ";
+					}
+					failedApis += L"Detour batch commit";
+					LogMessage(LogLevel::Warn, L"ApplyCodePageHooks: detour batch commit failed");
+				}
+				LogMessage(failCount == 0 ? LogLevel::Info : LogLevel::Error,
+					L"ApplyCodePageHooks: %u -> %u enabled=%u ok=%u failed=%u",
+					settings.fromCodePage,
+					settings.toCodePage,
+					enabledCount,
+					successCount,
+					failCount);
+				if (!failedApis.empty())
+				{
+					LogMessage(LogLevel::Warn, L"ApplyCodePageHooks: failed apis=%s", failedApis.c_str());
+				}
 			}
-			LogMessage(hookSuccess ? LogLevel::Info : LogLevel::Error, L"ApplyCodePageHooks: %u -> %u (%s)",
-				settings.fromCodePage, settings.toCodePage, hookSuccess ? L"success" : L"failed");
-		}
 	}
 }

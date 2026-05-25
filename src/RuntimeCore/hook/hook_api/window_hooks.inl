@@ -1,4 +1,4 @@
-		//*********START Window Title Replace*********
+﻿		//*********START Window Title Replace*********
 		// 窗口标题替换规则
 		struct WindowTitleRule
 		{
@@ -470,10 +470,10 @@
 		//*********Hook CreateWindowExA*********
 		static pCreateWindowExA rawCreateWindowExA = CreateWindowExA;
 
-		HWND WINAPI newCreateWindowExA(DWORD dwExStyle, LPCSTR lpClassName, LPCSTR lpWindowName,
+		HWND WINAPI newCreateWindowExA_SehImpl(DWORD dwExStyle, LPCSTR lpClassName, LPCSTR lpWindowName,
 			DWORD dwStyle, int X, int Y, int nWidth, int nHeight, HWND hWndParent,
 			HMENU hMenu, HINSTANCE hInstance, LPVOID lpParam)
-		{
+{
 			HWND hWnd = nullptr;
 			bool deferWindow = IsStartupWindowGateActive() && !IsStartupWindowGateBypassThread()
 				&& hWndParent == nullptr && (dwStyle & WS_CHILD) == 0 && (dwStyle & WS_VISIBLE) != 0;
@@ -497,6 +497,14 @@
 			TryApplyWindowTitle(hWnd);
 			return hWnd;
 		}
+		HWND WINAPI newCreateWindowExA(DWORD dwExStyle, LPCSTR lpClassName, LPCSTR lpWindowName,
+			DWORD dwStyle, int X, int Y, int nWidth, int nHeight, HWND hWndParent,
+			HMENU hMenu, HINSTANCE hInstance, LPVOID lpParam)
+		{
+			__try { return newCreateWindowExA_SehImpl(dwExStyle, lpClassName, lpWindowName, dwStyle, X, Y, nWidth, nHeight, hWndParent, hMenu, hInstance, lpParam); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawCreateWindowExA(dwExStyle, lpClassName, lpWindowName, dwStyle, X, Y, nWidth, nHeight, hWndParent, hMenu, hInstance, lpParam); }
+		}
+
 
 		bool HookCreateWindowExA()
 		{
@@ -509,10 +517,10 @@
 		//*********Hook CreateWindowExW*********
 		static pCreateWindowExW rawCreateWindowExW = CreateWindowExW;
 
-		HWND WINAPI newCreateWindowExW(DWORD dwExStyle, LPCWSTR lpClassName, LPCWSTR lpWindowName,
+		HWND WINAPI newCreateWindowExW_SehImpl(DWORD dwExStyle, LPCWSTR lpClassName, LPCWSTR lpWindowName,
 			DWORD dwStyle, int X, int Y, int nWidth, int nHeight, HWND hWndParent,
 			HMENU hMenu, HINSTANCE hInstance, LPVOID lpParam)
-		{
+{
 			HWND hWnd = nullptr;
 			bool deferWindow = IsStartupWindowGateActive() && !IsStartupWindowGateBypassThread()
 				&& hWndParent == nullptr && (dwStyle & WS_CHILD) == 0 && (dwStyle & WS_VISIBLE) != 0;
@@ -539,6 +547,14 @@
 			TryApplyWindowTitle(hWnd);
 			return hWnd;
 		}
+		HWND WINAPI newCreateWindowExW(DWORD dwExStyle, LPCWSTR lpClassName, LPCWSTR lpWindowName,
+			DWORD dwStyle, int X, int Y, int nWidth, int nHeight, HWND hWndParent,
+			HMENU hMenu, HINSTANCE hInstance, LPVOID lpParam)
+		{
+			__try { return newCreateWindowExW_SehImpl(dwExStyle, lpClassName, lpWindowName, dwStyle, X, Y, nWidth, nHeight, hWndParent, hMenu, hInstance, lpParam); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawCreateWindowExW(dwExStyle, lpClassName, lpWindowName, dwStyle, X, Y, nWidth, nHeight, hWndParent, hMenu, hInstance, lpParam); }
+		}
+
 
 		bool HookCreateWindowExW()
 		{
@@ -549,8 +565,8 @@
 		//*********END Hook CreateWindowExW*********
 
 		//*********Hook ShowWindow*********
-		BOOL WINAPI newShowWindow(HWND hWnd, int nCmdShow)
-		{
+		BOOL WINAPI newShowWindow_SehImpl(HWND hWnd, int nCmdShow)
+{
 			if (ShouldDeferStartupWindow(hWnd) && IsStartupShowCommand(nCmdShow))
 			{
 				RememberStartupDeferredWindow(hWnd);
@@ -558,6 +574,12 @@
 			}
 			return rawShowWindow(hWnd, nCmdShow);
 		}
+		BOOL WINAPI newShowWindow(HWND hWnd, int nCmdShow)
+		{
+			__try { return newShowWindow_SehImpl(hWnd, nCmdShow); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawShowWindow(hWnd, nCmdShow); }
+		}
+
 
 		bool HookShowWindow()
 		{
@@ -568,8 +590,8 @@
 		//*********END Hook ShowWindow*********
 
 		//*********Hook ShowWindowAsync*********
-		BOOL WINAPI newShowWindowAsync(HWND hWnd, int nCmdShow)
-		{
+		BOOL WINAPI newShowWindowAsync_SehImpl(HWND hWnd, int nCmdShow)
+{
 			if (ShouldDeferStartupWindow(hWnd) && IsStartupShowCommand(nCmdShow))
 			{
 				RememberStartupDeferredWindow(hWnd);
@@ -577,6 +599,12 @@
 			}
 			return rawShowWindowAsync(hWnd, nCmdShow);
 		}
+		BOOL WINAPI newShowWindowAsync(HWND hWnd, int nCmdShow)
+		{
+			__try { return newShowWindowAsync_SehImpl(hWnd, nCmdShow); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawShowWindowAsync(hWnd, nCmdShow); }
+		}
+
 
 		bool HookShowWindowAsync()
 		{
@@ -587,8 +615,8 @@
 		//*********END Hook ShowWindowAsync*********
 
 		//*********Hook SetWindowPos*********
-		BOOL WINAPI newSetWindowPos(HWND hWnd, HWND hWndInsertAfter, int X, int Y, int cx, int cy, UINT uFlags)
-		{
+		BOOL WINAPI newSetWindowPos_SehImpl(HWND hWnd, HWND hWndInsertAfter, int X, int Y, int cx, int cy, UINT uFlags)
+{
 			if (ShouldDeferStartupWindow(hWnd) && (uFlags & SWP_SHOWWINDOW) != 0)
 			{
 				RememberStartupDeferredWindow(hWnd);
@@ -597,6 +625,12 @@
 			}
 			return rawSetWindowPos(hWnd, hWndInsertAfter, X, Y, cx, cy, uFlags);
 		}
+		BOOL WINAPI newSetWindowPos(HWND hWnd, HWND hWndInsertAfter, int X, int Y, int cx, int cy, UINT uFlags)
+		{
+			__try { return newSetWindowPos_SehImpl(hWnd, hWndInsertAfter, X, Y, cx, cy, uFlags); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawSetWindowPos(hWnd, hWndInsertAfter, X, Y, cx, cy, uFlags); }
+		}
+
 
 		bool HookSetWindowPos()
 		{
@@ -609,8 +643,8 @@
 		//*********Hook SetWindowTextA*********
 		static pSetWindowTextA rawSetWindowTextA = SetWindowTextA;
 
-		BOOL WINAPI newSetWindowTextA(HWND hWnd, LPCSTR lpString)
-		{
+		BOOL WINAPI newSetWindowTextA_SehImpl(HWND hWnd, LPCSTR lpString)
+{
 			if (lpString && !sg_vecWindowTitleRules.empty())
 			{
 				std::wstring newTitleW;
@@ -621,6 +655,12 @@
 			}
 			return rawSetWindowTextA(hWnd, lpString);
 		}
+		BOOL WINAPI newSetWindowTextA(HWND hWnd, LPCSTR lpString)
+		{
+			__try { return newSetWindowTextA_SehImpl(hWnd, lpString); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawSetWindowTextA(hWnd, lpString); }
+		}
+
 
 		bool HookSetWindowTextA()
 		{
@@ -768,8 +808,8 @@
 			return ok;
 		}
 
-		BOOL WINAPI newSetWindowTextW(HWND hWnd, LPCWSTR lpString)
-		{
+		BOOL WINAPI newSetWindowTextW_SehImpl(HWND hWnd, LPCWSTR lpString)
+{
 			if (lpString && !sg_vecWindowTitleRules.empty())
 			{
 				std::wstring newTitle = ProcessWindowTitleW(lpString);
@@ -780,6 +820,12 @@
 			}
 			return rawSetWindowTextW(hWnd, lpString);
 		}
+		BOOL WINAPI newSetWindowTextW(HWND hWnd, LPCWSTR lpString)
+		{
+			__try { return newSetWindowTextW_SehImpl(hWnd, lpString); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawSetWindowTextW(hWnd, lpString); }
+		}
+
 
 		bool HookSetWindowTextW()
 		{
