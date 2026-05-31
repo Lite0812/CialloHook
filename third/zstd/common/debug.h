@@ -102,10 +102,10 @@ extern int g_debuglevel; /* the variable is only declared,
             ZSTD_DEBUG_PRINT(__FILE__ ":" LINE_AS_STRING ": " __VA_ARGS__); \
             ZSTD_DEBUG_PRINT(" \n");                     \
         }                                                \
-    } while (0)
+    } while (0);
 #else
-#  define RAWLOG(l, ...)   do { } while (0)    /* disabled */
-#  define DEBUGLOG(l, ...) do { } while (0)    /* disabled */
+#  define RAWLOG(l, ...)   do { } while (0);   /* disabled */
+#  define DEBUGLOG(l, ...) do { } while (0);   /* disabled */
 #endif
 
 
