@@ -1,5 +1,6 @@
 #include "CustomPakVFS.h"
 #include "Hook_API.h"
+#include "litepak.h"
 
 #include <Windows.h>
 #include <array>
@@ -28,6 +29,7 @@ namespace Rut
 			};
 			static constexpr uint8_t kMagic[] = { 0x43,0x69,0x61,0x6C,0x6C,0x6F,0x50,0x41,0x4B };
 			static constexpr uint8_t kXp3Magic[] = { 0x58,0x50,0x33,0x0D,0x0A,0x20,0x0A,0x1A,0x8B,0x67,0x01 };
+				static constexpr uint8_t kLitePakMagic[] = { 'L','i','t','e','P','A','K' };
 			static constexpr uint16_t kVersion = 4;
 			static constexpr uint8_t kModeRaw = 0;
 			static constexpr uint8_t kModeZlib = 1;
@@ -343,6 +345,83 @@ namespace Rut
 				}
 				DWORD attr = GetFileAttributesW(path.c_str());
 				return attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY) == 0;
+			}
+
+			static std::string WideToUtf8(const std::wstring& value)
+			{
+				if (value.empty())
+				{
+					return std::string();
+				}
+				int count = WideCharToMultiByte(CP_UTF8, 0, value.c_str(), static_cast<int>(value.size()), nullptr, 0, nullptr, nullptr);
+				if (count <= 0)
+				{
+					return std::string();
+				}
+				std::string out(static_cast<size_t>(count), '\0');
+				WideCharToMultiByte(CP_UTF8, 0, value.c_str(), static_cast<int>(value.size()), &out[0], count, nullptr, nullptr);
+				return out;
+			}
+
+			static std::wstring Utf8ToWide(const char* value)
+			{
+				if (!value || value[0] == '\0')
+				{
+					return std::wstring();
+				}
+				int len = static_cast<int>(strlen(value));
+				int count = MultiByteToWideChar(CP_UTF8, 0, value, len, nullptr, 0);
+				if (count <= 0)
+				{
+					return std::wstring();
+				}
+				std::wstring out(static_cast<size_t>(count), L'\0');
+				MultiByteToWideChar(CP_UTF8, 0, value, len, &out[0], count);
+				return out;
+			}
+
+			static std::wstring RemoveExtensionW(const std::wstring& path)
+			{
+					size_t slashBack = path.find_last_of(L'\\');
+					size_t slashFwd = path.find_last_of(L'/');
+					size_t slash = (slashBack == std::wstring::npos) ? slashFwd : ((slashFwd == std::wstring::npos) ? slashBack : (std::max)(slashBack, slashFwd));
+				size_t dot = path.find_last_of(L'.');
+				if (dot == std::wstring::npos || (slash != std::wstring::npos && dot < slash))
+				{
+					return path;
+				}
+				return path.substr(0, dot);
+			}
+
+			static std::wstring FindLitePakManifestPath(const std::wstring& pakPath)
+			{
+				std::wstring base = RemoveExtensionW(pakPath);
+				std::vector<std::wstring> candidates;
+				candidates.push_back(base + L"_manifest.txt");
+				candidates.push_back(base + L".manifest");
+				candidates.push_back(pakPath + L".manifest");
+				candidates.push_back(pakPath + L".txt");
+				for (const std::wstring& candidate : candidates)
+				{
+					if (IsFileExists(candidate))
+					{
+						return candidate;
+					}
+				}
+				return std::wstring();
+			}
+
+			static bool LitePakHashRelPath(const std::wstring& relativePath, std::array<uint8_t, 16>& out)
+			{
+				std::string utf8 = WideToUtf8(relativePath);
+				if (utf8.empty() && !relativePath.empty())
+				{
+					return false;
+				}
+				char normalized[4096] = {};
+				litepak_normalize_relpath(utf8.c_str(), normalized, sizeof(normalized));
+				litepak_path_hash_bytes(normalized, out.data());
+				return true;
 			}
 
 			static std::wstring GetGameDir()
@@ -754,7 +833,16 @@ namespace Rut
 			enum class PakArchiveFormat : uint8_t
 			{
 				CustomPak,
-				Xp3
+				Xp3,
+				LitePak
+			};
+
+			struct LitePakHandleDeleter
+			{
+				void operator()(litepak_vfs_handle_t* handle) const
+				{
+					litepak_vfs_close(handle);
+				}
 			};
 
 			struct PakArchive
@@ -764,6 +852,7 @@ namespace Rut
 				PakArchiveFormat format = PakArchiveFormat::CustomPak;
 				std::unordered_map<Hash16, PakEntry, Hash16Hasher> hashedEntries;
 				std::unordered_map<std::wstring, PakEntry> pathEntries;
+				std::shared_ptr<litepak_vfs_handle_t> litePakHandle;
 				bool indexLoaded = false;
 				bool indexLoadAttempted = false;
 			};
@@ -1133,6 +1222,76 @@ namespace Rut
 				return !archive.pathEntries.empty();
 			}
 
+
+			static bool LoadLitePakEntries(PakArchive& archive, litepak_vfs_handle_t* rawHandle, const std::wstring& manifestPath)
+			{
+				if (!rawHandle)
+				{
+					return false;
+				}
+				archive.litePakHandle.reset(rawHandle, LitePakHandleDeleter());
+				size_t count = 0;
+				if (litepak_vfs_get_entry_count(rawHandle, &count) != 0)
+				{
+					return false;
+				}
+				for (size_t i = 0; i < count; ++i)
+				{
+					litepak_vfs_entry_info_t info = {};
+					if (litepak_vfs_get_entry(rawHandle, i, &info) != 0)
+					{
+						continue;
+					}
+					if (info.flags != ENTRY_FILE)
+					{
+						continue;
+					}
+					PakEntry e = {};
+					memcpy(e.hash.bytes.data(), info.hash_bytes, e.hash.bytes.size());
+					e.flags = info.flags;
+					e.origSize = info.original_size;
+					e.storedSize = info.original_size;
+					archive.hashedEntries[e.hash] = e;
+					if (info.rel_path && info.rel_path[0] != '\0')
+					{
+						e.pathKey = NormalizeXp3EntryPath(Utf8ToWide(info.rel_path));
+						if (!e.pathKey.empty())
+						{
+							archive.pathEntries[e.pathKey] = e;
+						}
+					}
+				}
+				archive.format = PakArchiveFormat::LitePak;
+				LogCustomPakInfo(L"LitePAK loaded: %s entries=%u named=%u manifest=%s", archive.path.c_str(), (uint32_t)archive.hashedEntries.size(), (uint32_t)archive.pathEntries.size(), manifestPath.empty() ? L"" : manifestPath.c_str());
+				return !archive.hashedEntries.empty();
+			}
+
+			static bool LoadLitePakIndex(PakArchive& archive)
+			{
+				std::string pakUtf8 = WideToUtf8(archive.path);
+				std::wstring manifestPath = FindLitePakManifestPath(archive.path);
+				std::string manifestUtf8 = WideToUtf8(manifestPath);
+				litepak_vfs_handle_t* handle = nullptr;
+				if (pakUtf8.empty() || litepak_vfs_open_path(pakUtf8.c_str(), manifestUtf8.empty() ? nullptr : manifestUtf8.c_str(), &handle) != 0)
+				{
+					LogCustomPakWarn(L"Load LitePAK failed: %s", archive.path.c_str());
+					return false;
+				}
+				return LoadLitePakEntries(archive, handle, manifestPath);
+			}
+
+			static bool LoadLitePakIndexFromMemory(PakArchive& archive, const uint8_t* data, size_t size)
+			{
+				std::string tagUtf8 = WideToUtf8(archive.path);
+				litepak_vfs_handle_t* handle = nullptr;
+				if (litepak_vfs_open_memory(data, size, tagUtf8.empty() ? "<memory.lpk>" : tagUtf8.c_str(), nullptr, &handle) != 0)
+				{
+					LogCustomPakWarn(L"Load memory LitePAK failed: %s", archive.path.c_str());
+					return false;
+				}
+				return LoadLitePakEntries(archive, handle, std::wstring());
+			}
+
 			static bool LoadArchiveIndex(PakArchive& archive)
 			{
 				InternalIoScope ioScope;
@@ -1159,6 +1318,10 @@ namespace Rut
 				if (memcmp(header.data(), kXp3Magic, sizeof(kXp3Magic)) == 0)
 				{
 					return LoadXp3Index(archive, fs, header);
+				}
+				if (memcmp(header.data(), kLitePakMagic, sizeof(kLitePakMagic)) == 0)
+				{
+					return LoadLitePakIndex(archive);
 				}
 				LogCustomPakWarn(L"Unsupported archive magic: %s", pakPath.c_str());
 				return false;
@@ -1362,6 +1525,10 @@ namespace Rut
 				{
 					return LoadXp3IndexFromMemory(archive, data, size);
 				}
+				if (size >= sizeof(kLitePakMagic) && memcmp(data, kLitePakMagic, sizeof(kLitePakMagic)) == 0)
+				{
+					return LoadLitePakIndexFromMemory(archive, data, size);
+				}
 				LogCustomPakWarn(L"Unsupported memory archive magic: %s size=%llu", archive.path.c_str(), (unsigned long long)size);
 				return false;
 			}
@@ -1395,6 +1562,26 @@ namespace Rut
 					LogCustomPakWarn(L"Entry size overflow: archive=%s stored=%llu orig=%llu", archive.path.c_str(), (unsigned long long)entry.storedSize, (unsigned long long)entry.origSize);
 					return false;
 				}
+				if (archive.format == PakArchiveFormat::LitePak)
+				{
+					if (!archive.litePakHandle)
+					{
+						LogCustomPakWarn(L"LitePAK handle missing: archive=%s", archive.path.c_str());
+						return false;
+					}
+					uint8_t* bytes = nullptr;
+					size_t byteCount = 0;
+					int rc = litepak_vfs_read_file_by_hash(archive.litePakHandle.get(), entry.hash.bytes.data(), &bytes, &byteCount);
+					if (rc != 0)
+					{
+						LogCustomPakWarn(L"Read LitePAK entry failed: archive=%s rc=%d", archive.path.c_str(), rc);
+						return false;
+					}
+					raw.assign(bytes, bytes + byteCount);
+					litepak_vfs_free_bytes(bytes);
+					return raw.size() == static_cast<size_t>(entry.origSize);
+				}
+
 				std::ifstream fs(archive.path, std::ios::binary);
 				if (!fs.good())
 				{
@@ -1533,6 +1720,26 @@ namespace Rut
 					return false;
 				}
 
+				if (archive.format == PakArchiveFormat::LitePak)
+				{
+					if (!archive.litePakHandle)
+					{
+						LogCustomPakWarn(L"Memory LitePAK handle missing: archive=%s", archive.path.c_str());
+						return false;
+					}
+					uint8_t* bytes = nullptr;
+					size_t byteCount = 0;
+					int rc = litepak_vfs_read_file_by_hash(archive.litePakHandle.get(), entry.hash.bytes.data(), &bytes, &byteCount);
+					if (rc != 0)
+					{
+						LogCustomPakWarn(L"Read memory LitePAK entry failed: archive=%s rc=%d", archive.path.c_str(), rc);
+						return false;
+					}
+					raw.assign(bytes, bytes + byteCount);
+					litepak_vfs_free_bytes(bytes);
+					return raw.size() == static_cast<size_t>(entry.origSize);
+				}
+
 				if (archive.format == PakArchiveFormat::Xp3)
 				{
 					raw.reserve(static_cast<size_t>(entry.origSize));
@@ -1649,6 +1856,21 @@ namespace Rut
 					}
 					return &itPath->second;
 				}
+				if (archive.format == PakArchiveFormat::LitePak)
+				{
+					std::array<uint8_t, 16> liteHash = {};
+					if (!LitePakHashRelPath(relativePath, liteHash))
+					{
+						return nullptr;
+					}
+					Hash16 liteKey = { liteHash };
+					auto itLite = archive.hashedEntries.find(liteKey);
+					if (itLite == archive.hashedEntries.end())
+					{
+						return nullptr;
+					}
+					return &itLite->second;
+				}
 				auto itHash = archive.hashedEntries.find(hashKey);
 				if (itHash == archive.hashedEntries.end())
 				{
@@ -1659,7 +1881,7 @@ namespace Rut
 
 			static bool CollectArchiveDirectoryEntries(const PakArchive& archive, const std::wstring& relativeDirectory, std::unordered_map<std::wstring, CustomPakVFSDirectoryEntry>& outEntries)
 			{
-				if (archive.format != PakArchiveFormat::Xp3)
+				if (archive.pathEntries.empty())
 				{
 					return false;
 				}
@@ -1816,6 +2038,10 @@ namespace Rut
 				if (archive.format == PakArchiveFormat::Xp3)
 				{
 					return archive.pathLower + L"|xp3|" + NormalizeXp3EntryPath(relativePath);
+				}
+				if (archive.format == PakArchiveFormat::LitePak)
+				{
+					return archive.pathLower + L"|lpk|" + ToLowerCopyW(relativePath);
 				}
 				return archive.pathLower + L"|cpk|" + HashHex(hash);
 			}

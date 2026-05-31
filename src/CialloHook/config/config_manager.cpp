@@ -4,6 +4,7 @@
 #include "../../RuntimeCore/io/INI.h"
 #include "../../RuntimeCore/base/Str.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cwctype>
 #include <limits>
@@ -1028,7 +1029,34 @@ namespace CialloHook
 				AppendWarning(context, L"LocaleEmulator.Timezone 为空，已回退为 Tokyo Standard Time");
 			}
 
-			settings.rioShiina.enable = GetBoolOrDefault(context, L"RioShiina", L"Enable", false);
+			settings.aliceSystem3x.enable = GetBoolOrDefault(context, L"AliceSystem3x", L"Enable", false);
+				settings.aliceSystem3x.patchFolders = GetIndexedList(context, L"AliceSystem3x", L"PatchFolderCount", L"PatchFolderName_");
+				for (std::wstring& folder : settings.aliceSystem3x.patchFolders)
+				{
+					folder = Rut::StrX::Trim(folder);
+				}
+				settings.aliceSystem3x.patchFolders.erase(
+					std::remove_if(settings.aliceSystem3x.patchFolders.begin(), settings.aliceSystem3x.patchFolders.end(), [](const std::wstring& folder) { return folder.empty(); }),
+					settings.aliceSystem3x.patchFolders.end());
+				if (settings.aliceSystem3x.patchFolders.empty() && !context.ini.Has(L"AliceSystem3x", L"PatchFolderCount"))
+				{
+					settings.aliceSystem3x.patchFolders.push_back(L"patch");
+				}
+				settings.aliceSystem3x.enableLog = GetBoolOrDefault(context, L"AliceSystem3x", L"EnableLog", false);
+				settings.aliceSystem3x.hookExistsCheck = GetBoolOrDefault(context, L"AliceSystem3x", L"HookExistsCheck", false);
+				settings.aliceSystem3x.maxFileSize = GetUIntOrDefault(context, L"AliceSystem3x", L"MaxFileSize", 268435456);
+				if (settings.aliceSystem3x.maxFileSize == 0)
+				{
+					settings.aliceSystem3x.maxFileSize = 268435456;
+					AppendWarning(context, L"AliceSystem3x.MaxFileSize 为 0，已回退为 268435456");
+				}
+				if (settings.aliceSystem3x.enable && settings.aliceSystem3x.patchFolders.empty())
+				{
+					settings.aliceSystem3x.enable = false;
+					AppendWarning(context, L"AliceSystem3x.Enable 已开启，但未配置有效的 PatchFolderName_i，已自动关闭");
+				}
+
+				settings.rioShiina.enable = GetBoolOrDefault(context, L"RioShiina", L"Enable", false);
 			settings.rioShiina.mode = GetIntOrDefault(context, L"RioShiina", L"Mode", 0, 0, 2);
 			settings.rioShiina.patchNames = GetIndexedList(context, L"RioShiina", L"PatchCount", L"PatchName_");
 			if (settings.rioShiina.patchNames.empty())

@@ -284,6 +284,15 @@ namespace CialloHook
 		std::wstring timezone = L"Tokyo Standard Time";
 	};
 
+	struct AliceSystem3xSettings
+	{
+		bool enable = false;
+		std::vector<std::wstring> patchFolders = { L"patch" };
+		bool enableLog = false;
+		bool hookExistsCheck = false;
+		uint32_t maxFileSize = 268435456;
+	};
+
 	struct RioShiinaSettings
 	{
 		bool enable = false;
@@ -349,6 +358,7 @@ namespace CialloHook
 		LoadModeSettings loadMode;
 		StartupTimingSettings startupTiming;
 		LocaleEmulatorSettings localeEmulator;
+		AliceSystem3xSettings aliceSystem3x;
 		RioShiinaSettings rioShiina;
 		EngineCacheSettings engineCache;
 		EnginePatchSettings enginePatches;

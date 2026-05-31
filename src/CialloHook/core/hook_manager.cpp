@@ -748,6 +748,17 @@ namespace CialloHook
 			const wchar_t* slash = wcsrchr(moduleName, L'\\');
 			const wchar_t* name = slash ? slash + 1 : moduleName;
 
+			/* VEH is first-chance: some games intentionally probe invalid pointers inside
+			 * ntdll and then recover via their own SEH. Those entries are not actionable
+			 * with CialloHook.map (the faulting IP is outside our module) and were being
+			 * reported as scary errors even though execution continued normally. If the
+			 * exception is truly unhandled, TopLevelExceptionFilter still writes the real
+			 * crash dump/log later. */
+			if (code == EXCEPTION_ACCESS_VIOLATION && _wcsicmp(name, L"ntdll.dll") == 0)
+			{
+				return EXCEPTION_CONTINUE_SEARCH;
+			}
+
 			LogMessage(LogLevel::Error,
 				L"[VEH] Exception 0x%08X at 0x%p in %s (base+0x%X)",
 				code, ep->ExceptionRecord->ExceptionAddress, name,
@@ -1656,10 +1667,10 @@ namespace CialloHook
 				MessageBoxW(NULL, wideWarning.c_str(), L"CialloHook", MB_OK | MB_ICONWARNING);
 			}
 			bool hasFontHook = !settings.font.font.empty();
-			LogMessage(LogLevel::Info, L"Feature flags: Font=%d Text=%d Title=%d FilePatch=%d CodePage=%d RioShiina=%d(mode=%d)",
+			LogMessage(LogLevel::Info, L"Feature flags: Font=%d Text=%d Title=%d FilePatch=%d CodePage=%d AliceSystem3x=%d RioShiina=%d(mode=%d)",
 				hasFontHook ? 1 : 0, settings.textReplace.rules.empty() ? 0 : 1, settings.windowTitle.rules.empty() ? 0 : 1,
 				settings.filePatch.enable ? 1 : 0, settings.codePage.enable ? 1 : 0,
-				settings.rioShiina.enable ? 1 : 0, settings.rioShiina.mode);
+				settings.aliceSystem3x.enable ? 1 : 0, settings.rioShiina.enable ? 1 : 0, settings.rioShiina.mode);
 			LogMessage(LogLevel::Info, L"Engine cache flags: MED=%d MAJIRO=%d",
 				settings.engineCache.med ? 1 : 0, settings.engineCache.majiro ? 1 : 0);
 			LogMessage(LogLevel::Info, L"Engine patch flags: KrkrPatch=%d(count=%u) WafflePatch=%d(GetTextCrash=%d)",

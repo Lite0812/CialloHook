@@ -27,6 +27,9 @@
     <ClCompile Include="hooks\hook_modules.cpp">
       <Filter>hooks</Filter>
     </ClCompile>
+    <ClCompile Include="hooks\alice_system3x_hooks.cpp">
+      <Filter>hooks</Filter>
+    </ClCompile>
     <ClCompile Include="hooks\krkr_plugin_bridge.cpp">
       <Filter>hooks</Filter>
     </ClCompile>
@@ -54,6 +57,9 @@
       <Filter>core</Filter>
     </ClInclude>
     <ClInclude Include="hooks\hook_modules.h">
+      <Filter>hooks</Filter>
+    </ClInclude>
+    <ClInclude Include="hooks\alice_system3x_hooks.h">
       <Filter>hooks</Filter>
     </ClInclude>
     <ClInclude Include="hooks\krkr_plugin_bridge.h">

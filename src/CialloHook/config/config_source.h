@@ -179,32 +179,32 @@ namespace CialloHook
 		settings.textReplace.hookGetGlyphIndicesW = true;
 		settings.textReplace.hookGetGlyphOutlineA = true;
 		settings.textReplace.hookGetGlyphOutlineW = true;
-			settings.textReplace.hookMessageBoxA = true;
-			settings.textReplace.hookSetDlgItemTextA = true;
-			settings.textReplace.hookSendDlgItemMessageA = true;
-			settings.textReplace.hookSendDlgItemMessageW = true;
-			settings.textReplace.hookSendMessageA = true;
-			settings.textReplace.hookSendMessageW = true;
-			settings.textReplace.hookAppendMenuA = true;
-			settings.textReplace.hookModifyMenuA = true;
-			settings.textReplace.hookInsertMenuA = true;
-			settings.textReplace.hookInsertMenuItemA = true;
-			settings.textReplace.hookSetMenuItemInfoA = true;
-			settings.textReplace.hookMessageBoxIndirectA = true;
-			settings.textReplace.hookDrawThemeText = true;
-			settings.textReplace.hookDrawThemeTextEx = true;
-			settings.textReplace.hookDefWindowProcA = true;
-			settings.textReplace.hookDefWindowProcW = true;
-			settings.textReplace.hookDialogBoxParamA = true;
-			settings.textReplace.hookDialogBoxParamW = true;
-			settings.textReplace.hookCreateDialogParamA = true;
-			settings.textReplace.hookCreateDialogParamW = true;
-			settings.textReplace.hookDialogBoxIndirectParamA = true;
-			settings.textReplace.hookDialogBoxIndirectParamW = true;
-			settings.textReplace.hookCreateDialogIndirectParamA = true;
-			settings.textReplace.hookCreateDialogIndirectParamW = true;
-			settings.textReplace.hookPropertySheetA = false;
-			settings.textReplace.hookExitProcessGuard = false;
+		settings.textReplace.hookMessageBoxA = true;
+		settings.textReplace.hookSetDlgItemTextA = true;
+		settings.textReplace.hookSendDlgItemMessageA = true;
+		settings.textReplace.hookSendDlgItemMessageW = true;
+		settings.textReplace.hookSendMessageA = true;
+		settings.textReplace.hookSendMessageW = true;
+		settings.textReplace.hookAppendMenuA = true;
+		settings.textReplace.hookModifyMenuA = true;
+		settings.textReplace.hookInsertMenuA = true;
+		settings.textReplace.hookInsertMenuItemA = true;
+		settings.textReplace.hookSetMenuItemInfoA = true;
+		settings.textReplace.hookMessageBoxIndirectA = true;
+		settings.textReplace.hookDrawThemeText = true;
+		settings.textReplace.hookDrawThemeTextEx = true;
+		settings.textReplace.hookDefWindowProcA = true;
+		settings.textReplace.hookDefWindowProcW = true;
+		settings.textReplace.hookDialogBoxParamA = true;
+		settings.textReplace.hookDialogBoxParamW = true;
+		settings.textReplace.hookCreateDialogParamA = true;
+		settings.textReplace.hookCreateDialogParamW = true;
+		settings.textReplace.hookDialogBoxIndirectParamA = true;
+		settings.textReplace.hookDialogBoxIndirectParamW = true;
+		settings.textReplace.hookCreateDialogIndirectParamA = true;
+		settings.textReplace.hookCreateDialogIndirectParamW = true;
+		settings.textReplace.hookPropertySheetA = false;
+		settings.textReplace.hookExitProcessGuard = false;
 
 		// ---------------- [WindowTitle] 窗口标题 ----------------
 		settings.windowTitle.rules = {
@@ -304,11 +304,11 @@ namespace CialloHook
 		// ---------------- [LoadMode] 加载模式 ----------------
 		settings.loadMode.mode = L"proxy";
 
-			// ---------------- [StartupTiming] 延迟附加 ----------------
-			settings.startupTiming.attachMode = L"immediate";
-			settings.startupTiming.delayMs = 0;
-			settings.startupTiming.waitForGuiReady = false;
-			settings.startupTiming.enableStartupWindowGate = false;
+		// ---------------- [StartupTiming] 延迟附加 ----------------
+		settings.startupTiming.attachMode = L"immediate";
+		settings.startupTiming.delayMs = 0;
+		settings.startupTiming.waitForGuiReady = false;
+		settings.startupTiming.enableStartupWindowGate = false;
 		// 如果使用 Loader 模式，这里改成：settings.loadMode.mode = L"loader";
 
 		// ---------------- [LocaleEmulator] 转区 ----------------
@@ -319,6 +319,15 @@ namespace CialloHook
 		settings.localeEmulator.defaultCharset = 128;
 		settings.localeEmulator.hookUILanguageAPI = 0;
 		settings.localeEmulator.timezone = L"Tokyo Standard Time";
+
+		// ---------------- [AliceSystem3x] Alice System3.x ALD 松散文件补丁 ----------------
+		settings.aliceSystem3x.enable = false;
+		settings.aliceSystem3x.patchFolders = {
+			L"patch",
+		};
+		settings.aliceSystem3x.enableLog = false;
+		settings.aliceSystem3x.hookExistsCheck = false;
+		settings.aliceSystem3x.maxFileSize = 268435456;
 
 		// ---------------- [RioShiina] RioShiina 引擎补丁 ----------------
 		settings.rioShiina.enable = false;

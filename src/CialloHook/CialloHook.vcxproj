@@ -91,7 +91,8 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalOptions>/ignore:4099 %(AdditionalOptions)</AdditionalOptions>
       <AdditionalLibraryDirectories>..\..\third\detours\lib.X86;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>detours.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>detours.lib;bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <ImageHasSafeExceptionHandlers Condition="'$(Platform)'=='Win32'">false</ImageHasSafeExceptionHandlers>
       <ModuleDefinitionFile>entry\version.def</ModuleDefinitionFile>
     </Link>
   </ItemDefinitionGroup>
@@ -118,9 +119,11 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <GenerateMapFile>true</GenerateMapFile>
       <MapFileName>$(OutDir)$(TargetName).map</MapFileName>
+      <RandomizedBaseAddress>false</RandomizedBaseAddress>
       <AdditionalOptions>/ignore:4099 %(AdditionalOptions)</AdditionalOptions>
       <AdditionalLibraryDirectories>..\..\third\detours\lib.X86;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>detours.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>detours.lib;bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <ImageHasSafeExceptionHandlers Condition="'$(Platform)'=='Win32'">false</ImageHasSafeExceptionHandlers>
       <ModuleDefinitionFile>entry\version.def</ModuleDefinitionFile>
     </Link>
   </ItemDefinitionGroup>
@@ -138,7 +141,8 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalOptions>/ignore:4099 %(AdditionalOptions)</AdditionalOptions>
       <AdditionalLibraryDirectories>..\..\third\detours\lib.X64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>detours.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>detours.lib;bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <ImageHasSafeExceptionHandlers Condition="'$(Platform)'=='Win32'">false</ImageHasSafeExceptionHandlers>
       <ModuleDefinitionFile>entry\version.def</ModuleDefinitionFile>
     </Link>
   </ItemDefinitionGroup>
@@ -167,7 +171,8 @@
       <MapFileName>$(OutDir)$(TargetName).map</MapFileName>
       <AdditionalOptions>/ignore:4099 %(AdditionalOptions)</AdditionalOptions>
       <AdditionalLibraryDirectories>..\..\third\detours\lib.X64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>detours.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>detours.lib;bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <ImageHasSafeExceptionHandlers Condition="'$(Platform)'=='Win32'">false</ImageHasSafeExceptionHandlers>
       <ModuleDefinitionFile>entry\version.def</ModuleDefinitionFile>
     </Link>
   </ItemDefinitionGroup>
@@ -176,6 +181,7 @@
     <ClCompile Include="core\hook_manager.cpp" />
     <ClCompile Include="entry\dllmain.cpp" />
     <ClCompile Include="hooks\hook_modules.cpp" />
+    <ClCompile Include="hooks\alice_system3x_hooks.cpp" />
     <ClCompile Include="hooks\krkr_plugin_bridge.cpp" />
     <ClCompile Include="hooks\rio_shiina_hooks.cpp" />
     <ClCompile Include="entry\Proxy.cpp" />
@@ -193,6 +199,7 @@
     <ClInclude Include="config\settings.h" />
     <ClInclude Include="core\hook_manager.h" />
     <ClInclude Include="hooks\hook_modules.h" />
+    <ClInclude Include="hooks\alice_system3x_hooks.h" />
     <ClInclude Include="hooks\krkr_plugin_bridge.h" />
     <ClInclude Include="hooks\rio_shiina_hooks.h" />
     <ClInclude Include="entry\Proxy.h" />
@@ -230,7 +237,10 @@ if exist "$(ProjectDir)config\CialloHook.ini" (
   copy /Y "$(ProjectDir)config\CialloHook.ini" "$(OutDir)winmm.ini" >nul
   copy /Y "$(ProjectDir)config\CialloHook.ini" "$(OutDir)version.ini" >nul
 )
-      </Command>
+if "$(Configuration)"=="Release" (
+  python "$(ProjectDir)..\LitePAK_tool\tools\litepak_codecrypt_patch.py" "$(TargetPath)"
+)
+</Command>
       <Message>Copying CialloHook.ini to output directory...</Message>
     </PostBuildEvent>
   </ItemDefinitionGroup>

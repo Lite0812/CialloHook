@@ -16,6 +16,9 @@
     <Filter Include="external">
       <UniqueIdentifier>{3B9B3ED4-09D6-4763-9D98-60E4F0A2DF06}</UniqueIdentifier>
     </Filter>
+    <Filter Include="external\LitePAK">
+      <UniqueIdentifier>{5B3F1A25-BCE7-4BA0-8B2E-55A633D4C2F2}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="base\Mem.h">
@@ -69,6 +72,18 @@
     <ClInclude Include="..\..\third\zstd\zstd.h">
       <Filter>external</Filter>
     </ClInclude>
+    <ClInclude Include="..\LitePAK_tool\include\litepak.h">
+      <Filter>external\LitePAK</Filter>
+    </ClInclude>
+    <ClInclude Include="..\LitePAK_tool\common\litepak_internal.h">
+      <Filter>external\LitePAK</Filter>
+    </ClInclude>
+    <ClInclude Include="..\LitePAK_tool\common\litepak_material.h">
+      <Filter>external\LitePAK</Filter>
+    </ClInclude>
+    <ClInclude Include="..\LitePAK_tool\common\litepak_wb_vm.h">
+      <Filter>external\LitePAK</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="base\Mem.cpp">
@@ -88,6 +103,63 @@
     </ClCompile>
     <ClCompile Include="io\CustomPakVFS.cpp">
       <Filter>io</Filter>
+    </ClCompile>
+    <ClCompile Include="..\LitePAK_tool\unpack\litepak_unpack.c">
+      <Filter>external\LitePAK</Filter>
+    </ClCompile>
+    <ClCompile Include="..\LitePAK_tool\common\litepak_format.c">
+      <Filter>external\LitePAK</Filter>
+    </ClCompile>
+    <ClCompile Include="..\LitePAK_tool\common\litepak_crypto.c">
+      <Filter>external\LitePAK</Filter>
+    </ClCompile>
+    <ClCompile Include="..\LitePAK_tool\common\litepak_prng.c">
+      <Filter>external\LitePAK</Filter>
+    </ClCompile>
+    <ClCompile Include="..\LitePAK_tool\common\litepak_compress.c">
+      <Filter>external\LitePAK</Filter>
+    </ClCompile>
+    <ClCompile Include="..\LitePAK_tool\common\litepak_utils.c">
+      <Filter>external\LitePAK</Filter>
+    </ClCompile>
+    <ClCompile Include="..\LitePAK_tool\common\litepak_secure.c">
+      <Filter>external\LitePAK</Filter>
+    </ClCompile>
+    <ClCompile Include="..\LitePAK_tool\common\litepak_codecrypt.c">
+      <Filter>external\LitePAK</Filter>
+    </ClCompile>
+    <ClCompile Include="..\LitePAK_tool\common\litepak_data_protect.c">
+      <Filter>external\LitePAK</Filter>
+    </ClCompile>
+    <ClCompile Include="..\LitePAK_tool\common\litepak_material_core.c">
+      <Filter>external\LitePAK</Filter>
+    </ClCompile>
+    <ClCompile Include="..\LitePAK_tool\common\litepak_material_table_a.c">
+      <Filter>external\LitePAK</Filter>
+    </ClCompile>
+    <ClCompile Include="..\LitePAK_tool\common\litepak_material_table_b.c">
+      <Filter>external\LitePAK</Filter>
+    </ClCompile>
+    <ClCompile Include="..\LitePAK_tool\common\litepak_material_table_c.c">
+      <Filter>external\LitePAK</Filter>
+    </ClCompile>
+    <ClCompile Include="..\LitePAK_tool\common\litepak_personal.c">
+      <Filter>external\LitePAK</Filter>
+    </ClCompile>
+    <ClCompile Include="..\LitePAK_tool\common\litepak_wb_vm.c">
+      <Filter>external\LitePAK</Filter>
+    </ClCompile>
+    <ClCompile Include="..\LitePAK_tool\common\litepak_wb_bytecode.c">
+      <Filter>external\LitePAK</Filter>
+    </ClCompile>
+    <ClCompile Include="..\LitePAK_tool\common\blake2b.c">
+      <Filter>external\LitePAK</Filter>
+    </ClCompile>
+    <ClCompile Include="..\LitePAK_tool\common\aes_gcm.c">
+      <Filter>external\LitePAK</Filter>
+    </ClCompile>
+    <ClCompile Include="..\LitePAK_tool\common\ed25519.c">
+      <Filter>external\LitePAK</Filter>
     </ClCompile>
     <ClCompile Include="io\File.cpp">
       <Filter>io</Filter>
@@ -127,5 +199,13 @@
     <None Include="hook\hook_api\codepage_hooks.inl">
       <Filter>hook\hook_api</Filter>
     </None>
+  </ItemGroup>
+  <ItemGroup>
+    <MASM Include="..\LitePAK_tool\unpack\litepak_secure_core_x86.asm">
+      <Filter>external\LitePAK</Filter>
+    </MASM>
+    <MASM Include="..\LitePAK_tool\unpack\litepak_secure_core_x64.asm">
+      <Filter>external\LitePAK</Filter>
+    </MASM>
   </ItemGroup>
 </Project>

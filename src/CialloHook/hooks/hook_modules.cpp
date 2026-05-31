@@ -1,4 +1,5 @@
 #include "hook_modules.h"
+#include "alice_system3x_hooks.h"
 #include "krkr_plugin_bridge.h"
 #include "rio_shiina_hooks.h"
 
@@ -2092,6 +2093,9 @@ namespace CialloHook
 			CIALLOHOOK_VERBOSE_INFO_LOG(L"Apply hooks: file patch");
 			ApplyFilePatchHooks(settings.filePatch, settings.fileSpoof, settings.directoryRedirect, settings.enginePatches);
 
+			CIALLOHOOK_VERBOSE_INFO_LOG(L"Apply hooks: alice system3x");
+			ApplyAliceSystem3xHooks(settings.aliceSystem3x, settings.filePatch);
+
 			CIALLOHOOK_VERBOSE_INFO_LOG(L"Apply hooks: siglus key extract");
 			ApplySiglusKeyExtract(settings.siglusKeyExtract);
 
@@ -2123,6 +2127,11 @@ namespace CialloHook
 			CIALLOHOOK_VERBOSE_INFO_LOG(L"Apply hooks: font");
 			ApplyFontHooks(settings.font);
 			ReleaseStartupWindowGate();
+		}
+
+		void ApplyAliceSystem3xHooks(const AliceSystem3xSettings& settings, const FilePatchSettings& filePatchSettings)
+		{
+			AliceSystem3xHooks::Apply(settings, filePatchSettings);
 		}
 
 		void ApplyRioShiinaHooks(const RioShiinaSettings& settings, const FilePatchSettings& filePatchSettings)
