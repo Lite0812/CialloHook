@@ -1,0 +1,4 @@
+LIBRARY "litepak_pk"
+EXPORTS
+    litepak_pack
+    litepak_pack_ex

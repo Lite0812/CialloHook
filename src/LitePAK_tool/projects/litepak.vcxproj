@@ -1,0 +1,131 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|Win32"><Configuration>Debug</Configuration><Platform>Win32</Platform></ProjectConfiguration>
+    <ProjectConfiguration Include="Release|Win32"><Configuration>Release</Configuration><Platform>Win32</Platform></ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|x64"><Configuration>Debug</Configuration><Platform>x64</Platform></ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64"><Configuration>Release</Configuration><Platform>x64</Platform></ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>16.0</VCProjectVersion>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectGuid>{D0E7C7A3-3A7E-4BB3-94CE-0C6E7A7D0F11}</ProjectGuid>
+    <RootNamespace>litepak</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Label="Configuration" Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'"><ConfigurationType>DynamicLibrary</ConfigurationType><UseDebugLibraries>true</UseDebugLibraries><PlatformToolset>v143</PlatformToolset><CharacterSet>Unicode</CharacterSet></PropertyGroup>
+  <PropertyGroup Label="Configuration" Condition="'$(Configuration)|$(Platform)'=='Release|Win32'"><ConfigurationType>DynamicLibrary</ConfigurationType><UseDebugLibraries>false</UseDebugLibraries><PlatformToolset>v143</PlatformToolset><WholeProgramOptimization>true</WholeProgramOptimization><CharacterSet>Unicode</CharacterSet></PropertyGroup>
+  <PropertyGroup Label="Configuration" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'"><ConfigurationType>DynamicLibrary</ConfigurationType><UseDebugLibraries>true</UseDebugLibraries><PlatformToolset>v143</PlatformToolset><CharacterSet>Unicode</CharacterSet></PropertyGroup>
+  <PropertyGroup Label="Configuration" Condition="'$(Configuration)|$(Platform)'=='Release|x64'"><ConfigurationType>DynamicLibrary</ConfigurationType><UseDebugLibraries>false</UseDebugLibraries><PlatformToolset>v143</PlatformToolset><WholeProgramOptimization>true</WholeProgramOptimization><CharacterSet>Unicode</CharacterSet></PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+    <Import Project="$(VCTargetsPath)\BuildCustomizations\masm.props" />
+  </ImportGroup>
+  <ImportGroup Label="Shared" />
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'"><Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" /></ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|Win32'"><Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" /></ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'"><Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" /></ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'"><Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" /></ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup>
+    <PlatformFolder Condition="'$(Platform)'=='Win32'">x86</PlatformFolder>
+    <PlatformFolder Condition="'$(Platform)'!='Win32'">$(Platform)</PlatformFolder>
+    <OutDir>..\..\..\out\bin\$(PlatformFolder)\$(Configuration)\</OutDir>
+    <IntDir>..\..\..\out\obj\$(ProjectName)\$(PlatformFolder)\$(Configuration)\</IntDir>
+    <TargetName>litepak</TargetName>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <FunctionLevelLinking Condition="'$(Configuration)'=='Release'">true</FunctionLevelLinking>
+      <IntrinsicFunctions Condition="'$(Configuration)'=='Release'">true</IntrinsicFunctions>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>WIN32;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions Condition="'$(Platform)'!='Win32'">%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions Condition="'$(Configuration)'=='Debug'">_DEBUG;_WINDOWS;_USRDLL;_CRT_SECURE_NO_WARNINGS;LITEPAK_HAS_LZMA_ENC;LITEPAK_HAS_ZSTD_ENC;Z7_ST;ZSTD_DISABLE_ASM;NO_PREFETCH;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions Condition="'$(Configuration)'=='Release'">NDEBUG;_WINDOWS;_USRDLL;_CRT_SECURE_NO_WARNINGS;LITEPAK_HAS_LZMA_ENC;LITEPAK_HAS_ZSTD_ENC;Z7_ST;ZSTD_DISABLE_ASM;NO_PREFETCH;LITEPAK_CODECRYPT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalIncludeDirectories>..\include;..\..\..\third\miniz;..\..\..\third\zstd;..\..\..\third\lzma;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <EnableCOMDATFolding Condition="'$(Configuration)'=='Release'">true</EnableCOMDATFolding>
+      <OptimizeReferences Condition="'$(Configuration)'=='Release'">true</OptimizeReferences>
+      <RandomizedBaseAddress Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">false</RandomizedBaseAddress>
+      <AdditionalDependencies>bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <ImageHasSafeExceptionHandlers Condition="'$(Platform)'=='Win32'">false</ImageHasSafeExceptionHandlers>
+      <ModuleDefinitionFile>..\unpack\litepak.def</ModuleDefinitionFile>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="..\unpack\litepak_unpack.c" />
+    <MASM Include="..\unpack\litepak_secure_core_x86.asm" Condition="'$(Platform)'=='Win32'" />
+    <MASM Include="..\unpack\litepak_secure_core_x64.asm" Condition="'$(Platform)'=='x64'" />
+    <ClCompile Include="..\common\litepak_format.c" />
+    <ClCompile Include="..\common\litepak_crypto.c" />
+    <ClCompile Include="..\common\litepak_prng.c" />
+    <ClCompile Include="..\common\litepak_compress.c" />
+    <ClCompile Include="..\common\litepak_utils.c" />
+    <ClCompile Include="..\common\litepak_secure.c" />
+    <ClCompile Include="..\common\litepak_codecrypt.c" />
+    <ClCompile Include="..\common\litepak_data_protect.c" />
+    <ClCompile Include="..\common\litepak_material_core.c" />
+    <ClCompile Include="..\common\litepak_material_table_a.c" />
+    <ClCompile Include="..\common\litepak_material_table_b.c" />
+    <ClCompile Include="..\common\litepak_material_table_c.c" />
+    <ClCompile Include="..\common\litepak_personal.c" />
+    <ClCompile Include="..\common\litepak_wb_vm.c" />
+    <ClCompile Include="..\common\litepak_wb_bytecode.c" />
+    <ClCompile Include="..\common\blake2b.c" />
+    <ClCompile Include="..\common\aes_gcm.c" />
+    <ClCompile Include="..\common\ed25519.c" />
+    <ClCompile Include="..\..\..\third\miniz\miniz.c" />
+    <ClCompile Include="..\..\..\third\zstd\common\debug.c" />
+    <ClCompile Include="..\..\..\third\zstd\common\entropy_common.c" />
+    <ClCompile Include="..\..\..\third\zstd\common\error_private.c" />
+    <ClCompile Include="..\..\..\third\zstd\common\fse_decompress.c" />
+    <ClCompile Include="..\..\..\third\zstd\common\xxhash.c" />
+    <ClCompile Include="..\..\..\third\zstd\common\zstd_common.c" />
+    <ClCompile Include="..\..\..\third\zstd\decompress\huf_decompress.c" />
+    <ClCompile Include="..\..\..\third\zstd\decompress\zstd_ddict.c" />
+    <ClCompile Include="..\..\..\third\zstd\decompress\zstd_decompress.c" />
+    <ClCompile Include="..\..\..\third\zstd\decompress\zstd_decompress_block.c" />
+    <ClCompile Include="..\..\..\third\zstd\compress\fse_compress.c" />
+    <ClCompile Include="..\..\..\third\zstd\compress\hist.c" />
+    <ClCompile Include="..\..\..\third\zstd\compress\huf_compress.c" />
+    <ClCompile Include="..\..\..\third\zstd\compress\zstd_compress.c" />
+    <ClCompile Include="..\..\..\third\zstd\compress\zstd_compress_literals.c" />
+    <ClCompile Include="..\..\..\third\zstd\compress\zstd_compress_sequences.c" />
+    <ClCompile Include="..\..\..\third\zstd\compress\zstd_compress_superblock.c" />
+    <ClCompile Include="..\..\..\third\zstd\compress\zstd_double_fast.c" />
+    <ClCompile Include="..\..\..\third\zstd\compress\zstd_fast.c" />
+    <ClCompile Include="..\..\..\third\zstd\compress\zstd_lazy.c" />
+    <ClCompile Include="..\..\..\third\zstd\compress\zstd_ldm.c" />
+    <ClCompile Include="..\..\..\third\zstd\compress\zstd_opt.c" />
+    <ClCompile Include="..\..\..\third\lzma\CpuArch.c" />
+    <ClCompile Include="..\..\..\third\lzma\LzmaDec.c" />
+    <ClCompile Include="..\..\..\third\lzma\LzmaEnc.c" />
+    <ClCompile Include="..\..\..\third\lzma\LzFind.c" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\include\litepak.h" />
+    <ClInclude Include="..\common\litepak_internal.h" />
+    <ClInclude Include="..\common\litepak_material.h" />
+    <ClInclude Include="..\common\litepak_wb_vm.h" />
+    <None Include="..\unpack\litepak.def" />
+  </ItemGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)'=='Release'">
+    <PostBuildEvent>
+      <Command>python "$(ProjectDir)..\tools\litepak_codecrypt_patch.py" "$(TargetPath)"</Command>
+      <Message>Encrypting LitePAK protected code section...</Message>
+    </PostBuildEvent>
+  </ItemDefinitionGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+    <Import Project="$(VCTargetsPath)\BuildCustomizations\masm.targets" />
+  </ImportGroup>
+</Project>

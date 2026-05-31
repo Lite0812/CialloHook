@@ -1,0 +1,10 @@
+LIBRARY "litepak"
+EXPORTS
+    litepak_unpack
+    litepak_unpack_ex
+    litepak_unpack_ex2
+    litepak_info
+    litepak_info_ex
+    litepak_verify
+    litepak_verify_ex
+    litepak_extract_by_name
