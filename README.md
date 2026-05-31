@@ -17,7 +17,7 @@
 - **文本 Hook**：覆盖 `TextOut` / `DrawText` / `ExtTextOut` 及 UI 控件、菜单、对话框等完整文本链路
 - **窗口处理**：支持标题替换和启动时原生提示框
 - **启动图片**：支持 GDI+ 图片弹窗，6 种入场/退场动画，可通过补丁目录或封包加载
-- **资源挂载**：支持补丁目录、补丁包（cpk）、自定义 PAK / VFS、链式归档名
+- **资源挂载**：支持补丁目录、补丁包（cpk/xp3/lpk）、自定义 PAK / VFS、链式归档名
 - **环境伪装**：支持代码页伪装、Locale Emulator 转区、UI 语言伪装、时区伪装
 - **双加载模式**：支持 `proxy` 代理模式和 `loader` 启动器模式
 - **启动控制**：支持延迟挂载、入口点挂载、GUI 就绪等待、窗口门控
@@ -315,12 +315,12 @@ CnJpMapReadEncoding = 932
 最常见的两种补丁来源是：
 
 - `PatchFolderName_i`：直接放在目录里的补丁文件
-- `CustomPakName_i`：封装成 `cpk` 的补丁包
+- `CustomPakName_i`：封装成 `cpk` / `xp3` / `lpk` 的补丁包
 
 查找顺序大致是：
 
 - 补丁目录
-- 自定义 `cpk` 封包
+- 自定义 `cpk` / `xp3` / `lpk` 封包
 - 游戏原始文件
 
 一个常见配置：
@@ -346,12 +346,13 @@ EnableLog = false
 适合的发布方式：
 
 - 想让用户直接替换零散文件时，用补丁目录
-- 想把补丁打成单文件分发时，用 `cpk` 封包
+- 想把补丁打成单文件分发时，用 `cpk` 或 `lpk` 封包
 - 想同时保留“基础补丁 + 热修复覆盖”时，两者可以一起开
 
 封包相关说明：
 
 - `CustomPakName_i` 可以写文件名、相对路径或绝对路径
+- 支持 `cpk` / `xp3` / `lpk`；`lpk` 使用 LitePAK v6 校验和加密路径，目录枚举需要随包放置 manifest
 - 编号越大优先级越高，适合叠加 `patch_base.cpk`、`patch_cn.cpk`、`patch_hotfix.cpk`
 - `VFSMode = 0` 一般更稳，适合发布默认值
 - `VFSMode = 1` 是内存读取模式，适合有特殊性能或兼容需求时再试
@@ -373,7 +374,7 @@ EnableLog = false
 
 - 把一个目录封成 `cpk`
 - 把 `cpk` 解包回目录
-- 按资源相对路径从 `cpk` 里单独导出某个文件
+- 按资源相对路径从 `cpk` / `lpk` 里单独导出某个文件
 - 生成 `manifest` 清单，保留 hash 和原始路径对应关系
 
 最简单的用法就是拖拽：
@@ -408,7 +409,7 @@ CialloPAK_tool.exe pack --input patch --pak patch.cpk --manifest patch_manifest.
 - 如果要使用 `zstd` 压缩或解压，脚本版环境里需要安装 `zstandard`
 - 不带 `manifest` 解包时，文件会按 hash 名称导出，不会还原原始路径
 - 推荐先确认 `patch\` 目录结构正确，再封成 `cpk` 发布
-- 对接 `CialloHook.ini` 时，把生成的 `patch.cpk` 写到 `CustomPakName_i` 即可
+- 对接 `CialloHook.ini` 时，把生成的 `patch.cpk` 写到 `CustomPakName_i` 即可；LPK 也可直接写入，若场景需要目录枚举请随包放置 manifest
 
 ### 11. 启用代码页伪装
 
