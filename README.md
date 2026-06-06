@@ -49,10 +49,13 @@
 - `src/CialloHook/hooks/rio_shiina_hooks.cpp` / `.h`：RioShiina 引擎资源覆盖与解包支持
 - `src/CialloHook/config/CialloHook_Example.ini`：完整带注释配置示例
 - `CialloLauncher.exe`：启动器模式入口
-- `LoaderDll.dll` / `LocaleEmulator.dll`：部分模式和转区功能所需依赖
+- `LoaderDll_x86.dll` / `LoaderDll_x64.dll`、`LocaleEmulatorPlus_x86.dll` / `LocaleEmulatorPlus_x64.dll`：LEP 转区依赖，按目标位数使用
+- `LoaderDll.dll` / `LocaleEmulator.dll`：LE 转区依赖，主要用于 x86 兜底
 - `subs_cn_jp.json`：日繁到简中映射示例文件
 - `CialloPAK_tool.py`：`cpk` 封包/解包脚本版工具
 - `CialloPAK_tool.exe`：`cpk` 封包/解包独立可执行版工具
+- `LitePAK_tool.py`：`lpk` 封包/解包脚本版工具，支持 LitePAK v6、清单、校验、单文件读取
+- `LitePAK_tool.exe`：`lpk` 封包/解包独立可执行版工具
 
 ## 快速开始
 
@@ -287,7 +290,7 @@ CnJpMapReadEncoding = 932
 
 说明：
 
-- `CnJpMapJson` 默认就是 `subs_cn_jp.json`
+- `CnJpMapJson` 默认就是 `subs_cn_jp.json`，读取优先级为补丁目录 → CustomPak → 游戏根目录
 - 建议映射文件使用“单字对单字”形式
 - 这项功能会在普通 `TextReplace` 规则之后再参与处理
 - 如果某条文本已经命中了 `Replacement_i`，那条文本就不会再继续做日繁映射
@@ -352,7 +355,7 @@ EnableLog = false
 封包相关说明：
 
 - `CustomPakName_i` 可以写文件名、相对路径或绝对路径
-- 支持 `cpk` / `xp3` / `lpk`；`lpk` 使用 LitePAK v6 校验和加密路径，目录枚举需要随包放置 manifest
+- 支持 `cpk` / `xp3` / `lpk`；`cpk` / `lpk` 如需目录枚举，建议随包放置 manifest（如 `patch_manifest.txt`）
 - 编号越大优先级越高，适合叠加 `patch_base.cpk`、`patch_cn.cpk`、`patch_hotfix.cpk`
 - `VFSMode = 0` 一般更稳，适合发布默认值
 - `VFSMode = 1` 是内存读取模式，适合有特殊性能或兼容需求时再试
@@ -363,25 +366,26 @@ EnableLog = false
 2. 确认路径结构正确后再封成 `patch.cpk`
 3. 发布时默认开启 `CustomPakEnable = true`
 
-### 10. CialloPAK_tool.py / CialloPAK_tool.exe
+### 10. CialloPAK / LitePAK 封包工具
 
-如果你准备把补丁目录封成单个 `cpk` 文件，可以直接使用：
+如果你准备把补丁目录封成单个封包文件，可以使用 `CialloPAK_tool` 或 `LitePAK_tool`：
 
-- `CialloPAK_tool.py`：适合自己改脚本、命令行批处理
-- `CialloPAK_tool.exe`：适合直接双击或拖拽使用，发布时也更方便
+- `CialloPAK_tool.py` / `CialloPAK_tool.exe`：用于 `cpk` 封包，适合普通补丁分发
+- `LitePAK_tool.py` / `LitePAK_tool.exe`：用于 `lpk` 封包，支持 LitePAK v6、manifest、完整校验、单文件读取和可选签名参数
 
-两者功能基本一致，主要提供：
+脚本版适合自己改脚本、命令行批处理；exe 版适合直接双击或拖拽使用，发布时也更方便。
 
-- 把一个目录封成 `cpk`
-- 把 `cpk` 解包回目录
-- 按资源相对路径从 `cpk` / `lpk` 里单独导出某个文件
+两类工具主要提供：
+
+- 把一个目录封成 `cpk` / `lpk`
+- 把 `cpk` / `lpk` 解包回目录
+- 按资源相对路径从封包里单独导出某个文件
 - 生成 `manifest` 清单，保留 hash 和原始路径对应关系
 
 最简单的用法就是拖拽：
 
-- 把一个文件夹拖到工具上：自动封包，生成同名 `.cpk` 和 `_manifest.txt`
-- 把一个 `.cpk` 拖到工具上：按 hash 方式解包
-- 把一个 `.cpk` 和对应 `.txt` 清单一起拖到工具上：按原始路径解包
+- CialloPAK：把一个文件夹拖到工具上会自动封成 `.cpk`，把 `.cpk` 拖到工具上会解包
+- LitePAK：把一个文件夹拖到工具上会自动封成 `.lpk` 并生成清单，把 `.lpk` 拖到工具上会按 hash 解包，把 `.lpk` 和对应 `.txt` 清单一起拖到工具上会按原始路径解包
 
 如果你习惯命令行，也可以直接这样用：
 
@@ -389,12 +393,19 @@ EnableLog = false
 python CialloPAK_tool.py pack --input patch --pak patch.cpk --manifest patch_manifest.txt --dedup --compression auto
 python CialloPAK_tool.py unpack --pak patch.cpk --manifest patch_manifest.txt --output patch_unpacked
 python CialloPAK_tool.py read --pak patch.cpk --name script/start.ks --output start.ks
+
+python LitePAK_tool.py pack --input patch --pak patch.lpk --manifest patch_manifest.txt --dedup --compression auto
+python LitePAK_tool.py unpack --pak patch.lpk --manifest patch_manifest.txt --output patch_unpacked
+python LitePAK_tool.py info --pak patch.lpk
+python LitePAK_tool.py verify --pak patch.lpk
+python LitePAK_tool.py read --pak patch.lpk --name script/start.ks --output start.ks
 ```
 
-如果你用的是打包好的可执行版，把前面的 `python CialloPAK_tool.py` 换成：
+如果你用的是打包好的可执行版，把前面的 `python xxx_tool.py` 换成对应 exe，例如：
 
 ```bash
 CialloPAK_tool.exe pack --input patch --pak patch.cpk --manifest patch_manifest.txt --dedup --compression auto
+LitePAK_tool.exe pack --input patch --pak patch.lpk --manifest patch_manifest.txt --dedup --compression auto
 ```
 
 几个实用参数：
@@ -403,15 +414,56 @@ CialloPAK_tool.exe pack --input patch --pak patch.cpk --manifest patch_manifest.
 - `--compression auto`：自动在 `raw` / `zlib` / `zstd` / `lzma` 中选更合适的压缩结果
 - `--workers`：指定并行线程/进程数，默认自动按 CPU 决定
 - `--parallel thread|process`：切换并行方式，默认 `thread`
+- LitePAK 的 `--sign-key`：指定 Ed25519 签名/验签私钥文件；不需要签名时可不填
+- LitePAK 的 `--cdc-avg-kb` / `--whole-file-threshold-kb`：调整分块和小文件整文件处理策略
 
 注意：
 
 - 如果要使用 `zstd` 压缩或解压，脚本版环境里需要安装 `zstandard`
+- LitePAK 脚本版若使用签名相关能力，需要可用的 `cryptography` 或 `PyNaCl`
 - 不带 `manifest` 解包时，文件会按 hash 名称导出，不会还原原始路径
-- 推荐先确认 `patch\` 目录结构正确，再封成 `cpk` 发布
-- 对接 `CialloHook.ini` 时，把生成的 `patch.cpk` 写到 `CustomPakName_i` 即可；LPK 也可直接写入，若场景需要目录枚举请随包放置 manifest
+- 推荐先确认 `patch\` 目录结构正确，再封成 `cpk` / `lpk` 发布
+- 对接 `CialloHook.ini` 时，把生成的 `patch.cpk` / `patch.lpk` 写到 `CustomPakName_i` 即可；CPK/LPK 若场景需要目录枚举请随包放置 manifest。字体、日繁映射 JSON、启动图、虚拟注册表和 `.1337` 均按 PatchFolder → CustomPak → 根目录读取。
 
-### 11. 启用代码页伪装
+### 11. x64dbg .1337 内存补丁
+
+`[BinaryPatch]` 可在游戏启动后读取 x64dbg `.1337` 字节补丁文件，并按模块 RVA 写入 `NEW` 字节，适合把调试器里验证过的字节修改迁移到补丁包中自动应用。
+
+`.1337` 文件示例：
+
+```text
+>game.exe
+001CDB04:CC->B8
+001CDB05:CC->00
+>scn.dll
+002CDB04:CC->90
+```
+
+配置示例：
+
+```ini
+[BinaryPatch]
+Enable = true
+PatchFileCount = 1
+PatchFileName_0 = patches\main.1337
+EnableLog = true
+VerifyOldBytes = false
+PreferCustomPak = true
+FailOnMissingModule = false
+FailOnWriteError = false
+EnableHWBP = false
+```
+
+说明：
+
+- `>game.exe` 表示主 EXE，实际按主模块基址计算；`>xxx.dll` 表示已加载 DLL
+- 地址按“模块基址 + RVA”计算，写入 `NEW` 字节；默认不恢复旧字节
+- 补丁文件路径可写相对游戏目录或绝对路径，也可放进已启用的 CustomPak 中
+- 读取优先级支持 `PatchFolder → CustomPak → 游戏根目录`，与其他资源补丁一致
+- `VerifyOldBytes = true` 时会先校验 `OLD` 字节，不匹配则跳过该连续块并记录警告
+- `EnableHWBP = true` 可用硬件断点触发应用补丁，适合需要等到特定代码位置后再写入的场景
+
+### 12. 启用代码页伪装
 
 ```ini
 [CodePage]
@@ -420,23 +472,29 @@ FromCodePage = 932
 ToCodePage = 936
 ```
 
-### 12. 启用 Locale Emulator 转区
+### 13. 启用 Locale Emulator 转区
 
 ```ini
 [LocaleEmulator]
 Enable = true
-CodePage = 932
+AnsiCodePage = 932
+OemCodePage = 932
 LocaleID = 0x411
-Charset = 128
+DefaultCharset = 128
 Timezone = Tokyo Standard Time
 ```
 
-使用这项功能时，记得同时带上：
+说明：
 
-- `LoaderDll.dll`
-- `LocaleEmulator.dll`
+- proxy 模式下由 `winmm.dll` / `version.dll` 直接重启转区；loader 模式下由 `CialloLauncher.exe` 处理
+- 当前系统 ACP 已经等于目标 `AnsiCodePage` 时会自动跳过重启，避免重复转区
+- 依赖加载顺序为 LEP 优先、LE 兜底：
+  - LEP：`LoaderDll_x86.dll` / `LoaderDll_x64.dll` + `LocaleEmulatorPlus_x86.dll` / `LocaleEmulatorPlus_x64.dll`
+  - LE：`LoaderDll.dll` + `LocaleEmulator.dll`
+- 依赖可放在游戏目录 / CialloHook 目录，也可通过 `[FilePatch]` 的补丁目录或 CustomPak 提供；从补丁资源加载时会临时释放并在重启后清理
+- 构建脚本会按位数复制依赖：`third\LEP` 下的 DLL 会分别进入 x86/x64 输出目录，`third\LE` 下的 DLL 只复制到 x86 输出目录
 
-### 13. 启动图片弹窗
+### 14. 启动图片弹窗
 
 在游戏启动时弹出一个带动画效果的图片窗口，适合展示补丁声明、Logo、免责说明等。
 
@@ -457,12 +515,12 @@ InteractionMode = 0 ; 0=无交互 1=可拖动 2=点击消失
 
 说明：
 
-- 图片文件会在补丁目录 → cpk 封包 → 游戏根目录中按顺序查找
+- 图片文件会在补丁目录 → CustomPak（cpk/xp3/lpk）→ 游戏根目录中按顺序查找；多项配置时编号越高优先级越高
 - 入场和退场效果可以自由搭配（6×6 = 36 种组合）
 - `DurationMs` 为 0 时自动按入场+保持+退场三段之和计算
 - 找不到图片文件时静默跳过，不影响游戏启动
 
-### 14. RioShiina 引擎支持
+### 15. RioShiina 引擎支持
 
 针对 RioShiina 引擎（如 `椎名里緒` 系列）的资源覆盖与封包处理。
 
@@ -498,7 +556,7 @@ SkipInvalidFileName = true
 - `ProcessReg = true` 自动扫描同目录 ini 里 `椎名里緒*` section 的注册表检测
 - `ProcessDvd = true` 自动处理 DVD 检测，`SpecDvdFileSize = 0` 时仅改写盘符到 `W:\`
 
-### 15. 注册表引导
+### 16. 注册表引导
 
 在进程启动时临时写入真实注册表键值，进程退出时自动回滚清理：
 
@@ -526,7 +584,7 @@ Data_1 = 0
 - `CleanupOnExit = true` 在进程退出时自动删除本次写入的键值
 - 适合免安装游戏需要读取特定注册表项的场景，比虚拟注册表更直接
 
-### 16. 启动时机控制
+### 17. 启动时机控制
 
 控制 Hook 安装时机，适合 Hook 过早导致不生效或冲突的场景：
 
@@ -546,7 +604,7 @@ EnableStartupWindowGate = false
 - `WaitForGuiReady`：等待 user32/gdi32 就绪后再挂钩
 - `EnableStartupWindowGate`：延迟模式下先隐藏早期窗口，挂完再放行
 
-### 17. krkr 引擎增强
+### 18. krkr 引擎增强
 
 krkirikiri 引擎的额外兼容补丁：
 
@@ -564,7 +622,7 @@ KrkrPatchName = unencrypted
 - `EnableKrkrCxdecBridge`：让 cxdec 场景也能命中现有的补丁目录 / xp3 / custom pak 路径
 - 支持链式归档名如 `patch.cpk>inner.xp3`，用于读取 cpk 内嵌 xp3
 
-### 18. Siglus 密钥提取
+### 19. Siglus 密钥提取
 
 自动提取 SiglusEngine 的 16 字节 XOR 密钥：
 
@@ -583,7 +641,7 @@ DebugMode = false
 - 监控 `Gameexe.dat` 读取过程，在解密后的关键位置抓取密钥
 - 密钥输出到 `KeyOutputPath` 指定的文件
 
-### 19. Waffle 引擎兼容
+### 20. Waffle 引擎兼容
 
 ```ini
 [GLOBAL]
@@ -711,7 +769,7 @@ out/bin/x64/Release/
 本项目的实现和整理过程中，参考或使用了下列项目 / 组件：
 
 - `Detours`：用于部分 API Hook、注入与调用链改写相关能力
-- `Locale Emulator`：用于转区相关能力，以及发布包中的 `LoaderDll.dll` / `LocaleEmulator.dll`
+- `Locale Emulator` / `Locale Emulator Plus`：用于转区相关能力，以及发布包中的 LE / LEP 运行时依赖
 - `krkrplugin`：用于部分 kirikiri 相关兼容、补丁流处理和桥接实现
 - `miniz`：用于部分压缩 / 解压支持
 - `zstd`：用于 `CialloPAK` / 自定义封包链路中的高压缩比支持
