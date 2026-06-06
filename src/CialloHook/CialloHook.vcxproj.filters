@@ -24,6 +24,9 @@
     <ClCompile Include="entry\dllmain.cpp">
       <Filter>entry</Filter>
     </ClCompile>
+    <ClCompile Include="hooks\binary_patch_1337.cpp">
+      <Filter>hooks</Filter>
+    </ClCompile>
     <ClCompile Include="hooks\hook_modules.cpp">
       <Filter>hooks</Filter>
     </ClCompile>
@@ -55,6 +58,9 @@
     </ClInclude>
     <ClInclude Include="core\hook_manager.h">
       <Filter>core</Filter>
+    </ClInclude>
+    <ClInclude Include="hooks\binary_patch_1337.h">
+      <Filter>hooks</Filter>
     </ClInclude>
     <ClInclude Include="hooks\hook_modules.h">
       <Filter>hooks</Filter>

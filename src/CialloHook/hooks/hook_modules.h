@@ -12,6 +12,9 @@ namespace CialloHook
 		void ApplyWindowTitleHooks(const WindowTitleSettings& settings);
 		void ApplyEarlyStartupHooks(const AppSettings& settings, uint32_t bypassThreadId);
 			void ApplyPostStartupHooks(const AppSettings& settings);
+			void TryApplyBinaryPatchesBeforeEntry(const BinaryPatchSettings& settings);
+			bool IsBinaryPatchPreEntryApplied();
+			void TryRequestBinaryPatchOnFirstPatchHit(const BinaryPatchSettings& settings);
 		void ApplySiglusKeyExtract(const SiglusKeyExtractSettings& settings);
 		void ApplyAliceSystem3xHooks(const AliceSystem3xSettings& settings, const FilePatchSettings& filePatchSettings);
 			void ApplyRioShiinaHooks(const RioShiinaSettings& settings, const FilePatchSettings& filePatchSettings);

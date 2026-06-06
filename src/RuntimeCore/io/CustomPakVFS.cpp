@@ -940,6 +940,93 @@ namespace Rut
 				return s;
 			}
 
+			static bool TryParseManifestHash(const std::wstring& text, Hash16& hashOut)
+			{
+				if (text.size() != 32)
+				{
+					return false;
+				}
+				for (size_t i = 0; i < 16; ++i)
+				{
+					wchar_t hi = text[i * 2];
+					wchar_t lo = text[i * 2 + 1];
+					auto hexValue = [](wchar_t c) -> int
+					{
+						if (c >= L'0' && c <= L'9') return (int)(c - L'0');
+						if (c >= L'a' && c <= L'f') return (int)(c - L'a' + 10);
+						if (c >= L'A' && c <= L'F') return (int)(c - L'A' + 10);
+						return -1;
+					};
+					int hv = hexValue(hi);
+					int lv = hexValue(lo);
+					if (hv < 0 || lv < 0)
+					{
+						return false;
+					}
+					hashOut.bytes[i] = (uint8_t)((hv << 4) | lv);
+				}
+				return true;
+			}
+
+			static void LoadCustomPakManifestEntries(PakArchive& archive)
+			{
+				std::wstring manifestPath = FindLitePakManifestPath(archive.path);
+				if (manifestPath.empty())
+				{
+					return;
+				}
+				InternalIoScope ioScope;
+				std::ifstream manifest(manifestPath, std::ios::binary);
+				if (!manifest.good())
+				{
+					return;
+				}
+				std::string rawLine;
+				uint32_t namedCount = 0;
+				while (std::getline(manifest, rawLine))
+				{
+					if (!rawLine.empty() && rawLine.back() == '\r')
+					{
+						rawLine.pop_back();
+					}
+					if (rawLine.empty())
+					{
+						continue;
+					}
+					std::wstring line = Utf8ToWide(rawLine.c_str());
+					if (line.empty())
+					{
+						continue;
+					}
+					size_t firstTab = line.find(L'\t');
+					size_t secondTab = firstTab == std::wstring::npos ? std::wstring::npos : line.find(L'\t', firstTab + 1);
+					if (firstTab == std::wstring::npos || secondTab == std::wstring::npos)
+					{
+						continue;
+					}
+					Hash16 hash = {};
+					if (!TryParseManifestHash(line.substr(0, firstTab), hash))
+					{
+						continue;
+					}
+					auto it = archive.hashedEntries.find(hash);
+					if (it == archive.hashedEntries.end())
+					{
+						continue;
+					}
+					std::wstring pathKey = NormalizeXp3EntryPath(line.substr(secondTab + 1));
+					if (pathKey.empty())
+					{
+						continue;
+					}
+					PakEntry entry = it->second;
+					entry.pathKey = pathKey;
+					archive.pathEntries[pathKey] = entry;
+					++namedCount;
+				}
+				LogCustomPakInfo(L"CustomPAK manifest loaded: %s entries=%u manifest=%s", archive.path.c_str(), namedCount, manifestPath.c_str());
+			}
+
 			static bool LoadCustomPakIndex(PakArchive& archive, std::ifstream& fs, const std::vector<uint8_t>& header)
 			{
 				const std::wstring& pakPath = archive.path;
@@ -1010,7 +1097,8 @@ namespace Rut
 					archive.hashedEntries[e.hash] = e;
 				}
 				archive.format = PakArchiveFormat::CustomPak;
-				LogCustomPakInfo(L"CustomPAK loaded: %s entries=%u", pakPath.c_str(), (uint32_t)archive.hashedEntries.size());
+				LoadCustomPakManifestEntries(archive);
+				LogCustomPakInfo(L"CustomPAK loaded: %s entries=%u named=%u", pakPath.c_str(), (uint32_t)archive.hashedEntries.size(), (uint32_t)archive.pathEntries.size());
 				return true;
 			}
 

@@ -909,6 +909,37 @@ namespace CialloHook
 				AppendWarning(context, L"FilePatch.CustomPakEnable 已开启，但未配置有效的 CustomPakName_i，已自动关闭");
 			}
 
+			settings.binaryPatch.enable = GetBoolOrDefault(context, L"BinaryPatch", L"Enable", false);
+			settings.binaryPatch.patchFiles = GetIndexedList(context, L"BinaryPatch", L"PatchFileCount", L"PatchFileName_");
+			if (settings.binaryPatch.patchFiles.empty())
+			{
+				std::wstring singlePatchFile = Rut::StrX::Trim(GetStringOrDefault(context, L"BinaryPatch", L"PatchFile", L""));
+				if (!singlePatchFile.empty())
+				{
+					settings.binaryPatch.patchFiles.push_back(singlePatchFile);
+				}
+			}
+			settings.binaryPatch.enableLog = GetBoolOrDefault(context, L"BinaryPatch", L"EnableLog", false);
+			settings.binaryPatch.verifyOldBytes = GetBoolOrDefault(context, L"BinaryPatch", L"VerifyOldBytes", false);
+			settings.binaryPatch.failOnMissingModule = GetBoolOrDefault(context, L"BinaryPatch", L"FailOnMissingModule", false);
+			settings.binaryPatch.failOnWriteError = GetBoolOrDefault(context, L"BinaryPatch", L"FailOnWriteError", false);
+			settings.binaryPatch.preferCustomPak = GetBoolOrDefault(context, L"BinaryPatch", L"PreferCustomPak", true);
+			settings.binaryPatch.enableHwbp = GetBoolOrDefault(context, L"BinaryPatch", L"EnableHWBP", false);
+			settings.binaryPatch.hwbpModule = Rut::StrX::Trim(GetStringOrDefault(context, L"BinaryPatch", L"HWBPModule", L""));
+			settings.binaryPatch.hwbpRva = GetUIntOrDefault(context, L"BinaryPatch", L"HWBPRVA", 0);
+			for (std::wstring& patchFile : settings.binaryPatch.patchFiles)
+			{
+				patchFile = Rut::StrX::Trim(patchFile);
+			}
+			settings.binaryPatch.patchFiles.erase(
+				std::remove_if(settings.binaryPatch.patchFiles.begin(), settings.binaryPatch.patchFiles.end(), [](const std::wstring& patchFile) { return patchFile.empty(); }),
+				settings.binaryPatch.patchFiles.end());
+			if (settings.binaryPatch.enable && settings.binaryPatch.patchFiles.empty())
+			{
+				settings.binaryPatch.enable = false;
+				AppendWarning(context, L"BinaryPatch.Enable 已开启，但未配置有效的 PatchFileName_i / PatchFile，已自动关闭");
+			}
+
 			settings.fileSpoof.enable = GetBoolOrDefault(context, L"FileSpoof", L"Enable", false);
 			settings.fileSpoof.spoofFiles = GetIndexedList(context, L"FileSpoof", L"SpoofFileCount", L"SpoofFileName_");
 			if (settings.fileSpoof.spoofFiles.empty())

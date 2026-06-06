@@ -73,6 +73,11 @@ namespace Rut
 			const std::wstring& baseDir,
 			const wchar_t* fileName,
 			std::wstring& resolvedPath);
+		const wchar_t* GetLepLoaderFileName();
+		const wchar_t* GetLepCoreFileName();
+		const wchar_t* GetLeLoaderFileName();
+		const wchar_t* GetLeCoreFileName();
+
 		HMODULE LoadLocaleEmulatorLoaderModule(
 			const LocaleEmulatorLoaderOptions& options,
 			bool& usedConfiguredOverride,

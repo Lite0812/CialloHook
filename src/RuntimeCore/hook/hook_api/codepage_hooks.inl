@@ -35,7 +35,7 @@
 
 		bool HookMultiByteToWideChar()
 		{
-			return !TryDetourAttach(&rawMultiByteToWideChar, newMultiByteToWideChar);
+			return TryDetourAttach(&rawMultiByteToWideChar, newMultiByteToWideChar);
 		}
 		//*********END Hook MultiByteToWideChar*********
 
@@ -65,7 +65,7 @@
 
 		bool HookWideCharToMultiByte()
 		{
-			return !TryDetourAttach(&rawWideCharToMultiByte, newWideCharToMultiByte);
+			return TryDetourAttach(&rawWideCharToMultiByte, newWideCharToMultiByte);
 		}
 		//*********END Hook WideCharToMultiByte*********
 
@@ -77,9 +77,9 @@
 				return false;
 			}
 
-			bool hasFailed = false;
-			hasFailed |= HookMultiByteToWideChar();
-			hasFailed |= HookWideCharToMultiByte();
-			return !hasFailed;
+			bool allSucceeded = true;
+			allSucceeded &= HookMultiByteToWideChar();
+			allSucceeded &= HookWideCharToMultiByte();
+			return allSucceeded;
 		}
 		//*********END CodePage Conversion*********

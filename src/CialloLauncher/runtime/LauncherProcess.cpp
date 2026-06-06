@@ -109,21 +109,31 @@ namespace
 	std::wstring FindLocalLocaleEmulatorDll(HMODULE loaderModule, const std::wstring& selfDir, const std::wstring& workDir)
 	{
 		std::wstring resolvedPath;
+		const wchar_t* lepCoreName = GetLepCoreFileName();
+		const wchar_t* leCoreName = GetLeCoreFileName();
+
+		// Try LEP core first, then LE core
+		const wchar_t* coreNames[] = { lepCoreName, leCoreName };
 		wchar_t loaderPath[MAX_PATH] = {};
-		if (loaderModule && GetModuleFileNameW(loaderModule, loaderPath, MAX_PATH))
+		bool hasLoaderPath = (loaderModule && GetModuleFileNameW(loaderModule, loaderPath, MAX_PATH));
+
+		for (const wchar_t* coreName : coreNames)
 		{
-			if (TryResolveLocalLocaleEmulatorDependency(CialloLauncher::GetDirectoryPath(loaderPath), L"LocaleEmulator.dll", resolvedPath))
+			if (hasLoaderPath)
+			{
+				if (TryResolveLocalLocaleEmulatorDependency(CialloLauncher::GetDirectoryPath(loaderPath), coreName, resolvedPath))
+				{
+					return resolvedPath;
+				}
+			}
+			if (TryResolveLocalLocaleEmulatorDependency(selfDir, coreName, resolvedPath))
 			{
 				return resolvedPath;
 			}
-		}
-		if (TryResolveLocalLocaleEmulatorDependency(selfDir, L"LocaleEmulator.dll", resolvedPath))
-		{
-			return resolvedPath;
-		}
-		if (!IsSamePathIgnoreCase(selfDir, workDir) && TryResolveLocalLocaleEmulatorDependency(workDir, L"LocaleEmulator.dll", resolvedPath))
-		{
-			return resolvedPath;
+			if (!IsSamePathIgnoreCase(selfDir, workDir) && TryResolveLocalLocaleEmulatorDependency(workDir, coreName, resolvedPath))
+			{
+				return resolvedPath;
+			}
 		}
 		return L"";
 	}
@@ -140,7 +150,7 @@ namespace CialloLauncher
 		cleanupPending = false;
 		if (config.debugMode)
 		{
-			MessageBoxW(nullptr, L"[Debug] Using LeCreateProcess mode\n\nWARNING: User DLLs (like version.dll) will NOT be injected!\nOnly LE will be active.", L"CialloHook - Debug", MB_OK | MB_ICONWARNING);
+			MessageBoxW(nullptr, L"[Debug] Using locale emulator (LE/LEP) mode\n\nWARNING: User DLLs (like version.dll) will NOT be injected!\nOnly locale emulation will be active.", L"CialloHook - Debug", MB_OK | MB_ICONWARNING);
 		}
 
 		STARTUPINFOW si = {};
@@ -184,15 +194,15 @@ namespace CialloLauncher
 		if (!hLoaderDll)
 		{
 			DWORD err = GetLastError();
-			LogMessage(LogLevel::Error, L"Cannot load LoaderDll.dll, error=0x%08X", err);
+			LogMessage(LogLevel::Error, L"Cannot load locale emulator loader DLL, error=0x%08X", err);
 			wchar_t msg[512];
 			if (loaderCustomPakCandidateFound)
 			{
-				swprintf_s(msg, 512, L"无法加载 LoaderDll.dll。\nError: 0x%08X\n\n已在 FilePatch / CustomPak 中找到候选 LE 依赖，但运行时加载失败。", err);
+				swprintf_s(msg, 512, L"无法加载 LoaderDll (LE/LEP)。\nError: 0x%08X\n\n已在 FilePatch / CustomPak 中找到候选 LE/LEP 依赖，但运行时加载失败。", err);
 			}
 			else
 			{
-				swprintf_s(msg, 512, L"无法加载 LoaderDll.dll。\nError: 0x%08X\n\n请检查游戏目录或补丁资源中是否提供了 LoaderDll.dll。", err);
+				swprintf_s(msg, 512, L"无法加载 LoaderDll (LE/LEP)。\nError: 0x%08X\n\n请检查游戏目录或补丁资源中是否提供了 LoaderDll.dll 或 LoaderDll_x86/x64.dll。", err);
 			}
 			MessageBoxW(nullptr, msg, L"CialloHook - Error", MB_OK | MB_ICONERROR);
 			return false;
@@ -200,26 +210,39 @@ namespace CialloLauncher
 
 		if (loaderFromCustomPak)
 		{
-			LogMessage(LogLevel::Info, L"LoaderDll.dll loaded from CustomPak cache");
+			LogMessage(LogLevel::Info, L"Locale emulator loader loaded from CustomPak cache");
 		}
-		ShowDebugMessageIfNeeded(config.debugMode, L"[Debug] LoaderDll.dll loaded successfully\nFinding LeCreateProcess function");
+		ShowDebugMessageIfNeeded(config.debugMode, L"[Debug] Locale emulator loader loaded successfully\nFinding LepCreateProcess / LeCreateProcess function");
 
-		PFN_LeCreateProcess leCreateProcess = reinterpret_cast<PFN_LeCreateProcess>(GetProcAddress(hLoaderDll, "LeCreateProcess"));
-		if (!leCreateProcess)
+		// Try LEP first, then fall back to LE
+		PFN_LepCreateProcess lepCreateProcess = reinterpret_cast<PFN_LepCreateProcess>(GetProcAddress(hLoaderDll, "LepCreateProcess"));
+		PFN_LeCreateProcess leCreateProcess = nullptr;
+		bool usingLEP = false;
+		if (lepCreateProcess)
 		{
-			LogMessage(LogLevel::Error, L"Cannot find LeCreateProcess in LoaderDll.dll");
-			MessageBoxW(nullptr, L"LoaderDll.dll 中缺少 LeCreateProcess 导出，无法执行自动转区。", L"CialloHook - Error", MB_OK | MB_ICONERROR);
-			FreeLibrary(hLoaderDll);
-			CleanupPreparedRuntimeFiles(preparedPaths);
-			return false;
+			usingLEP = true;
+			LogMessage(LogLevel::Info, L"Using LEP (LepCreateProcess)");
+		}
+		else
+		{
+			leCreateProcess = reinterpret_cast<PFN_LeCreateProcess>(GetProcAddress(hLoaderDll, "LeCreateProcess"));
+			if (!leCreateProcess)
+			{
+				LogMessage(LogLevel::Error, L"Cannot find LepCreateProcess or LeCreateProcess in loader DLL");
+				MessageBoxW(nullptr, L"LoaderDll 中缺少 LepCreateProcess / LeCreateProcess 导出，无法执行自动转区。", L"CialloHook - Error", MB_OK | MB_ICONERROR);
+				FreeLibrary(hLoaderDll);
+				CleanupPreparedRuntimeFiles(preparedPaths);
+				return false;
+			}
+			LogMessage(LogLevel::Info, L"Using LE (LeCreateProcess)");
 		}
 
 		const std::wstring selfDir = GetDirectoryPath(selfPath);
 		const std::wstring localLocaleDllPath = FindLocalLocaleEmulatorDll(hLoaderDll, selfDir, workDir);
 		if (!localeCandidateFound && localLocaleDllPath.empty())
 		{
-			LogMessage(LogLevel::Error, L"LocaleEmulator.dll is unavailable for LE launch");
-			MessageBoxW(nullptr, L"未找到可用的 LocaleEmulator.dll，无法执行自动转区。", L"CialloHook - Error", MB_OK | MB_ICONERROR);
+			LogMessage(LogLevel::Error, L"No locale emulator core DLL (LocaleEmulator.dll / LocaleEmulatorPlus_x86/x64.dll) is available");
+			MessageBoxW(nullptr, L"未找到可用的 LocaleEmulator.dll 或 LocaleEmulatorPlus_x86/x64.dll，无法执行自动转区。", L"CialloHook - Error", MB_OK | MB_ICONERROR);
 			FreeLibrary(hLoaderDll);
 			CleanupPreparedRuntimeFiles(preparedPaths);
 			return false;
@@ -236,7 +259,8 @@ namespace CialloLauncher
 		if (config.debugMode)
 		{
 			wchar_t msg[512];
-			swprintf_s(msg, 512, L"[Debug] Calling LeCreateProcess\nTarget: %s\nLEB address: 0x%p\nRegistry entries: %llu",
+			swprintf_s(msg, 512, L"[Debug] Calling %s\nTarget: %s\nLEB address: 0x%p\nRegistry entries: %llu",
+				usingLEP ? L"LepCreateProcess" : L"LeCreateProcess",
 				targetExePath.c_str(), &lebWithRegistry, lebWithRegistry.numberOfRegistryEntries);
 			MessageBoxW(nullptr, msg, L"CialloHook - Debug", MB_OK | MB_ICONINFORMATION);
 		}
@@ -279,18 +303,39 @@ namespace CialloLauncher
 		}
 
 		const uint32_t creationFlags = CREATE_SUSPENDED | (environmentBlockReady ? CREATE_UNICODE_ENVIRONMENT : 0);
-		uint32_t result = leCreateProcess(
-			&lebWithRegistry,
-			targetExePath.c_str(),
-			commandLine.c_str(),
-			workDir.c_str(),
-			creationFlags,
-			&si,
-			&pi,
-			nullptr,
-			nullptr,
-			environmentBlockReady ? environmentBlock.data() : nullptr,
-			nullptr);
+		uint32_t result;
+		if (usingLEP)
+		{
+			std::wstring commandLineCopy = commandLine;
+			int32_t lepResult = lepCreateProcess(
+				&lebWithRegistry,
+				targetExePath.c_str(),
+				&commandLineCopy[0],
+				workDir.c_str(),
+				creationFlags,
+				&si,
+				&pi,
+				nullptr,
+				nullptr,
+				environmentBlockReady ? environmentBlock.data() : nullptr,
+				nullptr);
+			result = static_cast<uint32_t>(lepResult);
+		}
+		else
+		{
+			result = leCreateProcess(
+				&lebWithRegistry,
+				targetExePath.c_str(),
+				commandLine.c_str(),
+				workDir.c_str(),
+				creationFlags,
+				&si,
+				&pi,
+				nullptr,
+				nullptr,
+				environmentBlockReady ? environmentBlock.data() : nullptr,
+				nullptr);
+		}
 
 		if (pathUpdated)
 		{
@@ -303,7 +348,8 @@ namespace CialloLauncher
 		if (config.debugMode)
 		{
 			wchar_t msg[512];
-			swprintf_s(msg, 512, L"[Debug] LeCreateProcess returned\nResult: 0x%08X\nProcess: 0x%p\nThread: 0x%p\nPID: %d",
+			swprintf_s(msg, 512, L"[Debug] %s returned\nResult: 0x%08X\nProcess: 0x%p\nThread: 0x%p\nPID: %d",
+				usingLEP ? L"LepCreateProcess" : L"LeCreateProcess",
 				result, pi.hProcess, pi.hThread, pi.dwProcessId);
 			MessageBoxW(nullptr, msg, L"CialloHook - Debug", MB_OK | MB_ICONINFORMATION);
 		}
@@ -312,11 +358,11 @@ namespace CialloLauncher
 		if (result == 0)
 		{
 			success = true;
-			LogMessage(LogLevel::Info, L"LeCreateProcess succeeded");
+			LogMessage(LogLevel::Info, L"%s succeeded", usingLEP ? L"LepCreateProcess" : L"LeCreateProcess");
 
 			if (config.debugMode)
 			{
-				MessageBoxW(nullptr, L"[Debug] LE injected successfully!\nProcess is SUSPENDED\nNow injecting user DLLs...", L"CialloHook - Debug", MB_OK | MB_ICONINFORMATION);
+				MessageBoxW(nullptr, L"[Debug] Locale emulation injected successfully!\nProcess is SUSPENDED\nNow injecting user DLLs...", L"CialloHook - Debug", MB_OK | MB_ICONINFORMATION);
 			}
 
 			if (!dllList.empty())
@@ -360,13 +406,14 @@ namespace CialloLauncher
 			StartCacheCleanerIfNeeded(selfPath, pi.dwProcessId, cleanupPending);
 			CloseProcessHandles(pi);
 
-			ShowDebugMessageIfNeeded(config.debugMode, L"[Debug] Process resumed and running!\nLE + User DLLs active.");
+			ShowDebugMessageIfNeeded(config.debugMode, L"[Debug] Process resumed and running!\nLocale emulation + User DLLs active.");
 		}
 		else
 		{
-			LogMessage(LogLevel::Error, L"LeCreateProcess failed, result=0x%08X", result);
+			LogMessage(LogLevel::Error, L"%s failed, result=0x%08X", usingLEP ? L"LepCreateProcess" : L"LeCreateProcess", result);
 			wchar_t msg[512];
-			swprintf_s(msg, 512, L"LeCreateProcess 启动失败。\nError Code: 0x%08X\n\n目标: %s\n依赖预检已通过，请检查 LE 运行环境或 DLL 是否损坏。", result, targetExePath.c_str());
+			swprintf_s(msg, 512, L"%s 启动失败。\nError Code: 0x%08X\n\n目标: %s\n依赖预检已通过，请检查 LE/LEP 运行环境或 DLL 是否损坏。",
+				usingLEP ? L"LepCreateProcess" : L"LeCreateProcess", result, targetExePath.c_str());
 			MessageBoxW(nullptr, msg, L"CialloHook - LE Error", MB_OK | MB_ICONERROR);
 		}
 

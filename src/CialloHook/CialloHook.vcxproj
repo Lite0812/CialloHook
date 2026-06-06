@@ -105,6 +105,7 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <StringPooling>true</StringPooling>
       <RuntimeTypeInfo>false</RuntimeTypeInfo>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
@@ -120,7 +121,7 @@
       <GenerateMapFile>true</GenerateMapFile>
       <MapFileName>$(OutDir)$(TargetName).map</MapFileName>
       <RandomizedBaseAddress>false</RandomizedBaseAddress>
-      <AdditionalOptions>/ignore:4099 %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>/ignore:4099 /PDBALTPATH:%_PDB% %(AdditionalOptions)</AdditionalOptions>
       <AdditionalLibraryDirectories>..\..\third\detours\lib.X86;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>detours.lib;bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <ImageHasSafeExceptionHandlers Condition="'$(Platform)'=='Win32'">false</ImageHasSafeExceptionHandlers>
@@ -155,6 +156,7 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <StringPooling>true</StringPooling>
       <RuntimeTypeInfo>false</RuntimeTypeInfo>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
@@ -169,7 +171,7 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <GenerateMapFile>true</GenerateMapFile>
       <MapFileName>$(OutDir)$(TargetName).map</MapFileName>
-      <AdditionalOptions>/ignore:4099 %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>/ignore:4099 /PDBALTPATH:%_PDB% %(AdditionalOptions)</AdditionalOptions>
       <AdditionalLibraryDirectories>..\..\third\detours\lib.X64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>detours.lib;bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <ImageHasSafeExceptionHandlers Condition="'$(Platform)'=='Win32'">false</ImageHasSafeExceptionHandlers>
@@ -180,6 +182,7 @@
     <ClCompile Include="config\config_manager.cpp" />
     <ClCompile Include="core\hook_manager.cpp" />
     <ClCompile Include="entry\dllmain.cpp" />
+    <ClCompile Include="hooks\binary_patch_1337.cpp" />
     <ClCompile Include="hooks\hook_modules.cpp" />
     <ClCompile Include="hooks\alice_system3x_hooks.cpp" />
     <ClCompile Include="hooks\krkr_plugin_bridge.cpp" />
@@ -198,6 +201,7 @@
     <ClInclude Include="config\config_source.h" />
     <ClInclude Include="config\settings.h" />
     <ClInclude Include="core\hook_manager.h" />
+    <ClInclude Include="hooks\binary_patch_1337.h" />
     <ClInclude Include="hooks\hook_modules.h" />
     <ClInclude Include="hooks\alice_system3x_hooks.h" />
     <ClInclude Include="hooks\krkr_plugin_bridge.h" />

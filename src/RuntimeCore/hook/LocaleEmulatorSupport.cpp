@@ -34,6 +34,34 @@ namespace Rut
 			return false;
 		}
 
+		const wchar_t* GetLepLoaderFileName()
+		{
+#ifdef _M_X64
+			return L"LoaderDll_x64.dll";
+#else
+			return L"LoaderDll_x86.dll";
+#endif
+		}
+
+		const wchar_t* GetLepCoreFileName()
+		{
+#ifdef _M_X64
+			return L"LocaleEmulatorPlus_x64.dll";
+#else
+			return L"LocaleEmulatorPlus_x86.dll";
+#endif
+		}
+
+		const wchar_t* GetLeLoaderFileName()
+		{
+			return L"LoaderDll.dll";
+		}
+
+		const wchar_t* GetLeCoreFileName()
+		{
+			return L"LocaleEmulator.dll";
+		}
+
 		static std::wstring JoinPath(const std::wstring& left, const std::wstring& right)
 		{
 			if (left.empty())
@@ -109,6 +137,8 @@ namespace Rut
 			candidates.emplace_back(std::wstring(L"dll\\") + fileName);
 			candidates.emplace_back(std::wstring(L"dlls\\") + fileName);
 			candidates.emplace_back(std::wstring(L"LocaleEmulator\\") + fileName);
+			candidates.emplace_back(std::wstring(L"LocaleEmulatorPlus\\") + fileName);
+			candidates.emplace_back(std::wstring(L"LEP\\") + fileName);
 			candidates.emplace_back(std::wstring(L"locale\\") + fileName);
 			return candidates;
 		}
@@ -589,10 +619,20 @@ namespace Rut
 			foundConfiguredCandidate = false;
 			preparedPaths.clear();
 
+			const wchar_t* lepLoaderName = GetLepLoaderFileName();
+			const wchar_t* lepCoreName = GetLepCoreFileName();
+			const wchar_t* leLoaderName = GetLeLoaderFileName();
+			const wchar_t* leCoreName = GetLeCoreFileName();
+
+			// --- Phase 1: Try local loader (LEP first, then LE) ---
 			HMODULE localLoaderDll = nullptr;
 			if (options.preferLocalLoader)
 			{
-				localLoaderDll = LoadLibraryW(L"LoaderDll.dll");
+				localLoaderDll = LoadLibraryW(lepLoaderName);
+				if (!localLoaderDll)
+				{
+					localLoaderDll = LoadLibraryW(leLoaderName);
+				}
 				if (localLoaderDll && runtimeSearchDirs)
 				{
 					wchar_t localLoaderPath[MAX_PATH] = {};
@@ -603,85 +643,178 @@ namespace Rut
 				}
 			}
 
-			std::wstring localeDllPath;
-			bool localeFromCustomPak = false;
-			bool localeCandidateFound = false;
-			if (PrepareLocaleEmulatorDependency(options, L"LocaleEmulator.dll", localeDllPath, localeFromCustomPak, localeCandidateFound))
+			// --- Phase 2: Prepare core DLLs from PatchFolders/CustomPak ---
+			// Try LEP core first
+			bool lepCoreCandidateFound = false;
 			{
-				if (runtimeSearchDirs)
+				std::wstring lepCoreDllPath;
+				bool lepCoreFromCustomPak = false;
+				bool lepCoreCandFound = false;
+				if (PrepareLocaleEmulatorDependency(options, lepCoreName, lepCoreDllPath, lepCoreFromCustomPak, lepCoreCandFound))
 				{
-					AppendUniquePath(*runtimeSearchDirs, GetDirectoryPath(localeDllPath));
+					if (runtimeSearchDirs)
+					{
+						AppendUniquePath(*runtimeSearchDirs, GetDirectoryPath(lepCoreDllPath));
+					}
+					if (lepCoreFromCustomPak)
+					{
+						AppendUniquePath(preparedPaths, lepCoreDllPath);
+						usedCustomPak = true;
+					}
+					else if (IsSamePath(GetDirectoryPath(lepCoreDllPath), options.tempDir))
+					{
+						AppendUniquePath(preparedPaths, lepCoreDllPath);
+					}
+					else
+					{
+						usedConfiguredOverride = true;
+					}
 				}
-				if (localeFromCustomPak)
-				{
-					AppendUniquePath(preparedPaths, localeDllPath);
-					usedCustomPak = true;
-				}
-				else if (IsSamePath(GetDirectoryPath(localeDllPath), options.tempDir))
-				{
-					AppendUniquePath(preparedPaths, localeDllPath);
-				}
-				else
-				{
-					usedConfiguredOverride = true;
-				}
-			}
-			if (foundLocaleCandidate)
-			{
-				*foundLocaleCandidate = localeCandidateFound;
+				lepCoreCandidateFound = lepCoreCandFound;
 			}
 
+			// Also try LE core
+			bool leCoreCandidateFound = false;
+			{
+				std::wstring leCoreDllPath;
+				bool leCoreFromCustomPak = false;
+				bool leCoreCandFound = false;
+				if (PrepareLocaleEmulatorDependency(options, leCoreName, leCoreDllPath, leCoreFromCustomPak, leCoreCandFound))
+				{
+					if (runtimeSearchDirs)
+					{
+						AppendUniquePath(*runtimeSearchDirs, GetDirectoryPath(leCoreDllPath));
+					}
+					if (leCoreFromCustomPak)
+					{
+						AppendUniquePath(preparedPaths, leCoreDllPath);
+						usedCustomPak = true;
+					}
+					else if (IsSamePath(GetDirectoryPath(leCoreDllPath), options.tempDir))
+					{
+						AppendUniquePath(preparedPaths, leCoreDllPath);
+					}
+					else
+					{
+						usedConfiguredOverride = true;
+					}
+				}
+				leCoreCandidateFound = leCoreCandFound;
+			}
+
+			bool anyCoreCandidateFound = lepCoreCandidateFound || leCoreCandidateFound;
+			if (foundLocaleCandidate)
+			{
+				*foundLocaleCandidate = anyCoreCandidateFound;
+			}
+
+			// If local loader was found, return it now
 			if (localLoaderDll)
 			{
-				foundConfiguredCandidate = localeCandidateFound;
+				foundConfiguredCandidate = anyCoreCandidateFound;
 				return localLoaderDll;
 			}
 
-			std::wstring loaderPath;
-			bool loaderFromCustomPak = false;
-			bool loaderCandidateFound = false;
-			if (PrepareLocaleEmulatorDependency(options, L"LoaderDll.dll", loaderPath, loaderFromCustomPak, loaderCandidateFound))
+			// --- Phase 3: Try loading loader from PatchFolders/CustomPak ---
+			// Try LEP loader first
 			{
-				if (runtimeSearchDirs)
+				std::wstring lepLoaderPath;
+				bool lepLoaderFromCustomPak = false;
+				bool lepLoaderCandidateFound = false;
+				if (PrepareLocaleEmulatorDependency(options, lepLoaderName, lepLoaderPath, lepLoaderFromCustomPak, lepLoaderCandidateFound))
 				{
-					AppendUniquePath(*runtimeSearchDirs, GetDirectoryPath(loaderPath));
+					if (runtimeSearchDirs)
+					{
+						AppendUniquePath(*runtimeSearchDirs, GetDirectoryPath(lepLoaderPath));
+					}
+					if (lepLoaderFromCustomPak)
+					{
+						AppendUniquePath(preparedPaths, lepLoaderPath);
+						usedCustomPak = true;
+					}
+					else if (IsSamePath(GetDirectoryPath(lepLoaderPath), options.tempDir))
+					{
+						AppendUniquePath(preparedPaths, lepLoaderPath);
+					}
+					else
+					{
+						usedConfiguredOverride = true;
+					}
+					foundConfiguredCandidate = anyCoreCandidateFound || lepLoaderCandidateFound;
+					HMODULE module = LoadLibraryExW(lepLoaderPath.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
+					if (module)
+					{
+						return module;
+					}
+					// LEP loader file found but load failed, try LE loader
 				}
-				if (loaderFromCustomPak)
-				{
-					AppendUniquePath(preparedPaths, loaderPath);
-					usedCustomPak = true;
-				}
-				else if (IsSamePath(GetDirectoryPath(loaderPath), options.tempDir))
-				{
-					AppendUniquePath(preparedPaths, loaderPath);
-				}
-				else
-				{
-					usedConfiguredOverride = true;
-				}
-				foundConfiguredCandidate = localeCandidateFound || loaderCandidateFound;
-				HMODULE module = LoadLibraryExW(loaderPath.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
-				if (!module)
-				{
-					CleanupPreparedRuntimeFiles(preparedPaths);
-					preparedPaths.clear();
-				}
-				return module;
 			}
 
-			foundConfiguredCandidate = localeCandidateFound || loaderCandidateFound;
-			HMODULE loaderDll = LoadLibraryW(L"LoaderDll.dll");
-			if (loaderDll)
+			// Try LE loader
+			{
+				std::wstring leLoaderPath;
+				bool leLoaderFromCustomPak = false;
+				bool leLoaderCandidateFound = false;
+				if (PrepareLocaleEmulatorDependency(options, leLoaderName, leLoaderPath, leLoaderFromCustomPak, leLoaderCandidateFound))
+				{
+					if (runtimeSearchDirs)
+					{
+						AppendUniquePath(*runtimeSearchDirs, GetDirectoryPath(leLoaderPath));
+					}
+					if (leLoaderFromCustomPak)
+					{
+						AppendUniquePath(preparedPaths, leLoaderPath);
+						usedCustomPak = true;
+					}
+					else if (IsSamePath(GetDirectoryPath(leLoaderPath), options.tempDir))
+					{
+						AppendUniquePath(preparedPaths, leLoaderPath);
+					}
+					else
+					{
+						usedConfiguredOverride = true;
+					}
+					foundConfiguredCandidate = anyCoreCandidateFound || leLoaderCandidateFound;
+					HMODULE module = LoadLibraryExW(leLoaderPath.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
+					if (module)
+					{
+						return module;
+					}
+					CleanupPreparedRuntimeFiles(preparedPaths);
+					preparedPaths.clear();
+					return nullptr;
+				}
+			}
+
+			// --- Phase 4: Try system-wide search ---
+			// Try LEP loader
+			HMODULE lepLoaderDll = LoadLibraryW(lepLoaderName);
+			if (lepLoaderDll)
 			{
 				if (runtimeSearchDirs)
 				{
-					wchar_t loaderPath[MAX_PATH] = {};
-					if (GetModuleFileNameW(loaderDll, loaderPath, MAX_PATH))
+					wchar_t loaderPathBuf[MAX_PATH] = {};
+					if (GetModuleFileNameW(lepLoaderDll, loaderPathBuf, MAX_PATH))
 					{
-						AppendUniquePath(*runtimeSearchDirs, GetDirectoryPath(loaderPath));
+						AppendUniquePath(*runtimeSearchDirs, GetDirectoryPath(loaderPathBuf));
 					}
 				}
-				return loaderDll;
+				return lepLoaderDll;
+			}
+
+			// Try LE loader
+			HMODULE leLoaderDll = LoadLibraryW(leLoaderName);
+			if (leLoaderDll)
+			{
+				if (runtimeSearchDirs)
+				{
+					wchar_t loaderPathBuf[MAX_PATH] = {};
+					if (GetModuleFileNameW(leLoaderDll, loaderPathBuf, MAX_PATH))
+					{
+						AppendUniquePath(*runtimeSearchDirs, GetDirectoryPath(loaderPathBuf));
+					}
+				}
+				return leLoaderDll;
 			}
 
 			CleanupPreparedRuntimeFiles(preparedPaths);

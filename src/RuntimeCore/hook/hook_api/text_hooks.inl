@@ -1643,6 +1643,7 @@
 			{
 				ret = rawExtTextOutA(hdc, ApplyGlyphOffsetX(x), ApplyGlyphOffsetY(y), options, effectiveRect, lpString, c, effectiveDx);
 			}
+
 			RestoreSpacingExtra(hdc, previousExtra);
 			return ret;
 		}

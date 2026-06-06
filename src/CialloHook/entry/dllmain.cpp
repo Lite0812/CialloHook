@@ -26,6 +26,7 @@ static volatile LONG sg_waitForEntryPointAttach = 0;
 static LPTOP_LEVEL_EXCEPTION_FILTER sg_previousTopLevelExceptionFilter = nullptr;
 static HANDLE sg_entryPointAttachEvent = nullptr;
 static bool sg_splashEntryPointHookInstalled = false;
+static volatile LONG sg_entryBinaryPatchAttempted = 0;
 
 /* ---- Stack overflow crash dump helper ----
  * MiniDumpWriteDump needs significant stack space. When EXCEPTION_STACK_OVERFLOW
@@ -195,7 +196,7 @@ static bool ShouldAbortHookInitialization(const wchar_t* stage)
 	return true;
 }
 
-static bool WriteCrashDump(EXCEPTION_POINTERS* exceptionInfo, const wchar_t* stage);
+static bool WriteCrashDump(EXCEPTION_POINTERS* exceptionInfo, const wchar_t* stage, DWORD exceptionThreadId = GetCurrentThreadId());
 
 static DWORD WINAPI StackOverflowDumpThread(LPVOID param)
 {
@@ -203,7 +204,7 @@ static DWORD WINAPI StackOverflowDumpThread(LPVOID param)
 	if (ctx)
 	{
 		BootstrapLog(L"StackOverflowDumpThread: writing crash dump for thread %lu", ctx->faultingThreadId);
-		WriteCrashDump(ctx->exceptionInfo, L"StackOverflowDumpThread");
+		WriteCrashDump(ctx->exceptionInfo, L"StackOverflowDumpThread", ctx->faultingThreadId);
 		InterlockedExchange(&ctx->done, 1);
 	}
 	return 0;
@@ -230,7 +231,7 @@ static bool WriteCrashDumpForStackOverflow(EXCEPTION_POINTERS* exceptionInfo)
 	return InterlockedCompareExchange(&sg_soDumpCtx.done, 0, 0) != 0;
 }
 
-static bool WriteCrashDump(EXCEPTION_POINTERS* exceptionInfo, const wchar_t* stage)
+static bool WriteCrashDump(EXCEPTION_POINTERS* exceptionInfo, const wchar_t* stage, DWORD exceptionThreadId)
 {
 	if (IsProcessShuttingDown())
 	{
@@ -273,7 +274,7 @@ static bool WriteCrashDump(EXCEPTION_POINTERS* exceptionInfo, const wchar_t* sta
 	}
 
 	MINIDUMP_EXCEPTION_INFORMATION mei = {};
-	mei.ThreadId = GetCurrentThreadId();
+	mei.ThreadId = exceptionThreadId;
 	mei.ExceptionPointers = exceptionInfo;
 	mei.ClientPointers = FALSE;
 
@@ -379,16 +380,19 @@ static void RunHookInitialization(HookInitContext* initContext)
 
 	if (initContext->waitForEntryPoint && sg_entryPointAttachEvent)
 	{
-		while (true)
+		DWORD waitedMs = 0;
+		const DWORD maxWaitMs = 10000;
+		const DWORD stepMs = 100;
+		while (waitedMs < maxWaitMs)
 		{
 			if (ShouldAbortHookInitialization(L"HookInitThread: waiting for entry point"))
 			{
 				return;
 			}
-			DWORD waitResult = WaitForSingleObject(sg_entryPointAttachEvent, 100);
+			DWORD waitResult = WaitForSingleObject(sg_entryPointAttachEvent, stepMs);
 			if (waitResult == WAIT_OBJECT_0)
 			{
-				BootstrapLog(L"HookInitThread: entry point wait completed");
+				BootstrapLog(L"HookInitThread: entry point wait completed after %lu ms", waitedMs);
 				break;
 			}
 			if (waitResult != WAIT_TIMEOUT)
@@ -396,6 +400,11 @@ static void RunHookInitialization(HookInitContext* initContext)
 				BootstrapLog(L"HookInitThread: entry point wait failed (result=%lu)", waitResult);
 				break;
 			}
+			waitedMs += stepMs;
+		}
+		if (waitedMs >= maxWaitMs)
+		{
+			BootstrapLog(L"HookInitThread: entry point wait timed out after %lu ms, continue initialization", waitedMs);
 		}
 	}
 
@@ -508,10 +517,23 @@ static int WINAPI SplashEntryPointHook()
 	DetourUpdateThread(GetCurrentThread());
 	DetourDetach((PVOID*)&sg_realEntryPoint, (PVOID)SplashEntryPointHook);
 	DetourTransactionCommit();
+	if (InterlockedExchange(&sg_entryBinaryPatchAttempted, 1) == 0)
+	{
+		__try
+		{
+			BootstrapLog(L"SplashEntryPointHook: try pre-entry BinaryPatch");
+			CialloHook::HookManager::TryApplyBinaryPatchesBeforeEntry(sg_splashDllModule);
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			BootstrapLog(L"SplashEntryPointHook: pre-entry BinaryPatch SEH exception, fallback to runtime");
+		}
+	}
+
 	if (InterlockedCompareExchange(&sg_waitForEntryPointAttach, 0, 0) != 0 && sg_entryPointAttachEvent)
 	{
 		SetEvent(sg_entryPointAttachEvent);
-		BootstrapLog(L"SplashEntryPointHook: signaled delayed attach event");
+		BootstrapLog(L"SplashEntryPointHook: signaled delayed attach event after pre-entry BinaryPatch");
 	}
 
 	__try { CialloHook::HookManager::ShowSplashFromEntryPoint(sg_splashDllModule); }
@@ -535,8 +557,9 @@ static bool TryInstallSplashEntryPointHook(HMODULE dllModule)
 	DetourTransactionBegin();
 	DetourUpdateThread(GetCurrentThread());
 	LONG result = DetourAttach((PVOID*)&sg_realEntryPoint, (PVOID)SplashEntryPointHook);
-	if (result != NO_ERROR) { DetourTransactionAbort(); sg_realEntryPoint = nullptr; sg_splashEntryPointHookInstalled = false; return false; }
-	DetourTransactionCommit();
+	if (result != NO_ERROR) { DetourTransactionAbort(); sg_realEntryPoint = nullptr; sg_splashEntryPointHookInstalled = false; BootstrapLog(L"SplashEntryPointHook: install failed during attach (result=%ld); BinaryPatch will use runtime fallback", result); return false; }
+	result = DetourTransactionCommit();
+	if (result != NO_ERROR) { sg_realEntryPoint = nullptr; sg_splashEntryPointHookInstalled = false; BootstrapLog(L"SplashEntryPointHook: install failed during commit (result=%ld); BinaryPatch will use runtime fallback", result); return false; }
 	sg_splashEntryPointHookInstalled = true;
 	BootstrapLog(L"SplashEntryPointHook: installed at entry point 0x%p", sg_realEntryPoint);
 	return true;
@@ -552,6 +575,21 @@ static void StartHookInitialization(HMODULE hModule)
 	initContext->startupSettingsLoaded = CialloHook::HookManager::TryLoadStartupSettings(hModule, initContext->startupSettings);
 	if (initContext->startupSettingsLoaded)
 	{
+		if (sg_splashEntryPointHookInstalled)
+		{
+			if (!sg_entryPointAttachEvent)
+			{
+				sg_entryPointAttachEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+			}
+			if (sg_entryPointAttachEvent)
+			{
+				ResetEvent(sg_entryPointAttachEvent);
+				InterlockedExchange(&sg_waitForEntryPointAttach, 1);
+				initContext->waitForEntryPoint = true;
+				BootstrapLog(L"StartHookInitialization: wait for entry point so pre-entry BinaryPatch logs stay grouped");
+			}
+		}
+
 		const CialloHook::StartupTimingSettings& timing = initContext->startupSettings.startupTiming;
 		initContext->waitForGuiReady = timing.waitForGuiReady;
 		if (timing.attachMode == L"delay")
@@ -588,6 +626,19 @@ static void StartHookInitialization(HMODULE hModule)
 	BootstrapLog(L"DllMain: CreateThread failed (GetLastError=%lu), skip direct initialize to avoid loader-lock risk", GetLastError());
 	delete initContext;
 }
+static void TryApplyAttachStageBinaryPatch(HMODULE hModule)
+{
+	__try
+	{
+		BootstrapLog(L"DllMain: try attach-stage BinaryPatch before entry hook");
+		CialloHook::HookManager::TryApplyBinaryPatchesBeforeEntry(hModule);
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
+		BootstrapLog(L"DllMain: attach-stage BinaryPatch SEH exception, fallback to entry/runtime");
+	}
+}
+
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserved)
 {
 	switch (ul_reason_for_call)
@@ -613,7 +664,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
 			BootstrapLog(L"DLL_PROCESS_ATTACH: isWinmmProxy=%d", isWinmmProxy ? 1 : 0);
 			if (isWinmmProxy)
 			{
-				BootstrapLog(L"DllMain: winmm mode, skip Proxy::Init and use immediate runtime initialization");
+				BootstrapLog(L"DllMain: winmm mode, skip Proxy::Init and initialize real winmm lazily from export stubs");
 			}
 			else
 			{
@@ -633,7 +684,13 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
 			BootstrapLog(L"DllMain: startup consent declined during attach");
 			return FALSE;
 		}
+		CialloHook::HookManager::TryRequestBinaryPatchOnFirstPatchHit(hModule);
+		TryApplyAttachStageBinaryPatch(hModule);
 		TryInstallSplashEntryPointHook(hModule);
+		if (!sg_splashEntryPointHookInstalled)
+		{
+			BootstrapLog(L"DllMain: entry point hook unavailable; BinaryPatch will use runtime fallback");
+		}
 		StartHookInitialization(hModule);
 		break;
 	case DLL_PROCESS_DETACH:
@@ -656,11 +713,11 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
 		CialloHook::HookModules::CleanupRegistryBootstrap();
 		CialloHook::HookModules::CleanupLoadedFontTempFiles();
 		Rut::HookX::CleanupCustomPakCacheOnShutdown();
-			if (sg_entryPointAttachEvent)
-			{
-				CloseHandle(sg_entryPointAttachEvent);
-				sg_entryPointAttachEvent = nullptr;
-			}
+		if (sg_entryPointAttachEvent)
+		{
+			CloseHandle(sg_entryPointAttachEvent);
+			sg_entryPointAttachEvent = nullptr;
+		}
 		SetUnhandledExceptionFilter(sg_previousTopLevelExceptionFilter);
 		BootstrapLog(L"DLL_PROCESS_DETACH");
 		Rut::HookX::ShutdownLogger();

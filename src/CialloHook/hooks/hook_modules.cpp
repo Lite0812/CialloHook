@@ -1,5 +1,6 @@
 #include "hook_modules.h"
 #include "alice_system3x_hooks.h"
+#include "binary_patch_1337.h"
 #include "krkr_plugin_bridge.h"
 #include "rio_shiina_hooks.h"
 
@@ -75,6 +76,8 @@ namespace CialloHook
 
 			static std::vector<std::wstring> sg_loadedTempFontFiles;
 			static std::vector<std::wstring> sg_activeFontPatchFolders;
+			static std::vector<std::wstring> sg_activeModuleAssetPatchFolders;
+			static bool sg_activeModuleAssetCustomPak = false;
 			static std::vector<RegistryBootstrapKeyRecord> sg_registryBootstrapKeys;
 			static std::vector<RegistryBootstrapValueRecord> sg_registryBootstrapValues;
 			static bool sg_registryBootstrapCleanupOnExit = true;
@@ -1056,6 +1059,67 @@ namespace CialloHook
 				&& _wcsnicmp(normalizedPath.c_str(), folderPrefix.c_str(), folderPrefix.size()) == 0;
 		}
 
+
+		struct ModuleAssetResolution
+		{
+			std::wstring resolvedPath;
+			std::wstring source;
+			bool fromCustomPak = false;
+		};
+
+		static bool TryResolveModuleAssetDiskPath(const std::wstring& configuredPath, ModuleAssetResolution& resolvedOut)
+		{
+			resolvedOut = {};
+			std::wstring gameDir = GetGameDirectory();
+			std::wstring relativePath;
+			if (TryBuildGameRelativePath(gameDir, configuredPath, relativePath))
+			{
+				for (size_t i = sg_activeModuleAssetPatchFolders.size(); i > 0; --i)
+				{
+					const std::wstring& folder = sg_activeModuleAssetPatchFolders[i - 1];
+					if (folder.empty() || IsSameOrNestedRelativePath(relativePath, folder))
+					{
+						continue;
+					}
+					std::wstring patchCandidate = ToGameAbsolutePath(gameDir, JoinPath(folder, relativePath));
+					if (IsExistingRegularFile(patchCandidate))
+					{
+						resolvedOut.resolvedPath = patchCandidate;
+						resolvedOut.source = L"PatchFolder";
+						return true;
+					}
+				}
+
+				if (sg_activeModuleAssetCustomPak)
+				{
+					std::wstring cachePath;
+					std::wstring queryPath = ToGameAbsolutePath(gameDir, relativePath);
+					if (TryGetCustomPakDiskCachePath(queryPath.c_str(), cachePath) && !cachePath.empty())
+					{
+						resolvedOut.resolvedPath = cachePath;
+						resolvedOut.source = L"CustomPak";
+						resolvedOut.fromCustomPak = true;
+						return true;
+					}
+				}
+
+				std::wstring rootCandidate = ToGameAbsolutePath(gameDir, relativePath);
+				if (IsExistingRegularFile(rootCandidate))
+				{
+					resolvedOut.resolvedPath = rootCandidate;
+					resolvedOut.source = L"Root";
+					return true;
+				}
+			}
+			else if (IsAbsolutePath(configuredPath) && IsExistingRegularFile(configuredPath))
+			{
+				resolvedOut.resolvedPath = configuredPath;
+				resolvedOut.source = L"Root";
+				return true;
+			}
+			return false;
+		}
+
 		static bool ResolveLocalFontFileSource(const std::wstring& fontPathOrFileName, ResolvedFontFileSource& sourceOut, bool& foundCandidate, bool includeGameFile)
 		{
 			foundCandidate = false;
@@ -1432,20 +1496,20 @@ namespace CialloHook
 			SetCnJpMapEncoding(settings.cnJpMapReadEncoding);
 			if (settings.enableCnJpMap)
 			{
-				std::wstring gameDir = GetGameDirectory();
-				std::wstring mapJsonPath = ToGameAbsolutePath(gameDir, settings.cnJpMapJson);
-				CIALLOHOOK_VERBOSE_INFO_LOG(L"ApplyFontHooks: cn-jp map requested path=%s", mapJsonPath.c_str());
-				if (!IsExistingRegularFile(mapJsonPath))
+				ModuleAssetResolution mapJson = {};
+				CIALLOHOOK_VERBOSE_INFO_LOG(L"ApplyFontHooks: cn-jp map requested path=%s", settings.cnJpMapJson.c_str());
+				if (!TryResolveModuleAssetDiskPath(settings.cnJpMapJson, mapJson))
 				{
-					LogMessage(LogLevel::Error, L"ApplyFontHooks: cn-jp map json missing: %s", mapJsonPath.c_str());
+					LogMessage(LogLevel::Error, L"ApplyFontHooks: cn-jp map json missing: %s", settings.cnJpMapJson.c_str());
 				}
 				else
 				{
-					bool loaded = LoadCnJpMapFile(mapJsonPath.c_str());
+					bool loaded = LoadCnJpMapFile(mapJson.resolvedPath.c_str());
 					EnableCnJpMap(loaded);
 					LogMessage(loaded ? LogLevel::Info : LogLevel::Error,
-						L"ApplyFontHooks: cn-jp map file=%s load=%s",
-						mapJsonPath.c_str(),
+						L"ApplyFontHooks: cn-jp map file=%s source=%s load=%s",
+						mapJson.resolvedPath.c_str(),
+						mapJson.source.c_str(),
 						loaded ? L"success" : L"failed");
 				}
 			}
@@ -1885,6 +1949,7 @@ namespace CialloHook
 				settings.hookEnumFontFamiliesExW ? 1 : 0);
 		}
 
+
 		void ApplyTextHooks(const TextReplaceSettings& settings, const EnginePatchSettings& enginePatchSettings)
 		{
 			UINT textReadCp = settings.readEncoding != 0
@@ -2093,6 +2158,9 @@ namespace CialloHook
 			CIALLOHOOK_VERBOSE_INFO_LOG(L"Apply hooks: file patch");
 			ApplyFilePatchHooks(settings.filePatch, settings.fileSpoof, settings.directoryRedirect, settings.enginePatches);
 
+			CIALLOHOOK_VERBOSE_INFO_LOG(L"Apply hooks: binary patch");
+			ApplyBinaryPatches(settings.binaryPatch);
+
 			CIALLOHOOK_VERBOSE_INFO_LOG(L"Apply hooks: alice system3x");
 			ApplyAliceSystem3xHooks(settings.aliceSystem3x, settings.filePatch);
 
@@ -2188,9 +2256,11 @@ namespace CialloHook
 		void ApplyFilePatchHooks(const FilePatchSettings& patchSettings, const FileSpoofSettings& spoofSettings, const DirectoryRedirectSettings& directoryRedirectSettings, const EnginePatchSettings& enginePatchSettings)
 		{
 			sg_activeFontPatchFolders.clear();
-			if (!patchSettings.enable && !spoofSettings.enable && !directoryRedirectSettings.enable && !enginePatchSettings.enableKrkrPatch)
+			sg_activeModuleAssetPatchFolders.clear();
+			sg_activeModuleAssetCustomPak = false;
+			if (!patchSettings.enable && !patchSettings.customPakEnable && !spoofSettings.enable && !directoryRedirectSettings.enable && !enginePatchSettings.enableKrkrPatch)
 			{
-				CIALLOHOOK_VERBOSE_INFO_LOG(L"ApplyFilePatchHooks: disabled (patch, spoof, redirect and krkrpatch)");
+				CIALLOHOOK_VERBOSE_INFO_LOG(L"ApplyFilePatchHooks: disabled (patch, custom pak, spoof, redirect and krkrpatch)");
 				return;
 			}
 			std::wstring gameDir = GetGameDirectory();
@@ -2291,6 +2361,7 @@ namespace CialloHook
 				}
 			}
 			sg_activeFontPatchFolders = activePatchFolders;
+				sg_activeModuleAssetPatchFolders = activePatchFolders;
 
 			std::vector<std::wstring> activeCustomPakFiles;
 			for (const std::wstring& pakFile : filePatchCustomPakFiles)
@@ -2316,6 +2387,7 @@ namespace CialloHook
 
 			bool enablePatch = !activePatchFolders.empty();
 			bool enableCustomPak = !activeCustomPakFiles.empty();
+				sg_activeModuleAssetCustomPak = enableCustomPak;
 			if (!enablePatch && !enableSpoof && !enableCustomPak && !enableRedirect)
 			{
 				LogMessage(LogLevel::Warn, L"ApplyFilePatchHooks: no valid patch/spoof/redirect targets, skip file api hooks");
@@ -2575,18 +2647,19 @@ namespace CialloHook
 				return;
 			}
 
-			std::wstring gameDir = GetGameDirectory();
 			std::vector<std::wstring> registryFilePaths;
 			registryFilePaths.reserve(settings.files.size());
 			for (const auto& file : settings.files)
 			{
-				std::wstring registryFilePath = ToGameAbsolutePath(gameDir, file);
-				if (!IsExistingRegularFile(registryFilePath))
+				ModuleAssetResolution registryFile = {};
+				if (!TryResolveModuleAssetDiskPath(file, registryFile))
 				{
-					LogMessage(LogLevel::Error, L"ApplyRegistryHooks: registry file missing: %s", registryFilePath.c_str());
+					LogMessage(LogLevel::Error, L"ApplyRegistryHooks: registry file missing: %s", file.c_str());
 					return;
 				}
-				registryFilePaths.push_back(std::move(registryFilePath));
+				LogMessage(LogLevel::Info, L"ApplyRegistryHooks: registry file=%s source=%s resolved=%s",
+					file.c_str(), registryFile.source.c_str(), registryFile.resolvedPath.c_str());
+				registryFilePaths.push_back(std::move(registryFile.resolvedPath));
 			}
 
 			std::vector<const wchar_t*> registryFilePathPointers;

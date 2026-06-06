@@ -324,6 +324,20 @@ namespace CialloHook
 		bool waffleFixGetTextCrash = true;
 	};
 
+	struct BinaryPatchSettings
+	{
+		bool enable = false;
+		std::vector<std::wstring> patchFiles;
+		bool enableLog = false;
+		bool verifyOldBytes = false;
+		bool failOnMissingModule = false;
+		bool failOnWriteError = false;
+		bool preferCustomPak = true;
+		bool enableHwbp = false;
+		std::wstring hwbpModule;
+		uint32_t hwbpRva = 0;
+	};
+
 	struct SplashImageSettings
 	{
 		bool enable = false;
@@ -362,5 +376,6 @@ namespace CialloHook
 		RioShiinaSettings rioShiina;
 		EngineCacheSettings engineCache;
 		EnginePatchSettings enginePatches;
+		BinaryPatchSettings binaryPatch;
 	};
 }

@@ -5,6 +5,7 @@
 #include <cmath>
 #include <memory>
 #include <vector>
+#include <exception>
 
 #include <objidl.h>
 #include <gdiplus.h>
@@ -93,6 +94,19 @@ namespace CialloHook
 		LEB* leb,
 		const wchar_t* applicationName,
 		const wchar_t* commandLine,
+		const wchar_t* currentDirectory,
+		uint32_t creationFlags,
+		STARTUPINFOW* startupInfo,
+		ML_PROCESS_INFORMATION* processInfo,
+		LPSECURITY_ATTRIBUTES processAttributes,
+		LPSECURITY_ATTRIBUTES threadAttributes,
+		void* environment,
+		HANDLE token);
+
+	using PFN_LepCreateProcess = LONG(WINAPI*)(
+		LEB* leb,
+		const wchar_t* applicationName,
+		wchar_t* commandLine,
 		const wchar_t* currentDirectory,
 		uint32_t creationFlags,
 		STARTUPINFOW* startupInfo,
@@ -1242,34 +1256,85 @@ namespace CialloHook
 		ss.position = GetPrivateProfileIntW(L"SplashImage", L"Position", 1, context.iniPath.c_str());
 		ss.interactionMode = GetPrivateProfileIntW(L"SplashImage", L"InteractionMode", 0, context.iniPath.c_str());
 
-		wchar_t patchFolder[256] = {};
-		GetPrivateProfileStringW(L"FilePatch", L"PatchFolderName_0", L"patch", patchFolder, 256, context.iniPath.c_str());
-		wchar_t cpkFile[256] = {};
-		GetPrivateProfileStringW(L"FilePatch", L"CustomPakName_0", L"patch.cpk", cpkFile, 256, context.iniPath.c_str());
-		wchar_t cpkEnabled[16] = {};
-		GetPrivateProfileStringW(L"FilePatch", L"CustomPakEnable", L"false", cpkEnabled, 16, context.iniPath.c_str());
-		bool useCpk = (lstrcmpiW(cpkEnabled, L"true") == 0 || lstrcmpiW(cpkEnabled, L"1") == 0);
-
 		wchar_t ep[MAX_PATH] = {};
 		GetModuleFileNameW(nullptr, ep, MAX_PATH);
 		std::wstring gameDir(ep);
-		auto sep = gameDir.find_last_of(L"\\/");
+		auto sep = gameDir.find_last_of(L"/\\");
 		if (sep != std::wstring::npos) gameDir = gameDir.substr(0, sep + 1);
+
+		auto isAbsPath = [](const std::wstring& path) -> bool
+		{
+			return (path.size() >= 2 && path[1] == L':') || (path.size() >= 2 && path[0] == 0x5c && path[1] == 0x5c);
+		};
+		auto joinGame = [&](const std::wstring& path) -> std::wstring
+		{
+			return isAbsPath(path) ? path : (gameDir + path);
+		};
+
+		std::vector<std::wstring> patchFolders;
+		int patchFolderCount = GetPrivateProfileIntW(L"FilePatch", L"PatchFolderCount", -1, context.iniPath.c_str());
+		if (patchFolderCount >= 0)
+		{
+			for (int i = 0; i < patchFolderCount; ++i)
+			{
+				wchar_t key[64] = {};
+				_snwprintf_s(key, _countof(key), _TRUNCATE, L"PatchFolderName_%d", i);
+				wchar_t value[MAX_PATH] = {};
+				GetPrivateProfileStringW(L"FilePatch", key, L"", value, MAX_PATH, context.iniPath.c_str());
+				if (value[0] != L'\0') patchFolders.push_back(value);
+			}
+		}
+		else
+		{
+			wchar_t value[MAX_PATH] = {};
+			GetPrivateProfileStringW(L"FilePatch", L"PatchFolderName_0", L"patch", value, MAX_PATH, context.iniPath.c_str());
+			if (value[0] != L'\0') patchFolders.push_back(value);
+		}
+
+		std::vector<std::wstring> cpkFiles;
+		wchar_t cpkEnabled[16] = {};
+		GetPrivateProfileStringW(L"FilePatch", L"CustomPakEnable", L"false", cpkEnabled, 16, context.iniPath.c_str());
+		bool useCpk = (lstrcmpiW(cpkEnabled, L"true") == 0 || lstrcmpiW(cpkEnabled, L"1") == 0 || lstrcmpiW(cpkEnabled, L"yes") == 0);
+		if (useCpk)
+		{
+			int cpkCount = GetPrivateProfileIntW(L"FilePatch", L"CustomPakCount", -1, context.iniPath.c_str());
+			if (cpkCount >= 0)
+			{
+				for (int i = 0; i < cpkCount; ++i)
+				{
+					wchar_t key[64] = {};
+					_snwprintf_s(key, _countof(key), _TRUNCATE, L"CustomPakName_%d", i);
+					wchar_t value[MAX_PATH] = {};
+					GetPrivateProfileStringW(L"FilePatch", key, L"", value, MAX_PATH, context.iniPath.c_str());
+					if (value[0] != L'\0') cpkFiles.push_back(value);
+				}
+			}
+			else
+			{
+				wchar_t value[MAX_PATH] = {};
+				GetPrivateProfileStringW(L"FilePatch", L"CustomPakName_0", L"patch.cpk", value, MAX_PATH, context.iniPath.c_str());
+				if (value[0] != L'\0') cpkFiles.push_back(value);
+			}
+		}
 
 		std::vector<uint8_t> imgData;
 		bool found = false;
 
-		if (!found) { found = ReadFileToVector(gameDir + patchFolder + L"\\" + ss.imageFile, imgData); }
-		if (!found && useCpk)
+		for (size_t i = patchFolders.size(); !found && i > 0; --i)
+		{
+			found = ReadFileToVector(joinGame(patchFolders[i - 1]) + L"\\" + ss.imageFile, imgData);
+		}
+		for (size_t i = cpkFiles.size(); !found && i > 0; --i)
 		{
 			std::shared_ptr<const std::vector<uint8_t>> cpkData;
-			if (ResolveCustomPakArchiveData((gameDir + cpkFile).c_str(), ss.imageFile.c_str(), cpkData) && cpkData && !cpkData->empty())
+			if (ResolveCustomPakArchiveData(joinGame(cpkFiles[i - 1]).c_str(), ss.imageFile.c_str(), cpkData) && cpkData && !cpkData->empty())
 			{
 				imgData.assign(cpkData->begin(), cpkData->end());
 				found = true;
 			}
 		}
-		if (!found) { found = ReadFileToVector(gameDir + ss.imageFile, imgData); }
+		if (!found) { found = ReadFileToVector(joinGame(ss.imageFile), imgData); }
+
 		if (!found || imgData.empty()) return;
 
 		RunSplashAnimationSafe(imgData.data(), imgData.size(), &ss);
@@ -1364,35 +1429,48 @@ namespace CialloHook
 			DWORD errorCode = GetLastError();
 			if (loaderConfiguredCandidateFound)
 			{
-				LogMessage(LogLevel::Error, L"LocaleEmulator: LoaderDll.dll or LocaleEmulator.dll found in configured FilePatch targets but loading failed (GetLastError=%u)", errorCode);
-				MessageBoxW(NULL, L"LoaderDll.dll / LocaleEmulator.dll 已在 FilePatch 配置的目录或封包中找到，但加载失败", L"CialloHook - LE Error", MB_OK | MB_ICONERROR);
+				LogMessage(LogLevel::Error, L"LocaleEmulator: LoaderDll missing - no LE or LEP loader found in configured FilePatch targets (loading failed, GetLastError=%u)", errorCode);
+				MessageBoxW(NULL, L"LoaderDll (LE/LEP) 已在 FilePatch 配置的目录或封包中找到，但加载失败", L"CialloHook - LE Error", MB_OK | MB_ICONERROR);
 			}
 			else
 			{
-				LogMessage(LogLevel::Error, L"LocaleEmulator: LoaderDll.dll missing locally and in configured FilePatch targets (GetLastError=%u)", errorCode);
-				MessageBoxW(NULL, L"LoaderDll.dll missing", L"CialloHook - LE Error", MB_OK | MB_ICONERROR);
+				LogMessage(LogLevel::Error, L"LocaleEmulator: no LE or LEP loader found locally or in configured FilePatch targets (GetLastError=%u)", errorCode);
+				MessageBoxW(NULL, L"LoaderDll.dll / LoaderDll_x86.dll / LoaderDll_x64.dll missing", L"CialloHook - LE Error", MB_OK | MB_ICONERROR);
 			}
 			SetEnvironmentVariableW(L"CIALLOHOOK_LE_ACTIVE", nullptr);
 			return false;
 		}
 		if (loaderFromCustomPak)
 		{
-			CIALLOHOOK_VERBOSE_INFO_LOG(L"LocaleEmulator: LoaderDll.dll loaded from configured CustomPak cache");
+			CIALLOHOOK_VERBOSE_INFO_LOG(L"LocaleEmulator: loader loaded from configured CustomPak cache");
 		}
 		else if (loaderFromConfiguredOverride)
 		{
-			CIALLOHOOK_VERBOSE_INFO_LOG(L"LocaleEmulator: LoaderDll.dll loaded from configured patch path");
+			CIALLOHOOK_VERBOSE_INFO_LOG(L"LocaleEmulator: loader loaded from configured patch path");
 		}
 
-		PFN_LeCreateProcess leCreateProcess = (PFN_LeCreateProcess)GetProcAddress(loaderDll, "LeCreateProcess");
-		if (!leCreateProcess)
+		// Try LEP first (LepCreateProcess / LepCreateProcess2), then fall back to LE (LeCreateProcess)
+		PFN_LepCreateProcess lepCreateProcess = (PFN_LepCreateProcess)GetProcAddress(loaderDll, "LepCreateProcess");
+		PFN_LeCreateProcess leCreateProcess = nullptr;
+		bool usingLEP = false;
+		if (lepCreateProcess)
 		{
-			LogMessage(LogLevel::Error, L"LocaleEmulator: LeCreateProcess not found");
-			MessageBoxW(NULL, L"LeCreateProcess not found in LoaderDll.dll", L"CialloHook - LE Error", MB_OK | MB_ICONERROR);
-			FreeLibrary(loaderDll);
-			CleanupPreparedRuntimeFiles(preparedPaths);
-			SetEnvironmentVariableW(L"CIALLOHOOK_LE_ACTIVE", nullptr);
-			return false;
+			usingLEP = true;
+			LogMessage(LogLevel::Info, L"LocaleEmulator: using LEP (LepCreateProcess)");
+		}
+		else
+		{
+			leCreateProcess = (PFN_LeCreateProcess)GetProcAddress(loaderDll, "LeCreateProcess");
+			if (!leCreateProcess)
+			{
+				LogMessage(LogLevel::Error, L"LocaleEmulator: neither LepCreateProcess nor LeCreateProcess found in loader");
+				MessageBoxW(NULL, L"LepCreateProcess / LeCreateProcess not found in LoaderDll", L"CialloHook - LE Error", MB_OK | MB_ICONERROR);
+				FreeLibrary(loaderDll);
+				CleanupPreparedRuntimeFiles(preparedPaths);
+				SetEnvironmentVariableW(L"CIALLOHOOK_LE_ACTIVE", nullptr);
+				return false;
+			}
+			LogMessage(LogLevel::Info, L"LocaleEmulator: using LE (LeCreateProcess)");
 		}
 
 		LEB leb = {};
@@ -1451,18 +1529,38 @@ namespace CialloHook
 		}
 
 		const uint32_t creationFlags = environmentBlockReady ? CREATE_UNICODE_ENVIRONMENT : 0;
-		DWORD result = leCreateProcess(
-			&leb,
-			exePath,
-			GetCommandLineW(),
-			currentDirectory,
-			creationFlags,
-			&startupInfo,
-			&processInfo,
-			nullptr,
-			nullptr,
-			environmentBlockReady ? environmentBlock.data() : nullptr,
-			nullptr);
+		DWORD result;
+		if (usingLEP)
+		{
+			LONG lepResult = lepCreateProcess(
+				&leb,
+				exePath,
+				GetCommandLineW(),
+				currentDirectory,
+				creationFlags,
+				&startupInfo,
+				&processInfo,
+				nullptr,
+				nullptr,
+				environmentBlockReady ? environmentBlock.data() : nullptr,
+				nullptr);
+			result = static_cast<DWORD>(lepResult);
+		}
+		else
+		{
+			result = leCreateProcess(
+				&leb,
+				exePath,
+				GetCommandLineW(),
+				currentDirectory,
+				creationFlags,
+				&startupInfo,
+				&processInfo,
+				nullptr,
+				nullptr,
+				environmentBlockReady ? environmentBlock.data() : nullptr,
+				nullptr);
+		}
 
 		if (pathUpdated)
 		{
@@ -1481,14 +1579,14 @@ namespace CialloHook
 
 		if (result == ERROR_SUCCESS)
 		{
-			LogMessage(LogLevel::Info, L"LocaleEmulator relaunch succeeded");
+			LogMessage(LogLevel::Info, L"LocaleEmulator relaunch succeeded (%s)", usingLEP ? L"LEP" : L"LE");
 			ExitProcess(0);
 			return true;
 		}
 
-		LogMessage(LogLevel::Error, L"LocaleEmulator relaunch failed: 0x%08X", result);
+		LogMessage(LogLevel::Error, L"LocaleEmulator relaunch failed (%s): 0x%08X", usingLEP ? L"LEP" : L"LE", result);
 		wchar_t errorText[256] = {};
-		swprintf_s(errorText, L"LeCreateProcess failed: 0x%08X", result);
+		swprintf_s(errorText, L"%s failed: 0x%08X", usingLEP ? L"LepCreateProcess" : L"LeCreateProcess", result);
 		MessageBoxW(NULL, errorText, L"CialloHook - LE Error", MB_OK | MB_ICONERROR);
 		SetEnvironmentVariableW(L"CIALLOHOOK_LE_ACTIVE", nullptr);
 		return false;
@@ -1562,19 +1660,77 @@ namespace CialloHook
 	}
 
 	bool HookManager::TryLoadStartupSettings(HMODULE dllModule, AppSettings& settings)
+	{
+		try
 		{
-			try
-			{
-				const ModuleSettingsContext context = BuildModuleSettingsContext(dllModule);
-				std::string errorMessage;
-				return TryLoadModuleSettings(context, settings, errorMessage, nullptr);
-			}
-			catch (...)
-			{
-				settings = AppSettings{};
-				return false;
-			}
+			const ModuleSettingsContext context = BuildModuleSettingsContext(dllModule);
+			std::string errorMessage;
+			return TryLoadModuleSettings(context, settings, errorMessage, nullptr);
 		}
+		catch (...)
+		{
+			settings = AppSettings{};
+			return false;
+		}
+	}
+
+	void HookManager::TryApplyBinaryPatchesBeforeEntry(HMODULE dllModule)
+	{
+		try
+		{
+			const ModuleSettingsContext context = BuildModuleSettingsContext(dllModule);
+			AppSettings settings;
+			std::string errorMessage;
+			if (!TryLoadModuleSettings(context, settings, errorMessage, nullptr))
+			{
+				InitLogger(context.dllNameNoExt.c_str(), true, false, false);
+				std::wstring wideError = Utf8ToWide(errorMessage);
+				LogMessage(LogLevel::Warn, L"BinaryPatch(pre-entry): config load failed, fallback to runtime: %s", wideError.c_str());
+				return;
+			}
+
+			InitLogger(context.dllNameNoExt.c_str(), settings.debug.enable, settings.debug.logToFile, settings.debug.logToConsole);
+			HookModules::TryApplyBinaryPatchesBeforeEntry(settings.binaryPatch);
+		}
+		catch (const std::exception& err)
+		{
+			std::wstring wideError = Utf8ToWide(err.what());
+			LogMessage(LogLevel::Warn, L"BinaryPatch(pre-entry): HookManager exception, fallback to runtime: %s", wideError.c_str());
+		}
+		catch (...)
+		{
+			LogMessage(LogLevel::Warn, L"BinaryPatch(pre-entry): HookManager unknown exception, fallback to runtime");
+		}
+	}
+
+
+	void HookManager::TryRequestBinaryPatchOnFirstPatchHit(HMODULE dllModule)
+	{
+		try
+		{
+			const ModuleSettingsContext context = BuildModuleSettingsContext(dllModule);
+			AppSettings settings;
+			std::string errorMessage;
+			if (!TryLoadModuleSettings(context, settings, errorMessage, nullptr))
+			{
+				return;
+			}
+			if (!settings.binaryPatch.enable || !settings.binaryPatch.enableHwbp)
+			{
+				return;
+			}
+			HookModules::TryRequestBinaryPatchOnFirstPatchHit(settings.binaryPatch);
+		}
+		catch (const std::exception& err)
+		{
+			std::wstring wideError = Utf8ToWide(err.what());
+			LogMessage(LogLevel::Warn, L"BinaryPatch(HWBP): HookManager exception: %s", wideError.c_str());
+		}
+		catch (...)
+		{
+			LogMessage(LogLevel::Warn, L"BinaryPatch(HWBP): HookManager unknown exception");
+		}
+	}
 
 		void HookManager::RegisterLocaleEmulatorStagedFilesFromEnvironment()
 	{

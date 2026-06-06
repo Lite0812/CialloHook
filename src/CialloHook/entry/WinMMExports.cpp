@@ -356,15 +356,41 @@ static FARPROC g_forward_ordinal2 = nullptr;
 #endif
 
 #ifndef _WIN64
+static bool EnsureRealWinmm();
+
 #define DEFINE_FORWARD_STUB(fn) \
 	extern "C" __declspec(naked) void __cdecl HookFont_##fn() \
 	{ \
-		__asm jmp dword ptr[g_forward_##fn] \
+		__asm mov eax, dword ptr[g_forward_##fn] \
+		__asm test eax, eax \
+		__asm jne resolved_##fn \
+		__asm pushad \
+		__asm call EnsureRealWinmm \
+		__asm popad \
+		__asm mov eax, dword ptr[g_forward_##fn] \
+		__asm test eax, eax \
+		__asm jne resolved_##fn \
+		__asm xor eax, eax \
+		__asm ret \
+		__asm resolved_##fn: \
+		__asm jmp eax \
 	}
 FORWARDED_WINMM_EXPORTS(DEFINE_FORWARD_STUB)
 extern "C" __declspec(naked) void __cdecl HookFont_Ordinal2()
 {
-	__asm jmp dword ptr[g_forward_ordinal2]
+	__asm mov eax, dword ptr[g_forward_ordinal2]
+	__asm test eax, eax
+	__asm jne resolved_ordinal2
+	__asm pushad
+	__asm call EnsureRealWinmm
+	__asm popad
+	__asm mov eax, dword ptr[g_forward_ordinal2]
+	__asm test eax, eax
+	__asm jne resolved_ordinal2
+	__asm xor eax, eax
+	__asm ret
+	__asm resolved_ordinal2:
+	__asm jmp eax
 }
 #undef DEFINE_FORWARD_STUB
 #endif
@@ -495,6 +521,11 @@ static BOOL CALLBACK InitRealWinmm(PINIT_ONCE, PVOID, PVOID*)
 static bool EnsureRealWinmm()
 {
 	return InitOnceExecuteOnce(&g_winmmInitOnce, InitRealWinmm, nullptr, nullptr) != FALSE && g_realWinmm != nullptr;
+}
+
+extern "C" bool CialloHook_EnsureRealWinmm()
+{
+	return EnsureRealWinmm();
 }
 
 extern "C" BOOL WINAPI HookFont_mciGetErrorStringA(MCIERROR mcierr, LPSTR pszText, UINT cchText)

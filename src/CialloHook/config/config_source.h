@@ -257,6 +257,17 @@ namespace CialloHook
 		};
 		settings.filePatch.vfsMode = 1;
 
+		// ---------------- [BinaryPatch] x64dbg .1337 内存补丁 ----------------
+		settings.binaryPatch.enable = false;
+		settings.binaryPatch.patchFiles = {
+			// L"patches\\main.1337",
+		};
+		settings.binaryPatch.enableLog = false;
+		settings.binaryPatch.verifyOldBytes = false;
+		settings.binaryPatch.failOnMissingModule = false;
+		settings.binaryPatch.failOnWriteError = false;
+		settings.binaryPatch.preferCustomPak = true;
+
 		// ---------------- [FileSpoof] 文件/目录伪装 ----------------
 		settings.fileSpoof.enable = false;
 		settings.fileSpoof.spoofFiles = {

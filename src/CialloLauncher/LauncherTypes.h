@@ -62,6 +62,19 @@ namespace CialloLauncher
 		void* environment,
 		void* token);
 
+	using PFN_LepCreateProcess = int32_t(WINAPI*)(
+		const void* leb,
+		const wchar_t* applicationName,
+		wchar_t* commandLine,
+		const wchar_t* currentDirectory,
+		uint32_t creationFlags,
+		STARTUPINFOW* startupInfo,
+		ML_PROCESS_INFORMATION* processInfo,
+		void* processAttributes,
+		void* threadAttributes,
+		void* environment,
+		void* token);
+
 	struct LauncherStartupMessage
 	{
 		bool enable = false;

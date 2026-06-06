@@ -13,6 +13,8 @@ namespace CialloHook
 		static bool TryEarlyLocaleEmulatorRelaunch(HMODULE dllModule);
 		static bool TryHandleConsentInDllMain(HMODULE dllModule);
 		static bool TryLoadStartupSettings(HMODULE dllModule, AppSettings& settings);
+		static void TryApplyBinaryPatchesBeforeEntry(HMODULE dllModule);
+		static void TryRequestBinaryPatchOnFirstPatchHit(HMODULE dllModule);
 		static void Initialize(HMODULE dllModule);
 		static void ShowSplashFromEntryPoint(HMODULE dllModule);
 	};
