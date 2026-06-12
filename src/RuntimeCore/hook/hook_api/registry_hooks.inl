@@ -313,6 +313,28 @@
 			return ToLowerWide(NormalizeRegistrySubPath(fullPath));
 		}
 
+		static bool TryMakeWow64RegistryPathAlias(const std::wstring& canonicalPath, std::wstring& aliasPathOut)
+		{
+			aliasPathOut.clear();
+			std::wstring normalized = NormalizeRegistrySubPath(canonicalPath);
+			const std::wstring prefix = L"HKEY_LOCAL_MACHINE\\SOFTWARE\\WOW6432Node";
+			if (_wcsnicmp(normalized.c_str(), prefix.c_str(), prefix.size()) != 0)
+			{
+				return false;
+			}
+			if (normalized.size() > prefix.size() && normalized[prefix.size()] != L'\\')
+			{
+				return false;
+			}
+
+			aliasPathOut = L"HKEY_LOCAL_MACHINE\\SOFTWARE";
+			if (normalized.size() > prefix.size())
+			{
+				aliasPathOut.append(normalized.substr(prefix.size()));
+			}
+			return true;
+		}
+
 		static std::shared_ptr<VirtualRegistryKey> GetVirtualRegistryKeyByHandleLocked(HKEY hKey)
 		{
 			auto it = sg_virtualRegistryHandleMap.find(reinterpret_cast<ULONG_PTR>(hKey));
@@ -338,6 +360,12 @@
 			key->displayPath = canonicalPath;
 			key->normalizedPath = normalizedPath;
 			sg_virtualRegistryPathMap[normalizedPath] = key;
+
+			std::wstring wow64AliasPath;
+			if (TryMakeWow64RegistryPathAlias(canonicalPath, wow64AliasPath))
+			{
+				sg_virtualRegistryPathMap[MakeNormalizedRegistryPath(wow64AliasPath)] = key;
+			}
 
 			size_t slash = canonicalPath.find_last_of(L'\\');
 			if (slash != std::wstring::npos)

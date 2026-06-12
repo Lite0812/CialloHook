@@ -12,17 +12,6 @@ using namespace Rut::HookX;
 
 namespace
 {
-	std::wstring GetLowerFileName(const std::wstring& path)
-	{
-		size_t pos = path.find_last_of(L"\\/");
-		std::wstring name = (pos == std::wstring::npos) ? path : path.substr(pos + 1);
-		for (wchar_t& c : name)
-		{
-			c = static_cast<wchar_t>(towlower(c));
-		}
-		return name;
-	}
-
 	std::wstring CanonicalizeInjectDllPath(const std::wstring& rawDllName, const std::wstring& exeDir)
 	{
 		if (rawDllName.empty())
@@ -31,16 +20,6 @@ namespace
 		}
 
 		std::wstring dllName = rawDllName;
-		std::wstring lowerName = GetLowerFileName(dllName);
-		if (lowerName == L"version.dll" || lowerName == L"winmm.dll")
-		{
-			std::wstring cialloHookDll = CialloLauncher::JoinPath(exeDir, L"CialloHook.dll");
-			if (CialloLauncher::FileExists(cialloHookDll))
-			{
-				return cialloHookDll;
-			}
-		}
-
 		if (CialloLauncher::IsAbsolutePath(dllName))
 		{
 			return dllName;
@@ -52,23 +31,6 @@ namespace
 			return dllInExeDir;
 		}
 		return dllName;
-	}
-
-	std::wstring ResolveDefaultHookDllPathLocal(const std::wstring& exeDir)
-	{
-		std::wstring cialloHookDll = CialloLauncher::JoinPath(exeDir, L"CialloHook.dll");
-		if (CialloLauncher::FileExists(cialloHookDll))
-		{
-			return cialloHookDll;
-		}
-		wchar_t currentDirBuffer[MAX_PATH] = {};
-		GetCurrentDirectoryW(MAX_PATH, currentDirBuffer);
-		std::wstring currentDirDll = CialloLauncher::JoinPath(currentDirBuffer, L"CialloHook.dll");
-		if (CialloLauncher::FileExists(currentDirDll))
-		{
-			return currentDirDll;
-		}
-		return L"";
 	}
 
 	std::wstring QuoteCommandLineArg(const std::wstring& value)
@@ -105,12 +67,6 @@ namespace
 		}
 
 		std::wstring lookupPath = rawDllName;
-		std::wstring lowerName = GetLowerFileName(lookupPath);
-		if (lowerName == L"version.dll" || lowerName == L"winmm.dll")
-		{
-			lookupPath = L"CialloHook.dll";
-		}
-
 		std::wstring fileName = PathGetFileName(lookupPath);
 		std::vector<std::wstring> candidates;
 		candidates.emplace_back(lookupPath);
@@ -211,27 +167,6 @@ namespace CialloLauncher
 		{
 			std::wstring extractedDll;
 			if (TryPrepareInjectDllFromCustomPak(rawDllName, extractedDll, customPakHadCandidate))
-			{
-				fromCustomPak = true;
-				return extractedDll;
-			}
-		}
-		return L"";
-	}
-
-	std::wstring ResolveDefaultHookDllPath(const std::wstring& exeDir, bool customPakEnable, bool& fromCustomPak)
-	{
-		fromCustomPak = false;
-		std::wstring localDll = ResolveDefaultHookDllPathLocal(exeDir);
-		if (!localDll.empty())
-		{
-			return localDll;
-		}
-		if (customPakEnable)
-		{
-			std::wstring extractedDll;
-			bool customPakHadCandidate = false;
-			if (TryPrepareInjectDllFromCustomPak(L"CialloHook.dll", extractedDll, customPakHadCandidate))
 			{
 				fromCustomPak = true;
 				return extractedDll;

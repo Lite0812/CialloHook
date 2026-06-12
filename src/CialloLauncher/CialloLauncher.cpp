@@ -261,7 +261,7 @@ namespace
 	bool BuildInjectionDllList(const LauncherConfig& config, const std::wstring& exeDir, std::vector<std::string>& dllList)
 	{
 		dllList.clear();
-		dllList.reserve(config.targetDllNames.size() + 1);
+		dllList.reserve(config.targetDllNames.size());
 
 		for (const std::wstring& configuredDllName : config.targetDllNames)
 		{
@@ -297,25 +297,6 @@ namespace
 			LogMessage(LogLevel::Info, L"Inject DLL prepared: %s%s", injectPath.c_str(), fromCustomPak ? L" [CustomPak]" : L"");
 		}
 
-		bool defaultHookFromCustomPak = false;
-		std::wstring defaultHookDll = ResolveDefaultHookDllPath(exeDir, config.customPakEnable, defaultHookFromCustomPak);
-		if (defaultHookDll.empty())
-		{
-			MessageBoxW(nullptr, L"找不到 `CialloHook.dll`，无法继续启动。", L"CialloHook - Error", MB_OK | MB_ICONERROR);
-			LogMessage(LogLevel::Error, L"CialloHook.dll not found");
-			return false;
-		}
-
-		std::string defaultDetoursPath = BuildDetoursDllPath(defaultHookDll, exeDir);
-		if (defaultDetoursPath.empty())
-		{
-			std::wstring message = L"无法为 Detours 编码默认 Hook DLL 路径：\n" + defaultHookDll;
-			MessageBoxW(nullptr, message.c_str(), L"CialloHook - Error", MB_OK | MB_ICONERROR);
-			LogMessage(LogLevel::Error, L"Default hook DLL path encoding failed: %s", defaultHookDll.c_str());
-			return false;
-		}
-		dllList.emplace_back(defaultDetoursPath);
-		LogMessage(LogLevel::Info, L"Default hook DLL prepared: %s%s", defaultHookDll.c_str(), defaultHookFromCustomPak ? L" [CustomPak]" : L"");
 		return true;
 	}
 }
@@ -398,7 +379,7 @@ INT APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 			wchar_t msg[768];
 			swprintf_s(msg, 768, L"[Debug] Ready to launch\nTarget: %s\nInject DLL count: %u\nLocaleEmulator: %s\nCustomPak: %s",
 				config.targetExe.c_str(),
-				config.targetDllCount + 1,
+				static_cast<uint32_t>(config.targetDllNames.size()),
 				config.enableLocaleEmulator ? L"ON" : L"OFF",
 				config.customPakEnable ? L"ON" : L"OFF");
 			MessageBoxW(nullptr, msg, L"CialloHook - Debug", MB_OK | MB_ICONINFORMATION);

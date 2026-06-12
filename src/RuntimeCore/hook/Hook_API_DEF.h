@@ -358,3 +358,12 @@ typedef LSTATUS(WINAPI* pRegQueryInfoKeyA)(HKEY hKey, LPSTR lpClass, LPDWORD lpc
 typedef int(WINAPI* pMultiByteToWideChar)(UINT CodePage, DWORD dwFlags, LPCCH lpMultiByteStr, int cbMultiByte, LPWSTR lpWideCharStr, int cchWideChar);
 
 typedef int(WINAPI* pWideCharToMultiByte)(UINT CodePage, DWORD dwFlags, LPCWCH lpWideCharStr, int cchWideChar, LPSTR lpMultiByteStr, int cbMultiByte, LPCCH lpDefaultChar, LPBOOL lpUsedDefaultChar);
+
+typedef LANGID(WINAPI* pGetUserDefaultUILanguage)();
+typedef LANGID(WINAPI* pGetSystemDefaultUILanguage)();
+typedef LANGID(WINAPI* pGetThreadUILanguage)();
+typedef LANGID(WINAPI* pGetUserDefaultLangID)();
+typedef LANGID(WINAPI* pGetSystemDefaultLangID)();
+typedef LCID(WINAPI* pGetUserDefaultLCID)();
+typedef LCID(WINAPI* pGetSystemDefaultLCID)();
+typedef LCID(WINAPI* pGetThreadLocale)();

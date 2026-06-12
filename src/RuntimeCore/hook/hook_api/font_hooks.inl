@@ -130,10 +130,50 @@
 		};
 		static std::vector<std::wstring> sg_skipFontRuleKeys;
 		static std::vector<FontNameRedirectRule> sg_fontRedirectRules;
+		static bool IsReadableMemoryProtect(DWORD protect)
+		{
+			if ((protect & (PAGE_GUARD | PAGE_NOACCESS)) != 0)
+			{
+				return false;
+			}
+			protect &= 0xff;
+			return protect == PAGE_READONLY
+				|| protect == PAGE_READWRITE
+				|| protect == PAGE_WRITECOPY
+				|| protect == PAGE_EXECUTE_READ
+				|| protect == PAGE_EXECUTE_READWRITE
+				|| protect == PAGE_EXECUTE_WRITECOPY;
+		}
+		static bool IsReadableMemoryRange(const void* ptr, size_t bytes)
+		{
+			if (!ptr || bytes == 0)
+			{
+				return false;
+			}
+			const BYTE* current = static_cast<const BYTE*>(ptr);
+			const BYTE* end = current + bytes;
+			while (current < end)
+			{
+				MEMORY_BASIC_INFORMATION mbi = {};
+				if (VirtualQuery(current, &mbi, sizeof(mbi)) != sizeof(mbi)
+					|| mbi.State != MEM_COMMIT
+					|| !IsReadableMemoryProtect(mbi.Protect))
+				{
+					return false;
+				}
+				const BYTE* regionEnd = static_cast<const BYTE*>(mbi.BaseAddress) + mbi.RegionSize;
+				if (regionEnd <= current)
+				{
+					return false;
+				}
+				current = regionEnd;
+			}
+			return true;
+		}
 		static bool TryCopyWideFaceName(const wchar_t* source, wchar_t (&buffer)[LF_FACESIZE])
 		{
 			buffer[0] = L'\0';
-			if (!source)
+			if (!IsReadableMemoryRange(source, sizeof(wchar_t) * LF_FACESIZE))
 			{
 				return false;
 			}
@@ -160,7 +200,7 @@
 		static bool TryCopyAnsiFaceName(const char* source, char (&buffer)[LF_FACESIZE])
 		{
 			buffer[0] = '\0';
-			if (!source)
+			if (!IsReadableMemoryRange(source, sizeof(char) * LF_FACESIZE))
 			{
 				return false;
 			}
@@ -186,7 +226,7 @@
 		}
 		static bool TryCopyLogFontA(const LOGFONTA* source, LOGFONTA& local)
 		{
-			if (!source)
+			if (!IsReadableMemoryRange(source, sizeof(LOGFONTA)))
 			{
 				return false;
 			}
@@ -202,7 +242,7 @@
 		}
 		static bool TryCopyLogFontW(const LOGFONTW* source, LOGFONTW& local)
 		{
-			if (!source)
+			if (!IsReadableMemoryRange(source, sizeof(LOGFONTW)))
 			{
 				return false;
 			}
@@ -446,6 +486,36 @@
 		static bool IsFontObjectHandle(HANDLE h)
 		{
 			return h && GetObjectType(h) == OBJ_FONT;
+		}
+		static bool TryGetObjectType(HANDLE h, DWORD& type)
+		{
+			type = 0;
+			if (!h)
+			{
+				return false;
+			}
+			__try
+			{
+				type = GetObjectType(h);
+				return type != 0;
+			}
+			__except (EXCEPTION_EXECUTE_HANDLER)
+			{
+				type = 0;
+				return false;
+			}
+		}
+		static bool IsHdcObjectHandle(HDC hdc)
+		{
+			DWORD type = 0;
+			if (!TryGetObjectType(hdc, type))
+			{
+				return false;
+			}
+			return type == OBJ_DC
+				|| type == OBJ_MEMDC
+				|| type == OBJ_METADC
+				|| type == OBJ_ENHMETADC;
 		}
 		static void ApplyMetricsOffsetToTextMetricsA(LPTEXTMETRICA lptm)
 		{
@@ -783,8 +853,13 @@
 			}
 			FontCreateNestingScope scope;
 			bool skipOverride = false;
+			wchar_t requestedFaceName[LF_FACESIZE] = {};
 			wchar_t forcedFaceName[LF_FACESIZE] = {};
-			bool hasForcedFaceName = TryGetForcedFontNameWForRequest(pszFaceName, forcedFaceName, skipOverride);
+			if (!TryCopyWideFaceName(pszFaceName, requestedFaceName))
+			{
+				return rawCreateFontW(cHeight, cWidth, cEscapement, cOrientation, cWeight, bItalic, bUnderline, bStrikeOut, iCharSet, iOutPrecision, iClipPrecision, iQuality, iPitchAndFamily, pszFaceName);
+			}
+			bool hasForcedFaceName = TryGetForcedFontNameWForRequest(requestedFaceName, forcedFaceName, skipOverride);
 			if (skipOverride)
 			{
 				return rawCreateFontW(cHeight, cWidth, cEscapement, cOrientation, cWeight, bItalic, bUnderline, bStrikeOut, iCharSet, iOutPrecision, iClipPrecision, iQuality, iPitchAndFamily, pszFaceName);
@@ -838,6 +913,10 @@
 			FontCreateNestingScope scope;
 			LOGFONTW local = {};
 			if (!TryCopyLogFontW(lplf, local))
+			{
+				return rawCreateFontIndirectW(lplf);
+			}
+			if (local.lfFaceName[0] == L'\0')
 			{
 				return rawCreateFontIndirectW(lplf);
 			}
@@ -1124,7 +1203,7 @@
 			{
 				*pOldFont = nullptr;
 			}
-			if (!hdc || sg_hdcFontReplacementNesting > 0)
+			if (!hdc || sg_hdcFontReplacementNesting > 0 || !IsHdcObjectHandle(hdc))
 			{
 				return nullptr;
 			}

@@ -13,7 +13,6 @@ namespace CialloLauncher
 	bool IsAbsolutePath(const std::wstring& path);
 	std::wstring ResolveLauncherIniPath(const std::wstring& exeDir, const std::wstring& exeNameNoExt);
 	std::wstring ResolveInjectDllPath(const std::wstring& rawDllName, const std::wstring& exeDir, bool customPakEnable, bool& fromCustomPak, bool& customPakHadCandidate);
-	std::wstring ResolveDefaultHookDllPath(const std::wstring& exeDir, bool customPakEnable, bool& fromCustomPak);
 	void ConfigureLauncherCustomPakVfs(const std::vector<std::wstring>& customPakFiles, bool debugMode);
 	std::wstring PeekCustomPakSessionRoot();
 	std::wstring GetCustomPakCacheDir(const wchar_t* subDirName);

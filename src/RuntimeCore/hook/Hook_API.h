@@ -190,6 +190,8 @@ namespace Rut
 		bool HookMultiByteToWideChar();
 			bool HookWideCharToMultiByte();
 			bool HookCodePageAPIs();
+			void SetLocaleEmulatorLanguage(uint32_t localeID);
+			bool HookUILanguageAPIs();
 		
 		// 文件热补丁功能
 		void SetPatchFolder(const wchar_t* folderPath, bool enableLog = false);

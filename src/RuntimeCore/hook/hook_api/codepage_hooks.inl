@@ -1,4 +1,4 @@
-﻿		//*********START CodePage Conversion*********
+		//*********START CodePage Conversion*********
 		static UINT sg_uiFromCodePage = 0;
 		static UINT sg_uiToCodePage = 0;
 
@@ -82,4 +82,87 @@
 			allSucceeded &= HookWideCharToMultiByte();
 			return allSucceeded;
 		}
+
+		//*********START UI Language Hooks*********
+		static LANGID sg_uiLocaleId = 0;
+
+		void SetLocaleEmulatorLanguage(uint32_t localeID)
+		{
+			sg_uiLocaleId = static_cast<LANGID>(localeID & 0xFFFF);
+		}
+
+		static pGetUserDefaultUILanguage rawGetUserDefaultUILanguage = GetUserDefaultUILanguage;
+		static pGetSystemDefaultUILanguage rawGetSystemDefaultUILanguage = GetSystemDefaultUILanguage;
+		static pGetThreadUILanguage rawGetThreadUILanguage = GetThreadUILanguage;
+		static pGetUserDefaultLangID rawGetUserDefaultLangID = GetUserDefaultLangID;
+		static pGetSystemDefaultLangID rawGetSystemDefaultLangID = GetSystemDefaultLangID;
+		static pGetUserDefaultLCID rawGetUserDefaultLCID = GetUserDefaultLCID;
+		static pGetSystemDefaultLCID rawGetSystemDefaultLCID = GetSystemDefaultLCID;
+		static pGetThreadLocale rawGetThreadLocale = GetThreadLocale;
+
+		static LANGID GetEffectiveLocaleId()
+		{
+			return sg_uiLocaleId != 0 ? sg_uiLocaleId : static_cast<LANGID>(0x0411);
+		}
+
+		LANGID WINAPI newGetUserDefaultUILanguage()
+		{
+			return IsHookRuntimeShuttingDown() ? rawGetUserDefaultUILanguage() : GetEffectiveLocaleId();
+		}
+
+		LANGID WINAPI newGetSystemDefaultUILanguage()
+		{
+			return IsHookRuntimeShuttingDown() ? rawGetSystemDefaultUILanguage() : GetEffectiveLocaleId();
+		}
+
+		LANGID WINAPI newGetThreadUILanguage()
+		{
+			return IsHookRuntimeShuttingDown() ? rawGetThreadUILanguage() : GetEffectiveLocaleId();
+		}
+
+		LANGID WINAPI newGetUserDefaultLangID()
+		{
+			return IsHookRuntimeShuttingDown() ? rawGetUserDefaultLangID() : GetEffectiveLocaleId();
+		}
+
+		LANGID WINAPI newGetSystemDefaultLangID()
+		{
+			return IsHookRuntimeShuttingDown() ? rawGetSystemDefaultLangID() : GetEffectiveLocaleId();
+		}
+
+		LCID WINAPI newGetUserDefaultLCID()
+		{
+			return IsHookRuntimeShuttingDown() ? rawGetUserDefaultLCID() : MAKELCID(GetEffectiveLocaleId(), SORT_DEFAULT);
+		}
+
+		LCID WINAPI newGetSystemDefaultLCID()
+		{
+			return IsHookRuntimeShuttingDown() ? rawGetSystemDefaultLCID() : MAKELCID(GetEffectiveLocaleId(), SORT_DEFAULT);
+		}
+
+		LCID WINAPI newGetThreadLocale()
+		{
+			return IsHookRuntimeShuttingDown() ? rawGetThreadLocale() : MAKELCID(GetEffectiveLocaleId(), SORT_DEFAULT);
+		}
+
+		bool HookUILanguageAPIs()
+		{
+			if (sg_uiLocaleId == 0)
+			{
+				return false;
+			}
+
+			bool allSucceeded = true;
+			allSucceeded &= TryDetourAttach(&rawGetUserDefaultUILanguage, newGetUserDefaultUILanguage);
+			allSucceeded &= TryDetourAttach(&rawGetSystemDefaultUILanguage, newGetSystemDefaultUILanguage);
+			allSucceeded &= TryDetourAttach(&rawGetThreadUILanguage, newGetThreadUILanguage);
+			allSucceeded &= TryDetourAttach(&rawGetUserDefaultLangID, newGetUserDefaultLangID);
+			allSucceeded &= TryDetourAttach(&rawGetSystemDefaultLangID, newGetSystemDefaultLangID);
+			allSucceeded &= TryDetourAttach(&rawGetUserDefaultLCID, newGetUserDefaultLCID);
+			allSucceeded &= TryDetourAttach(&rawGetSystemDefaultLCID, newGetSystemDefaultLCID);
+			allSucceeded &= TryDetourAttach(&rawGetThreadLocale, newGetThreadLocale);
+			return allSucceeded;
+		}
+		//*********END UI Language Hooks*********
+
 		//*********END CodePage Conversion*********

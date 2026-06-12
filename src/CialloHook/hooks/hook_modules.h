@@ -23,5 +23,6 @@ namespace CialloHook
 			void CleanupRegistryBootstrap();
 			void ApplyRegistryHooks(const RegistrySettings& settings);
 		void ApplyCodePageHooks(const CodePageSettings& settings);
+		void ApplyLocaleEmulatorHooks(const LocaleEmulatorSettings& settings);
 	}
 }

@@ -2192,6 +2192,9 @@ namespace CialloHook
 			CIALLOHOOK_VERBOSE_INFO_LOG(L"Apply hooks: code page");
 			ApplyCodePageHooks(settings.codePage);
 
+			CIALLOHOOK_VERBOSE_INFO_LOG(L"Apply hooks: locale emulator");
+			ApplyLocaleEmulatorHooks(settings.localeEmulator);
+
 			CIALLOHOOK_VERBOSE_INFO_LOG(L"Apply hooks: font");
 			ApplyFontHooks(settings.font);
 			ReleaseStartupWindowGate();
@@ -2681,6 +2684,31 @@ namespace CialloHook
 				L"ApplyRegistryHooks: files=%u load=%s hook=%s",
 				static_cast<uint32_t>(registryFilePaths.size()),
 				loaded ? L"success" : L"failed",
+				hooked ? L"success" : L"failed");
+		}
+
+
+		void ApplyLocaleEmulatorHooks(const LocaleEmulatorSettings& settings)
+		{
+			if (!settings.enable || settings.hookUILanguageAPI == 0)
+			{
+				CIALLOHOOK_VERBOSE_INFO_LOG(L"ApplyLocaleEmulatorHooks: disabled");
+				return;
+			}
+
+			Rut::HookX::SetLocaleEmulatorLanguage(settings.localeID);
+			const bool detourBatchStarted = BeginDetourBatch();
+			bool hooked = Rut::HookX::HookUILanguageAPIs();
+			if (!CommitDetourBatchIfStarted(detourBatchStarted, L"ApplyLocaleEmulatorHooks detour batch"))
+			{
+				hooked = false;
+				LogMessage(LogLevel::Warn, L"ApplyLocaleEmulatorHooks: detour batch commit failed");
+			}
+
+			LogMessage(hooked ? LogLevel::Info : LogLevel::Error,
+				L"ApplyLocaleEmulatorHooks: HookUILanguageAPI=%u LocaleID=0x%X hook=%s",
+				settings.hookUILanguageAPI,
+				settings.localeID,
 				hooked ? L"success" : L"failed");
 		}
 

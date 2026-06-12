@@ -6,11 +6,17 @@
 #include <memory>
 #include <vector>
 #include <exception>
+#include <cstdint>
 
 #include <objidl.h>
 #include <gdiplus.h>
 #pragma comment(lib, "gdiplus.lib")
 #pragma comment(lib, "msimg32.lib")
+
+#include <mmsystem.h>
+/* 不用 #pragma comment(lib, "winmm.lib")
+ * 因为 CialloHook 可能作为 winmm.dll 代理加载，静态链接会循环依赖。
+ * MCI 函数在运行时从系统 winmm.dll 动态获取。 */
 
 #include "../../RuntimeCore/io/File.h"
 #include "../../RuntimeCore/io/CustomPakVFS.h"
@@ -695,19 +701,93 @@ namespace CialloHook
 	static void* volatile sg_vehLastAddr = nullptr;
 	static volatile LONG sg_vehRepeatCount = 0;
 	static volatile LONG sg_vehSuppressedCount = 0;
+	static void* volatile sg_vehSuppressedCaller = nullptr;
+	static void* volatile sg_vehSuppressedReturnAddress = nullptr;
 	static DWORD sg_vehLastTick = 0;
 	static const LONG VEH_LOG_THRESHOLD = 3;
 	static const DWORD VEH_DEDUP_WINDOW_MS = 2000;
+	static volatile LONG sg_vehNtdllAvSuppressedCount = 0;
+	static void* volatile sg_vehNtdllAvCaller = nullptr;
+	static void* volatile sg_vehNtdllAvReturnAddress = nullptr;
+	static DWORD sg_vehNtdllAvLastLogTick = 0;
+	static const DWORD VEH_NTDLL_AV_LOG_WINDOW_MS = 2000;
+
+	static bool TryReadPointerForVeh(uintptr_t address, void*& value)
+	{
+		value = nullptr;
+		if (!address)
+		{
+			return false;
+		}
+		__try
+		{
+			value = *reinterpret_cast<void**>(address);
+			return true;
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			value = nullptr;
+			return false;
+		}
+	}
+
+	static void GetVehCallerAddresses(const CONTEXT* ctx, void*& caller, void*& returnAddress)
+	{
+		caller = nullptr;
+		returnAddress = nullptr;
+		if (!ctx)
+		{
+			return;
+		}
+#ifdef _M_IX86
+		returnAddress = reinterpret_cast<void*>(static_cast<uintptr_t>(ctx->Eip));
+		void* stackReturnAddress = nullptr;
+		if (TryReadPointerForVeh(static_cast<uintptr_t>(ctx->Esp), stackReturnAddress))
+		{
+			caller = stackReturnAddress;
+		}
+#elif defined(_M_X64)
+		returnAddress = reinterpret_cast<void*>(static_cast<uintptr_t>(ctx->Rip));
+		void* stackReturnAddress = nullptr;
+		if (TryReadPointerForVeh(static_cast<uintptr_t>(ctx->Rsp), stackReturnAddress))
+		{
+			caller = stackReturnAddress;
+		}
+#else
+		(void)ctx;
+#endif
+	}
 
 	static void FlushVehSuppressedCount()
 	{
 		LONG suppressed = InterlockedExchange(&sg_vehSuppressedCount, 0);
 		if (suppressed > 0)
 		{
+			void* caller = InterlockedExchangePointer(&sg_vehSuppressedCaller, nullptr);
+			void* returnAddress = InterlockedExchangePointer(&sg_vehSuppressedReturnAddress, nullptr);
 			LogMessage(LogLevel::Warn,
-				L"[VEH] ... suppressed %ld repeated exceptions at same address (caught by SEH, non-fatal)",
-				suppressed);
+				L"[VEH] ... suppressed %ld repeated exceptions at same address (caught by SEH, non-fatal) caller=%p return=%p",
+				suppressed, caller, returnAddress);
 		}
+	}
+
+	static void LogNtdllAvThrottled(void* faultAddress, void* callerAddress, void* returnAddress, DWORD currentTick)
+	{
+		InterlockedExchangePointer(&sg_vehNtdllAvCaller, callerAddress);
+		InterlockedExchangePointer(&sg_vehNtdllAvReturnAddress, returnAddress);
+		LONG suppressed = InterlockedIncrement(&sg_vehNtdllAvSuppressedCount);
+		if ((currentTick - sg_vehNtdllAvLastLogTick) < VEH_NTDLL_AV_LOG_WINDOW_MS)
+		{
+			return;
+		}
+
+		sg_vehNtdllAvLastLogTick = currentTick;
+		void* caller = InterlockedExchangePointer(&sg_vehNtdllAvCaller, nullptr);
+		void* ret = InterlockedExchangePointer(&sg_vehNtdllAvReturnAddress, nullptr);
+		suppressed = InterlockedExchange(&sg_vehNtdllAvSuppressedCount, 0);
+		LogMessage(LogLevel::Warn,
+			L"[VEH] first-chance ntdll AV at 0x%p suppressed=%ld caller=%p return=%p (caught by SEH, non-fatal)",
+			faultAddress, suppressed, caller, ret);
 	}
 
 	static LONG CALLBACK GlobalVectoredExceptionHandler(PEXCEPTION_POINTERS ep)
@@ -729,6 +809,9 @@ namespace CialloHook
 		{
 			/* ---- Deduplication ---- */
 			void* currentAddr = ep->ExceptionRecord->ExceptionAddress;
+			void* callerAddress = nullptr;
+			void* returnAddress = nullptr;
+			GetVehCallerAddresses(ep->ContextRecord, callerAddress, returnAddress);
 			DWORD currentTick = GetTickCount();
 			void* lastAddr = sg_vehLastAddr;
 
@@ -737,6 +820,8 @@ namespace CialloHook
 				LONG count = InterlockedIncrement(&sg_vehRepeatCount);
 				if (count > VEH_LOG_THRESHOLD)
 				{
+					InterlockedExchangePointer(&sg_vehSuppressedCaller, callerAddress);
+					InterlockedExchangePointer(&sg_vehSuppressedReturnAddress, returnAddress);
 					InterlockedIncrement(&sg_vehSuppressedCount);
 					return EXCEPTION_CONTINUE_SEARCH;
 				}
@@ -770,13 +855,15 @@ namespace CialloHook
 			 * crash dump/log later. */
 			if (code == EXCEPTION_ACCESS_VIOLATION && _wcsicmp(name, L"ntdll.dll") == 0)
 			{
+				LogNtdllAvThrottled(ep->ExceptionRecord->ExceptionAddress, callerAddress, returnAddress, currentTick);
 				return EXCEPTION_CONTINUE_SEARCH;
 			}
 
 			LogMessage(LogLevel::Error,
-				L"[VEH] Exception 0x%08X at 0x%p in %s (base+0x%X)",
+				L"[VEH] Exception 0x%08X at 0x%p in %s (base+0x%X) caller=%p return=%p",
 				code, ep->ExceptionRecord->ExceptionAddress, name,
-				faultModule ? (DWORD)((BYTE*)ep->ExceptionRecord->ExceptionAddress - (BYTE*)faultModule) : 0);
+				faultModule ? (DWORD)((BYTE*)ep->ExceptionRecord->ExceptionAddress - (BYTE*)faultModule) : 0,
+				callerAddress, returnAddress);
 
 #ifdef _M_IX86
 			auto* ctx = ep->ContextRecord;
@@ -1111,6 +1198,476 @@ namespace CialloHook
 		return DefWindowProcW(hWnd, msg, wParam, lParam);
 	}
 
+	/* ================================================================
+	 * WebM Splash — 透明 WebM 视频闪屏 + MCI 音频播放
+	 * 动态加载 ciallo_webm.dll，支持 VP8/VP9 + Alpha
+	 * 音频通过 MCI 播放（兼容 Win7）
+	 * ================================================================ */
+
+	/* MCI 动态加载 — 避免与 winmm.dll 代理模式的循环依赖 */
+	typedef MCIERROR (WINAPI *PFN_mciSendStringW)(LPCWSTR, LPWSTR, UINT, HWND);
+	static PFN_mciSendStringW sg_pfnMciSendStringW = nullptr;
+	static HMODULE sg_hRealWinMM = nullptr;
+
+	static PFN_mciSendStringW GetMciSendStringW()
+	{
+		if (sg_pfnMciSendStringW) return sg_pfnMciSendStringW;
+		/* 从系统目录加载真正的 winmm.dll */
+		wchar_t sysDir[MAX_PATH] = {};
+		GetSystemDirectoryW(sysDir, MAX_PATH);
+		wchar_t dllPath[MAX_PATH] = {};
+		_snwprintf_s(dllPath, _countof(dllPath), _TRUNCATE, L"%s\\winmm.dll", sysDir);
+		sg_hRealWinMM = LoadLibraryW(dllPath);
+		if (!sg_hRealWinMM) return nullptr;
+		sg_pfnMciSendStringW = (PFN_mciSendStringW)GetProcAddress(sg_hRealWinMM, "mciSendStringW");
+		return sg_pfnMciSendStringW;
+	}
+
+	static MCIERROR SafeMciSendStringW(LPCWSTR cmd, LPWSTR ret, UINT retLen, HWND hwndCallback)
+	{
+		PFN_mciSendStringW fn = GetMciSendStringW();
+		if (!fn) return MCIERR_DEVICE_NOT_INSTALLED;
+		return fn(cmd, ret, retLen, hwndCallback);
+	}
+
+	typedef void* CIALLO_WEBM_HANDLE_T;
+
+	typedef struct CialloWebMInfo_T
+	{
+		uint32_t width;
+		uint32_t height;
+		int      codec;
+		int      has_alpha;
+		double   duration_sec;
+		double   fps;
+		uint32_t frame_count_hint;
+	} CialloWebMInfo_T;
+
+	typedef struct CialloWebMFrame_T
+	{
+		const uint8_t* pixels;
+		uint32_t       stride;
+		uint32_t       width;
+		uint32_t       height;
+		uint32_t       duration_ms;
+		double         timestamp;
+		int            is_key;
+	} CialloWebMFrame_T;
+
+	typedef CIALLO_WEBM_HANDLE_T (*PFN_WebM_OpenMemory)(const uint8_t*, size_t);
+	typedef int  (*PFN_WebM_GetInfo)(CIALLO_WEBM_HANDLE_T, CialloWebMInfo_T*);
+	typedef int  (*PFN_WebM_ReadFrame)(CIALLO_WEBM_HANDLE_T, CialloWebMFrame_T*);
+	typedef int  (*PFN_WebM_Rewind)(CIALLO_WEBM_HANDLE_T);
+	typedef void (*PFN_WebM_Close)(CIALLO_WEBM_HANDLE_T);
+	typedef int  (*PFN_WebM_HasAudio)(CIALLO_WEBM_HANDLE_T);
+	typedef int  (*PFN_WebM_ExtractAudioWav)(CIALLO_WEBM_HANDLE_T, const wchar_t*);
+
+	struct WebMSplashAPI
+	{
+		HMODULE             hDll;
+		PFN_WebM_OpenMemory pfnOpen;
+		PFN_WebM_GetInfo    pfnGetInfo;
+		PFN_WebM_ReadFrame  pfnRead;
+		PFN_WebM_Rewind     pfnRewind;
+		PFN_WebM_Close      pfnClose;
+		PFN_WebM_HasAudio   pfnHasAudio;
+		PFN_WebM_ExtractAudioWav pfnExtractWav;
+	};
+
+	struct WebMSplashState
+	{
+		WebMSplashAPI       api;
+		CIALLO_WEBM_HANDLE_T decoder;
+		int W, H, posX, posY;
+		int interactionMode;
+		DWORD totalMs;       /* DurationMs 上限，0 = 不限制（播完为止） */
+		DWORD startTick;
+		bool isDragging;
+		int dragMouseStartX, dragMouseStartY;
+		int dragWindowStartX, dragWindowStartY;
+		bool hasAudio;
+		bool mciOpened;
+		wchar_t mciAlias[32];
+		wchar_t tempFilePath[MAX_PATH];
+		CialloWebMFrame_T curFrame;
+		bool frameReady;
+		bool finished;
+	};
+	static WebMSplashState g_ws = {};
+
+	static bool WebM_MCI_Open(WebMSplashState& ws)
+	{
+		if (ws.tempFilePath[0] == L'\0') return false;
+		wchar_t cmd[512] = {};
+		_snwprintf_s(cmd, _countof(cmd), _TRUNCATE,
+			L"open \"%s\" type waveaudio alias %s",
+			ws.tempFilePath, ws.mciAlias);
+		MCIERROR err = SafeMciSendStringW(cmd, nullptr, 0, nullptr);
+		if (err != 0) return false;
+		ws.mciOpened = true;
+		return true;
+	}
+
+	static void WebM_MCI_Play(WebMSplashState& ws)
+	{
+		if (!ws.mciOpened) return;
+		wchar_t cmd[128] = {};
+		_snwprintf_s(cmd, _countof(cmd), _TRUNCATE, L"play %s from 0", ws.mciAlias);
+		SafeMciSendStringW(cmd, nullptr, 0, nullptr);
+	}
+
+	static DWORD WebM_MCI_GetPositionMs(WebMSplashState& ws)
+	{
+		if (!ws.mciOpened) return 0;
+		wchar_t cmd[128] = {};
+		_snwprintf_s(cmd, _countof(cmd), _TRUNCATE, L"status %s position", ws.mciAlias);
+		wchar_t buf[64] = {};
+		if (SafeMciSendStringW(cmd, buf, _countof(buf), nullptr) != 0) return 0;
+		return (DWORD)_wtol(buf);
+	}
+
+	static void WebM_MCI_Close(WebMSplashState& ws)
+	{
+		if (!ws.mciOpened) return;
+		wchar_t cmd[128] = {};
+		_snwprintf_s(cmd, _countof(cmd), _TRUNCATE, L"close %s", ws.mciAlias);
+		SafeMciSendStringW(cmd, nullptr, 0, nullptr);
+		ws.mciOpened = false;
+	}
+
+	static void WebM_MCI_SetTimeFormatMs(WebMSplashState& ws)
+	{
+		if (!ws.mciOpened) return;
+		wchar_t cmd[128] = {};
+		_snwprintf_s(cmd, _countof(cmd), _TRUNCATE, L"set %s time format milliseconds", ws.mciAlias);
+		SafeMciSendStringW(cmd, nullptr, 0, nullptr);
+	}
+
+	static void WebMSplash_RenderFrame(HWND hWnd)
+	{
+		if (!g_ws.frameReady) return;
+		const CialloWebMFrame_T& frame = g_ws.curFrame;
+		int W = g_ws.W, H = g_ws.H;
+
+		BITMAPINFO bmi = {};
+		bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+		bmi.bmiHeader.biWidth = (LONG)W;
+		bmi.bmiHeader.biHeight = -(LONG)H;
+		bmi.bmiHeader.biPlanes = 1;
+		bmi.bmiHeader.biBitCount = 32;
+		bmi.bmiHeader.biCompression = BI_RGB;
+
+		HDC scDC = GetDC(nullptr);
+		HDC memDC = CreateCompatibleDC(scDC);
+		void* bits = nullptr;
+		HBITMAP hBmp = CreateDIBSection(scDC, &bmi, DIB_RGB_COLORS, &bits, nullptr, 0);
+		if (hBmp && bits)
+		{
+			if (frame.width == (uint32_t)W && frame.height == (uint32_t)H)
+			{
+				memcpy(bits, frame.pixels, frame.stride * frame.height);
+			}
+			else
+			{
+				/* 双线性缩放（最近邻保持性能） */
+				uint8_t* dst = (uint8_t*)bits;
+				for (int y = 0; y < H; ++y)
+				{
+					int srcY = y * (int)frame.height / H;
+					const uint8_t* srcRow = frame.pixels + srcY * frame.stride;
+					for (int x = 0; x < W; ++x)
+					{
+						int srcX = x * (int)frame.width / W;
+						const uint8_t* sp = srcRow + srcX * 4;
+						dst[0] = sp[0]; dst[1] = sp[1]; dst[2] = sp[2]; dst[3] = sp[3];
+						dst += 4;
+					}
+				}
+			}
+
+			HBITMAP old = (HBITMAP)SelectObject(memDC, hBmp);
+			BLENDFUNCTION bl = {};
+			bl.BlendOp = AC_SRC_OVER;
+			bl.SourceConstantAlpha = 255;
+			bl.AlphaFormat = AC_SRC_ALPHA;
+			POINT src = { 0, 0 };
+			SIZE sz = { (LONG)W, (LONG)H };
+			POINT pos = { (LONG)g_ws.posX, (LONG)g_ws.posY };
+			UpdateLayeredWindow(hWnd, scDC, &pos, &sz, memDC, &src, 0, &bl, ULW_ALPHA);
+			SelectObject(memDC, old);
+			DeleteObject(hBmp);
+		}
+		DeleteDC(memDC);
+		ReleaseDC(nullptr, scDC);
+	}
+
+	static LRESULT CALLBACK WebMSplashWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
+	{
+		switch (msg)
+		{
+		case WM_TIMER:
+			if (wParam == 1)
+			{
+				if (g_ws.finished)
+				{
+					KillTimer(hWnd, 1);
+					DestroyWindow(hWnd);
+					return 0;
+				}
+
+				/* 计算当前应显示的时间位置 */
+				DWORD elapsedMs;
+				if (g_ws.hasAudio && g_ws.mciOpened)
+				{
+					/* 音频同步：以 MCI 播放位置为准 */
+					elapsedMs = WebM_MCI_GetPositionMs(g_ws);
+				}
+				else
+				{
+					/* 无音频：使用系统时钟 */
+					elapsedMs = GetTickCount() - g_ws.startTick;
+				}
+
+				/* DurationMs 上限检查 */
+				if (g_ws.totalMs > 0 && elapsedMs >= g_ws.totalMs)
+				{
+					g_ws.finished = true;
+					KillTimer(hWnd, 1);
+					DestroyWindow(hWnd);
+					return 0;
+				}
+
+				/* 推进帧直到追上当前时间 */
+				double targetSec = (double)elapsedMs / 1000.0;
+				while (g_ws.frameReady && g_ws.curFrame.timestamp + (double)g_ws.curFrame.duration_ms / 1000.0 < targetSec)
+				{
+					int rc = g_ws.api.pfnRead(g_ws.decoder, &g_ws.curFrame);
+					if (rc != 0) /* CIALLO_WEBM_OK == 0 */
+					{
+						g_ws.finished = true;
+						KillTimer(hWnd, 1);
+						DestroyWindow(hWnd);
+						return 0;
+					}
+				}
+
+				WebMSplash_RenderFrame(hWnd);
+				return 0;
+			}
+			break;
+
+		case WM_LBUTTONDOWN:
+			if (g_ws.interactionMode == 2)
+			{
+				/* 点击跳过 */
+				g_ws.finished = true;
+				KillTimer(hWnd, 1);
+				DestroyWindow(hWnd);
+				return 0;
+			}
+			if (g_ws.interactionMode == 1)
+			{
+				g_ws.isDragging = true;
+				POINT cursorPos;
+				GetCursorPos(&cursorPos);
+				g_ws.dragMouseStartX = cursorPos.x;
+				g_ws.dragMouseStartY = cursorPos.y;
+				g_ws.dragWindowStartX = g_ws.posX;
+				g_ws.dragWindowStartY = g_ws.posY;
+				SetCapture(hWnd);
+				return 0;
+			}
+			break;
+
+		case WM_MOUSEMOVE:
+			if (g_ws.isDragging && g_ws.interactionMode == 1)
+			{
+				POINT cursorPos;
+				GetCursorPos(&cursorPos);
+				g_ws.posX = g_ws.dragWindowStartX + (cursorPos.x - g_ws.dragMouseStartX);
+				g_ws.posY = g_ws.dragWindowStartY + (cursorPos.y - g_ws.dragMouseStartY);
+				WebMSplash_RenderFrame(hWnd);
+				return 0;
+			}
+			break;
+
+		case WM_LBUTTONUP:
+			if (g_ws.isDragging)
+			{
+				g_ws.isDragging = false;
+				ReleaseCapture();
+				return 0;
+			}
+			break;
+
+		case WM_DESTROY:
+			PostQuitMessage(0);
+			return 0;
+		}
+		return DefWindowProcW(hWnd, msg, wParam, lParam);
+	}
+
+	static void RunWebMSplashAnimation(
+		HMODULE hWebM,
+		const uint8_t* webmData, size_t webmSize,
+		const SplashImageSettings& settings)
+	{
+		if (!hWebM) return;
+
+		memset(&g_ws, 0, sizeof(g_ws));
+		g_ws.api.hDll = hWebM;
+		g_ws.api.pfnOpen    = (PFN_WebM_OpenMemory)GetProcAddress(hWebM, "CialloWebM_OpenMemory");
+		g_ws.api.pfnGetInfo = (PFN_WebM_GetInfo)GetProcAddress(hWebM, "CialloWebM_GetInfo");
+		g_ws.api.pfnRead    = (PFN_WebM_ReadFrame)GetProcAddress(hWebM, "CialloWebM_ReadFrame");
+		g_ws.api.pfnRewind  = (PFN_WebM_Rewind)GetProcAddress(hWebM, "CialloWebM_Rewind");
+		g_ws.api.pfnClose   = (PFN_WebM_Close)GetProcAddress(hWebM, "CialloWebM_Close");
+		g_ws.api.pfnHasAudio = (PFN_WebM_HasAudio)GetProcAddress(hWebM, "CialloWebM_HasAudio");
+		g_ws.api.pfnExtractWav = (PFN_WebM_ExtractAudioWav)GetProcAddress(hWebM, "CialloWebM_ExtractAudioWav");
+
+		if (!g_ws.api.pfnOpen || !g_ws.api.pfnGetInfo || !g_ws.api.pfnRead || !g_ws.api.pfnClose)
+		{
+			return;
+		}
+
+		g_ws.decoder = g_ws.api.pfnOpen(webmData, webmSize);
+		if (!g_ws.decoder)
+		{
+			return;
+		}
+
+		CialloWebMInfo_T info;
+		g_ws.api.pfnGetInfo(g_ws.decoder, &info);
+
+		g_ws.W = settings.width > 0 ? settings.width : (int)info.width;
+		g_ws.H = settings.height > 0 ? settings.height : (int)info.height;
+		g_ws.interactionMode = settings.interactionMode;
+		g_ws.totalMs = settings.durationMs > 0 ? (DWORD)settings.durationMs : 0;
+		g_ws.finished = false;
+		g_ws.isDragging = false;
+		wcscpy_s(g_ws.mciAlias, L"ciallo_webm_audio");
+
+		/* 位置计算 */
+		const int MARGIN = 20;
+		int screenW = GetSystemMetrics(SM_CXSCREEN);
+		int screenH = GetSystemMetrics(SM_CYSCREEN);
+		switch (settings.position)
+		{
+		case 2: g_ws.posX = MARGIN; g_ws.posY = MARGIN; break;
+		case 3: g_ws.posX = screenW - g_ws.W - MARGIN; g_ws.posY = MARGIN; break;
+		case 4: g_ws.posX = MARGIN; g_ws.posY = screenH - g_ws.H - MARGIN; break;
+		case 5: g_ws.posX = screenW - g_ws.W - MARGIN; g_ws.posY = screenH - g_ws.H - MARGIN; break;
+		default: g_ws.posX = (screenW - g_ws.W) / 2; g_ws.posY = (screenH - g_ws.H) / 2; break;
+		}
+
+		/* 音频处理：如果 WebM 含有音频，解码为 WAV 并用 MCI 播放 */
+		g_ws.hasAudio = false;
+		g_ws.mciOpened = false;
+		g_ws.tempFilePath[0] = L'\0';
+
+		if (g_ws.api.pfnHasAudio && g_ws.api.pfnHasAudio(g_ws.decoder) &&
+		    g_ws.api.pfnExtractWav)
+		{
+			/* 生成临时 WAV 文件路径 */
+			wchar_t tempDir[MAX_PATH] = {};
+			if (GetTempPathW(MAX_PATH, tempDir))
+			{
+				wchar_t tempBase[MAX_PATH] = {};
+				if (GetTempFileNameW(tempDir, L"cwa", 0, tempBase))
+				{
+					DeleteFileW(tempBase);
+					_snwprintf_s(g_ws.tempFilePath, _countof(g_ws.tempFilePath),
+						_TRUNCATE, L"%s.wav", tempBase);
+					/* 调用 DLL 解码 Vorbis → PCM WAV */
+					int wavResult = g_ws.api.pfnExtractWav(g_ws.decoder, g_ws.tempFilePath);
+					if (wavResult == 0 && WebM_MCI_Open(g_ws))
+					{
+						WebM_MCI_SetTimeFormatMs(g_ws);
+						g_ws.hasAudio = true;
+					}
+					else
+					{
+						DeleteFileW(g_ws.tempFilePath);
+						g_ws.tempFilePath[0] = L'\0';
+					}
+				}
+			}
+		}
+
+		/* 预读第一帧 */
+		int rc = g_ws.api.pfnRead(g_ws.decoder, &g_ws.curFrame);
+		if (rc != 0)
+		{
+			/* 无法读取任何帧，清理退出 */
+			WebM_MCI_Close(g_ws);
+			if (g_ws.tempFilePath[0]) DeleteFileW(g_ws.tempFilePath);
+			g_ws.api.pfnClose(g_ws.decoder);
+			return;
+		}
+		g_ws.frameReady = true;
+
+		/* 创建分层窗口 */
+		HINSTANCE hInst = GetModuleHandleW(nullptr);
+		static const wchar_t* cls = L"CialloWebMSplashClass";
+		WNDCLASSEXW wc = {};
+		wc.cbSize = sizeof(wc);
+		wc.lpfnWndProc = WebMSplashWndProc;
+		wc.hInstance = hInst;
+		wc.hCursor = LoadCursorW(nullptr, settings.interactionMode == 1 ? IDC_SIZEALL : IDC_ARROW);
+		wc.lpszClassName = cls;
+		RegisterClassExW(&wc);
+
+		HWND hWnd = CreateWindowExW(
+			WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED,
+			cls, L"", WS_POPUP,
+			g_ws.posX, g_ws.posY, g_ws.W, g_ws.H,
+			nullptr, nullptr, hInst, nullptr);
+
+		if (!hWnd)
+		{
+			WebM_MCI_Close(g_ws);
+			if (g_ws.tempFilePath[0]) DeleteFileW(g_ws.tempFilePath);
+			g_ws.api.pfnClose(g_ws.decoder);
+			return;
+		}
+
+		/* 渲染第一帧并显示窗口 */
+		WebMSplash_RenderFrame(hWnd);
+		ShowWindow(hWnd, SW_SHOW);
+
+		/* 开始音频播放（与第一帧显示同步） */
+		g_ws.startTick = GetTickCount();
+		if (g_ws.hasAudio && g_ws.mciOpened)
+		{
+			WebM_MCI_Play(g_ws);
+		}
+
+		/* 约 60fps 定时器 */
+		SetTimer(hWnd, 1, 16, nullptr);
+
+		/* 消息循环 */
+		MSG msg;
+		while (GetMessageW(&msg, nullptr, 0, 0) > 0)
+		{
+			TranslateMessage(&msg);
+			DispatchMessageW(&msg);
+		}
+
+		/* 清理 */
+		UnregisterClassW(cls, hInst);
+		WebM_MCI_Close(g_ws);
+		if (g_ws.tempFilePath[0])
+		{
+			DeleteFileW(g_ws.tempFilePath);
+			g_ws.tempFilePath[0] = L'\0';
+		}
+		g_ws.api.pfnClose(g_ws.decoder);
+		g_ws.decoder = nullptr;
+	}
+
+	/* ================================================================
+	 * 原有 GDI+ 图片闪屏
+	 * ================================================================ */
+
 	static void RunSplashAnimation(const uint8_t* imgData, size_t imgSize, const SplashImageSettings& settings)
 	{
 		HGLOBAL hg = GlobalAlloc(GMEM_MOVEABLE, imgSize);
@@ -1217,6 +1774,12 @@ namespace CialloHook
 	{
 		__try { RunSplashAnimation(data, size, *pSettings); }
 		__except (EXCEPTION_EXECUTE_HANDLER) { /* splash failed, continue to game */ }
+	}
+
+	static void RunWebMSplashAnimationSafe(HMODULE hWebM, const uint8_t* data, size_t size, const SplashImageSettings* pSettings)
+	{
+		__try { RunWebMSplashAnimation(hWebM, data, size, *pSettings); }
+		__except (EXCEPTION_EXECUTE_HANDLER) { /* WebM splash failed, continue to game */ }
 	}
 
 	static bool ReadFileToVector(const std::wstring& path, std::vector<uint8_t>& out)
@@ -1337,7 +1900,86 @@ namespace CialloHook
 
 		if (!found || imgData.empty()) return;
 
-		RunSplashAnimationSafe(imgData.data(), imgData.size(), &ss);
+		/* 检测 EBML/WebM 魔术头: 0x1A 0x45 0xDF 0xA3 */
+		bool isWebM = false;
+		if (imgData.size() >= 4)
+		{
+			isWebM = (imgData[0] == 0x1A && imgData[1] == 0x45 &&
+			          imgData[2] == 0xDF && imgData[3] == 0xA3);
+		}
+
+		if (isWebM)
+		{
+			/* 搜索 ciallo_webm.dll: PatchFolder → CustomPAK → 游戏根目录 → 默认搜索路径 */
+			HMODULE hWebMDll = nullptr;
+			wchar_t tempDllPath[MAX_PATH] = {};
+			const wchar_t* dllName = L"ciallo_webm.dll";
+
+			/* 1. PatchFolder（编号越高优先级越高） */
+			for (size_t i = patchFolders.size(); !hWebMDll && i > 0; --i)
+			{
+				std::wstring dllPath = joinGame(patchFolders[i - 1]) + L"\\" + dllName;
+				hWebMDll = LoadLibraryW(dllPath.c_str());
+			}
+
+			/* 2. CustomPAK — 提取到临时文件后加载 */
+			for (size_t i = cpkFiles.size(); !hWebMDll && i > 0; --i)
+			{
+				std::shared_ptr<const std::vector<uint8_t>> dllData;
+				if (ResolveCustomPakArchiveData(joinGame(cpkFiles[i - 1]).c_str(), dllName, dllData)
+					&& dllData && !dllData->empty())
+				{
+					wchar_t td[MAX_PATH] = {};
+					if (GetTempPathW(MAX_PATH, td))
+					{
+						wchar_t tb[MAX_PATH] = {};
+						if (GetTempFileNameW(td, L"cwd", 0, tb))
+						{
+							DeleteFileW(tb);
+							_snwprintf_s(tempDllPath, _countof(tempDllPath), _TRUNCATE, L"%s.dll", tb);
+							HANDLE hf = CreateFileW(tempDllPath, GENERIC_WRITE, 0, nullptr,
+								CREATE_ALWAYS, FILE_ATTRIBUTE_TEMPORARY, nullptr);
+							if (hf != INVALID_HANDLE_VALUE)
+							{
+								DWORD bw = 0;
+								WriteFile(hf, dllData->data(), (DWORD)dllData->size(), &bw, nullptr);
+								CloseHandle(hf);
+								hWebMDll = LoadLibraryW(tempDllPath);
+								if (!hWebMDll) { DeleteFileW(tempDllPath); tempDllPath[0] = L'\0'; }
+							}
+						}
+					}
+				}
+			}
+
+			/* 3. 游戏根目录 */
+			if (!hWebMDll)
+			{
+				hWebMDll = LoadLibraryW((gameDir + dllName).c_str());
+			}
+
+			/* 4. 系统默认搜索路径 */
+			if (!hWebMDll)
+			{
+				hWebMDll = LoadLibraryW(dllName);
+			}
+
+			if (hWebMDll)
+			{
+				RunWebMSplashAnimationSafe(hWebMDll, imgData.data(), imgData.size(), &ss);
+				FreeLibrary(hWebMDll);
+			}
+
+			/* 清理从 CustomPAK 提取的临时 DLL 文件 */
+			if (tempDllPath[0] != L'\0')
+			{
+				DeleteFileW(tempDllPath);
+			}
+		}
+		else
+		{
+			RunSplashAnimationSafe(imgData.data(), imgData.size(), &ss);
+		}
 	}
 
 	static void FillTimeZone(const std::wstring& timezone, RTL_TIME_ZONE_INFORMATION& tzi)
@@ -1386,14 +2028,24 @@ namespace CialloHook
 			LogMessage(LogLevel::Debug, L"LocaleEmulator skipped: relaunch guard already set");
 			return false;
 		}
-		if (GetACP() == settings.localeEmulator.ansiCodePage)
+		const UINT currentAcp = GetACP();
+		if (currentAcp == settings.localeEmulator.ansiCodePage && settings.localeEmulator.hookUILanguageAPI == 0)
 		{
 			LogMessage(LogLevel::Debug, L"LocaleEmulator skipped: ACP already %u", settings.localeEmulator.ansiCodePage);
 			return false;
 		}
 
-		LogMessage(LogLevel::Info, L"LocaleEmulator relaunch required: ACP=%u -> %u",
-			GetACP(), settings.localeEmulator.ansiCodePage);
+		if (currentAcp == settings.localeEmulator.ansiCodePage)
+		{
+			LogMessage(LogLevel::Info, L"LocaleEmulator relaunch required: ACP already %u, HookUILanguageAPI=%u",
+				settings.localeEmulator.ansiCodePage,
+				settings.localeEmulator.hookUILanguageAPI);
+		}
+		else
+		{
+			LogMessage(LogLevel::Info, L"LocaleEmulator relaunch required: ACP=%u -> %u",
+				currentAcp, settings.localeEmulator.ansiCodePage);
+		}
 		SetEnvironmentVariableW(L"CIALLOHOOK_LE_ACTIVE", L"1");
 
 		if (settings.filePatch.customPakEnable && !settings.filePatch.customPakFiles.empty())

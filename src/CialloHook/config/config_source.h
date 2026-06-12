@@ -13,8 +13,8 @@ namespace CialloHook
 	// 3. Proxy 模式只需要修改 ApplyBuiltInConfig。
 	// 4. Loader 模式除了 ApplyBuiltInConfig 里的 settings.loadMode.mode = L"loader"，
 	//    还必须修改 ApplyBuiltInLauncherConfig 里的 targetExe 等启动器参数。
-	// 5. targetDllNames 只放“额外注入 DLL”；CialloLauncher 会自动再注入一次 CialloHook.dll，
-	//    所以通常不要把 CialloHook.dll 自己重复写进去。
+	// 5. targetDllNames 是启动器的完整注入列表；需要 CialloHook 功能时，
+	//    请显式写入 CialloHook.dll，也可以只写自己的 DLL。
 	// 6. 如果你只是想换一个外部 ini 路径，不想硬编码，保持 IniFile 并填写 iniPathOverride 即可。
 
 	enum class ConfigSourceMode

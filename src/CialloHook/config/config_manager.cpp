@@ -987,10 +987,19 @@ namespace CialloHook
 				AppendWarning(context, L"Registry.Enable 已开启，但未配置有效的 FileName_i / File，已自动关闭");
 			}
 
-			settings.registryBootstrap.enable = GetBoolOrDefault(context, L"RegistryBootstrap", L"Enable", false);
-				settings.registryBootstrap.cleanupOnExit = GetBoolOrDefault(context, L"RegistryBootstrap", L"CleanupOnExit", true);
-				settings.registryBootstrap.enableLog = GetBoolOrDefault(context, L"RegistryBootstrap", L"EnableLog", false);
-				settings.registryBootstrap.rules = GetIndexedRegistryBootstrapRules(context, L"RegistryBootstrap", L"RuleCount");
+			const wchar_t* registryBootstrapSection = L"RegistryBootstrap";
+			if (!context.ini.Has(L"RegistryBootstrap", L"Enable")
+				&& !context.ini.Has(L"RegistryBootstrap", L"RuleCount")
+				&& (context.ini.Has(L"Registry", L"RuleCount") || context.ini.Has(L"Registry", L"Key_0")))
+			{
+				registryBootstrapSection = L"Registry";
+				AppendWarning(context, L"RegistryBootstrap 配置看起来写在了 [Registry] 段内，已兼容读取；建议补上 [RegistryBootstrap] 段名");
+			}
+
+			settings.registryBootstrap.enable = GetBoolOrDefault(context, registryBootstrapSection, L"Enable", false);
+				settings.registryBootstrap.cleanupOnExit = GetBoolOrDefault(context, registryBootstrapSection, L"CleanupOnExit", true);
+				settings.registryBootstrap.enableLog = GetBoolOrDefault(context, registryBootstrapSection, L"EnableLog", false);
+				settings.registryBootstrap.rules = GetIndexedRegistryBootstrapRules(context, registryBootstrapSection, L"RuleCount");
 				if (settings.registryBootstrap.enable && settings.registryBootstrap.rules.empty())
 				{
 					settings.registryBootstrap.enable = false;

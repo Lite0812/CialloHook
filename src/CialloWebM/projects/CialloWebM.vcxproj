@@ -1,0 +1,275 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|Win32">
+      <Configuration>Debug</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|Win32">
+      <Configuration>Release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>17.0</VCProjectVersion>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectGuid>{C1A2B3D4-5E6F-7890-ABCD-1234567890AB}</ProjectGuid>
+    <RootNamespace>CialloWebM</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Label="Shared">
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <!-- Output settings -->
+  <PropertyGroup>
+    <PlatformFolder Condition="'$(Platform)'=='Win32'">x86</PlatformFolder>
+    <PlatformFolder Condition="'$(Platform)'!='Win32'">$(Platform)</PlatformFolder>
+    <OutDir>$(SolutionDir)out\bin\$(PlatformFolder)\$(Configuration)\</OutDir>
+    <IntDir>$(SolutionDir)out\obj\$(ProjectName)\$(PlatformFolder)\$(Configuration)\</IntDir>
+    <TargetName>ciallo_webm</TargetName>
+  </PropertyGroup>
+  <!-- Compile settings -->
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <PreprocessorDefinitions>CIALLO_WEBM_EXPORTS;WIN32;_CRT_SECURE_NO_WARNINGS;OPUS_BUILD;USE_ALLOCA;DISABLE_DEBUG_FLOAT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(SolutionDir)src\CialloWebM\include;$(SolutionDir)src\CialloWebM\decoder;$(SolutionDir)third\libvpx\include;$(SolutionDir)third\opus\include;$(SolutionDir)third\opus\src;$(SolutionDir)third\opus\celt;$(SolutionDir)third\opus\silk;$(SolutionDir)third\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>Level4</WarningLevel>
+      <TreatWarningAsError>false</TreatWarningAsError>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <Link>
+      <ModuleDefinitionFile>$(SolutionDir)src\CialloWebM\decoder\ciallo_webm.def</ModuleDefinitionFile>
+    </Link>
+  </ItemDefinitionGroup>
+  <!-- Debug specific -->
+  <ItemDefinitionGroup Condition="'$(Configuration)'=='Debug'">
+    <ClCompile>
+      <Optimization>Disabled</Optimization>
+      <PreprocessorDefinitions>_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <!-- Release specific -->
+  <ItemDefinitionGroup Condition="'$(Configuration)'=='Release'">
+    <ClCompile>
+      <Optimization>MaxSpeed</Optimization>
+      <PreprocessorDefinitions>NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+    </ClCompile>
+    <Link>
+      <OptimizeReferences>true</OptimizeReferences>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+    </Link>
+  </ItemDefinitionGroup>
+  <!-- Platform-specific lib paths -->
+  <ItemDefinitionGroup Condition="'$(Platform)'=='Win32'">
+    <Link>
+      <AdditionalLibraryDirectories>$(SolutionDir)third\libvpx\lib.X86;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>vpx.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Platform)'=='x64'">
+    <Link>
+      <AdditionalLibraryDirectories>$(SolutionDir)third\libvpx\lib.X64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>vpx.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <!-- Source files -->
+  <ItemGroup>
+    <ClCompile Include="..\decoder\ebml_parser.c" />
+    <ClCompile Include="..\decoder\webm_demuxer.c" />
+    <ClCompile Include="..\decoder\ciallo_webm_decoder.c" />
+    <ClCompile Include="..\decoder\vorbis_mini.c" />
+    <ClCompile Include="..\decoder\opus_audio.c" />
+    <ClCompile Include="..\..\..\third\opus\src\opus.c" />
+    <ClCompile Include="..\..\..\third\opus\src\opus_decoder.c" />
+    <ClCompile Include="..\..\..\third\opus\src\opus_encoder.c" />
+    <ClCompile Include="..\..\..\third\opus\src\extensions.c" />
+    <ClCompile Include="..\..\..\third\opus\src\opus_multistream.c" />
+    <ClCompile Include="..\..\..\third\opus\src\opus_multistream_encoder.c" />
+    <ClCompile Include="..\..\..\third\opus\src\opus_multistream_decoder.c" />
+    <ClCompile Include="..\..\..\third\opus\src\repacketizer.c" />
+    <ClCompile Include="..\..\..\third\opus\src\opus_projection_encoder.c" />
+    <ClCompile Include="..\..\..\third\opus\src\opus_projection_decoder.c" />
+    <ClCompile Include="..\..\..\third\opus\src\mapping_matrix.c" />
+    <ClCompile Include="..\..\..\third\opus\src\analysis.c" />
+    <ClCompile Include="..\..\..\third\opus\src\mlp.c" />
+    <ClCompile Include="..\..\..\third\opus\src\mlp_data.c" />
+    <ClCompile Include="..\..\..\third\opus\celt\bands.c" />
+    <ClCompile Include="..\..\..\third\opus\celt\celt.c" />
+    <ClCompile Include="..\..\..\third\opus\celt\celt_encoder.c" />
+    <ClCompile Include="..\..\..\third\opus\celt\celt_decoder.c" />
+    <ClCompile Include="..\..\..\third\opus\celt\cwrs.c" />
+    <ClCompile Include="..\..\..\third\opus\celt\entcode.c" />
+    <ClCompile Include="..\..\..\third\opus\celt\entdec.c" />
+    <ClCompile Include="..\..\..\third\opus\celt\entenc.c" />
+    <ClCompile Include="..\..\..\third\opus\celt\kiss_fft.c" />
+    <ClCompile Include="..\..\..\third\opus\celt\laplace.c" />
+    <ClCompile Include="..\..\..\third\opus\celt\mathops.c" />
+    <ClCompile Include="..\..\..\third\opus\celt\mdct.c" />
+    <ClCompile Include="..\..\..\third\opus\celt\modes.c" />
+    <ClCompile Include="..\..\..\third\opus\celt\pitch.c" />
+    <ClCompile Include="..\..\..\third\opus\celt\celt_lpc.c" />
+    <ClCompile Include="..\..\..\third\opus\celt\quant_bands.c" />
+    <ClCompile Include="..\..\..\third\opus\celt\rate.c" />
+    <ClCompile Include="..\..\..\third\opus\celt\vq.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\CNG.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\code_signs.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\init_decoder.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\decode_core.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\decode_frame.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\decode_parameters.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\decode_indices.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\decode_pulses.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\decoder_set_fs.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\dec_API.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\enc_API.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\encode_indices.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\encode_pulses.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\gain_quant.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\interpolate.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\LP_variable_cutoff.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\NLSF_decode.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\NSQ.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\NSQ_del_dec.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\PLC.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\shell_coder.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\tables_gain.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\tables_LTP.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\tables_NLSF_CB_NB_MB.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\tables_NLSF_CB_WB.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\tables_other.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\tables_pitch_lag.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\tables_pulses_per_block.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\VAD.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\control_audio_bandwidth.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\quant_LTP_gains.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\VQ_WMat_EC.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\HP_variable_cutoff.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\NLSF_encode.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\NLSF_VQ.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\NLSF_unpack.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\NLSF_del_dec_quant.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\process_NLSFs.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\stereo_LR_to_MS.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\stereo_MS_to_LR.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\check_control_input.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\control_SNR.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\init_encoder.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\control_codec.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\A2NLSF.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\ana_filt_bank_1.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\biquad_alt.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\bwexpander_32.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\bwexpander.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\debug.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\decode_pitch.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\inner_prod_aligned.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\lin2log.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\log2lin.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\LPC_analysis_filter.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\LPC_inv_pred_gain.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\table_LSF_cos.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\NLSF2A.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\NLSF_stabilize.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\NLSF_VQ_weights_laroia.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\pitch_est_tables.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\resampler.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\resampler_down2_3.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\resampler_down2.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\resampler_private_AR2.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\resampler_private_down_FIR.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\resampler_private_IIR_FIR.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\resampler_private_up2_HQ.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\resampler_rom.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\sigm_Q15.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\sort.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\sum_sqr_shift.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\stereo_decode_pred.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\stereo_encode_pred.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\stereo_find_predictor.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\stereo_quant_pred.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\LPC_fit.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\float\apply_sine_window_FLP.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\float\corrMatrix_FLP.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\float\encode_frame_FLP.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\float\find_LPC_FLP.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\float\find_LTP_FLP.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\float\find_pitch_lags_FLP.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\float\find_pred_coefs_FLP.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\float\LPC_analysis_filter_FLP.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\float\LTP_analysis_filter_FLP.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\float\LTP_scale_ctrl_FLP.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\float\noise_shape_analysis_FLP.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\float\process_gains_FLP.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\float\regularize_correlations_FLP.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\float\residual_energy_FLP.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\float\warped_autocorrelation_FLP.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\float\wrappers_FLP.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\float\autocorrelation_FLP.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\float\burg_modified_FLP.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\float\bwexpander_FLP.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\float\energy_FLP.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\float\inner_product_FLP.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\float\k2a_FLP.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\float\LPC_inv_pred_gain_FLP.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\float\pitch_analysis_core_FLP.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\float\scale_copy_vector_FLP.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\float\scale_vector_FLP.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\float\schur_FLP.c" />
+    <ClCompile Include="..\..\..\third\opus\silk\float\sort_FLP.c" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\include\ciallo_webm.h" />
+    <ClInclude Include="..\decoder\ebml_parser.h" />
+    <ClInclude Include="..\decoder\webm_demuxer.h" />
+    <ClInclude Include="..\decoder\vorbis_mini.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\decoder\ciallo_webm.def" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
+</Project>

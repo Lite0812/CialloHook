@@ -1,0 +1,12 @@
+LIBRARY "ciallo_webm"
+EXPORTS
+    CialloWebM_Open
+    CialloWebM_OpenMemory
+    CialloWebM_GetInfo
+    CialloWebM_ReadFrame
+    CialloWebM_Rewind
+    CialloWebM_Close
+    CialloWebM_HasAudio
+    CialloWebM_ExtractAudioWav
+    CialloWebM_GetLastError
+    CialloWebM_GetVersion
