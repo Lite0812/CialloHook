@@ -75,6 +75,14 @@ function Sync-HookIni {
                     Write-Host "[Warn] Missing extra file, skipped: $extraFile"
                 }
             }
+
+            # Copy ciallo_webm.dll if it was built
+            $webmDll = Join-Path $targetDir "ciallo_webm.dll"
+            if (Test-Path $webmDll) {
+                Write-Host "[Info] Output WebM DLL: $webmDll"
+            } else {
+                Write-Host "[Warn] ciallo_webm.dll not found in output, WebM splash will not be available"
+            }
         }
     }
 }

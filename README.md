@@ -111,9 +111,10 @@ TargetDLLName_0 = CialloHook.dll
 
 使用步骤：
 
-1. 把 `CialloLauncher.exe`、`CialloHook.dll`、配置文件放到游戏目录
+1. 把 `CialloLauncher.exe`、需要注入的 DLL、配置文件放到游戏目录
 2. 修改 `TargetEXE`
-3. 运行 `CialloLauncher.exe`
+3. 在 `TargetDLLName_i` 中写出完整注入列表；需要 CialloHook 功能时显式写入 `CialloHook.dll`
+4. 运行 `CialloLauncher.exe`
 
 适合：
 
@@ -175,7 +176,7 @@ Loader 模式要注意两点：
 - `ApplyBuiltInConfig` 里把 `settings.loadMode.mode` 改成 `L"loader"`
 - `ApplyBuiltInLauncherConfig` 里把 `targetExe` 改成目标游戏 EXE
 
-另外，`targetDllNames` 只用于“额外注入 DLL”；启动器本身会自动追加 `CialloHook.dll`，一般不要重复填写。
+另外，`targetDllNames` / `TargetDLLName_i` 是启动器的完整注入列表；启动器只注入这里写出的 DLL，不会自动追加 `CialloHook.dll`。如果要使用 CialloHook 功能，请显式填写 `CialloHook.dll`；也可以只填写其它 DLL，把 CialloLauncher 当作通用启动器使用。
 
 ## 常见用法
 
