@@ -44,11 +44,18 @@ function Sync-HookIni {
         Join-Path $Root ("out\bin\" + $buildPlatform + "\" + $Configuration)
     )
 
-    $extraRuntimeFiles = @(
-        (Join-Path $Root "subs_cn_jp.json")
-        (Join-Path $Root "third\LE\LoaderDll.dll")
-        (Join-Path $Root "third\LE\LocaleEmulator.dll")
-    )
+    $extraRuntimeFiles = [System.Collections.Generic.List[string]]::new()
+    $extraRuntimeFiles.Add((Join-Path $Root "subs_cn_jp.json"))
+
+    if ($Platform -eq "x86") {
+        $extraRuntimeFiles.Add((Join-Path $Root "third\LE\LoaderDll.dll"))
+        $extraRuntimeFiles.Add((Join-Path $Root "third\LE\LocaleEmulator.dll"))
+        $extraRuntimeFiles.Add((Join-Path $Root "third\LEP\LoaderDll_x86.dll"))
+        $extraRuntimeFiles.Add((Join-Path $Root "third\LEP\LocaleEmulatorPlus_x86.dll"))
+    } else {
+        $extraRuntimeFiles.Add((Join-Path $Root "third\LEP\LoaderDll_x64.dll"))
+        $extraRuntimeFiles.Add((Join-Path $Root "third\LEP\LocaleEmulatorPlus_x64.dll"))
+    }
 
     foreach ($targetDir in $targets) {
         if (Test-Path $targetDir) {
@@ -59,18 +66,12 @@ function Sync-HookIni {
             if (Test-Path $builtDll) {
                 Copy-Item -Path $builtDll -Destination (Join-Path $targetDir "version.dll") -Force
                 Copy-Item -Path $builtDll -Destination (Join-Path $targetDir "winmm.dll") -Force
-                Write-Host "[Info] Output proxy: $targetDir\version.dll"
-                Write-Host "[Info] Output proxy: $targetDir\winmm.dll"
             }
-            Write-Host "[Info] Output config: $targetDir\CialloHook.ini"
-            Write-Host "[Info] Output config: $targetDir\version.ini"
-            Write-Host "[Info] Output config: $targetDir\winmm.ini"
 
             foreach ($extraFile in $extraRuntimeFiles) {
                 if (Test-Path $extraFile) {
                     $name = Split-Path -Leaf $extraFile
                     Copy-Item -Path $extraFile -Destination (Join-Path $targetDir $name) -Force
-                    Write-Host "[Info] Output extra: $targetDir\$name"
                 } else {
                     Write-Host "[Warn] Missing extra file, skipped: $extraFile"
                 }
@@ -79,10 +80,58 @@ function Sync-HookIni {
             # Copy ciallo_webm.dll if it was built
             $webmDll = Join-Path $targetDir "ciallo_webm.dll"
             if (Test-Path $webmDll) {
-                Write-Host "[Info] Output WebM DLL: $webmDll"
             } else {
                 Write-Host "[Warn] ciallo_webm.dll not found in output, WebM splash will not be available"
             }
+        }
+    }
+}
+
+function Split-OutputArtifacts {
+    param(
+        [string]$Root,
+        [string]$Configuration,
+        [string]$Platform
+    )
+
+    $buildPlatform = if ($Platform -eq "x86") { "x86" } else { "x64" }
+    $targetDir = Join-Path $Root ("out\bin\" + $buildPlatform + "\" + $Configuration)
+    if (-not (Test-Path $targetDir)) {
+        return
+    }
+
+    $extraDir = Join-Path $targetDir "_extra"
+    $keepExtensions = @(".exe", ".dll", ".ini", ".json")
+    $movedCount = 0
+
+    if (Test-Path $extraDir) {
+        Get-ChildItem -Path $extraDir -File -ErrorAction SilentlyContinue | ForEach-Object {
+            $extension = $_.Extension.ToLowerInvariant()
+            if ($keepExtensions -contains $extension) {
+                Move-Item -Path $_.FullName -Destination (Join-Path $targetDir $_.Name) -Force
+            }
+        }
+    }
+
+    Get-ChildItem -Path $targetDir -File -ErrorAction SilentlyContinue | ForEach-Object {
+        $extension = $_.Extension.ToLowerInvariant()
+        if ($keepExtensions -contains $extension) {
+            return
+        }
+
+        if (-not (Test-Path $extraDir)) {
+            New-Item -ItemType Directory -Path $extraDir -Force | Out-Null
+        }
+
+        Move-Item -Path $_.FullName -Destination (Join-Path $extraDir $_.Name) -Force
+        $movedCount++
+    }
+
+    if ($movedCount -eq 0 -and (Test-Path $extraDir)) {
+        $remainingFiles = Get-ChildItem -Path $extraDir -File -ErrorAction SilentlyContinue
+        $remainingDirs = Get-ChildItem -Path $extraDir -Directory -ErrorAction SilentlyContinue
+        if (@($remainingFiles).Count -eq 0 -and @($remainingDirs).Count -eq 0) {
+            Remove-IfExists $extraDir
         }
     }
 }
@@ -155,12 +204,6 @@ if ($Target -eq "ciallohook") { $project = "src\CialloHook\CialloHook.vcxproj" }
 if ($Target -eq "ciallolauncher") { $project = "src\CialloLauncher\CialloLauncher.vcxproj" }
 if ($Target -eq "runtime") { $project = "src\RuntimeCore\RuntimeCore.vcxproj" }
 
-Write-Host "[Info] MSBuild: $msbuild"
-Write-Host "[Info] Target: $Target"
-Write-Host "[Info] Configuration: $Configuration"
-Write-Host "[Info] Platform: $Platform"
-Write-Host "[Info] Action: $msTarget"
-
 function Invoke-Build {
     param([string]$TargetName)
     $msbuildParallelArg = if ($Platform -eq "x86") { "/m:1" } else { "/m" }
@@ -186,6 +229,8 @@ if ($exitCode -ne 0) {
 if ($Target -eq "all" -or $Target -eq "ciallohook") {
     Sync-HookIni -Root $root -Configuration $Configuration -Platform $Platform
 }
+
+Split-OutputArtifacts -Root $root -Configuration $Configuration -Platform $Platform
 
 Cleanup-Intermediate -Root $root
 

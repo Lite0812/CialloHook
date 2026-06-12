@@ -74,6 +74,7 @@
       <CompileAs>CompileAsC</CompileAs>
       <WarningLevel>Level4</WarningLevel>
       <TreatWarningAsError>false</TreatWarningAsError>
+      <DisableSpecificWarnings>4100;4114;4189;4244;4293;4310;4701;%(DisableSpecificWarnings)</DisableSpecificWarnings>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
