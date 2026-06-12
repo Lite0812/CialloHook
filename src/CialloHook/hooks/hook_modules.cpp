@@ -29,6 +29,13 @@ using namespace Rut::HookX;
 #define CIALLOHOOK_VERBOSE_INFO_LOG(...) LogMessage(LogLevel::Info, __VA_ARGS__)
 #endif
 
+#ifndef WDA_MONITOR
+#define WDA_MONITOR 0x00000001
+#endif
+#ifndef WDA_EXCLUDEFROMCAPTURE
+#define WDA_EXCLUDEFROMCAPTURE 0x00000011
+#endif
+
 namespace CialloHook
 {
 	namespace HookModules
@@ -1492,6 +1499,7 @@ namespace CialloHook
 			}
 
 			EnableCnJpMap(false);
+			EnableFontHookVerboseLog(settings.fontHookVerboseLog);
 			EnableCnJpMapVerboseLog(settings.cnJpMapVerboseLog);
 			SetCnJpMapEncoding(settings.cnJpMapReadEncoding);
 			if (settings.enableCnJpMap)
@@ -1558,13 +1566,14 @@ namespace CialloHook
 				redirectFromFontNames.empty() ? nullptr : redirectFromFontNames.data(),
 				redirectToFontNames.empty() ? nullptr : redirectToFontNames.data(),
 				redirectFromFontNames.size());
-			LogMessage(LogLevel::Info, L"ApplyFontHooks: font=%s charset=0x%X spoof=%d (0x%X->0x%X) unlock=%d cnJpMap=%s verboseLog=%d cnJpMapCp=%u",
+			LogMessage(LogLevel::Info, L"ApplyFontHooks: font=%s charset=0x%X spoof=%d (0x%X->0x%X) unlock=%d fontHitLog=%d cnJpMap=%s verboseLog=%d cnJpMapCp=%u",
 				fontName.c_str(),
 				settings.charset,
 				settings.enableCharsetSpoof ? 1 : 0,
 				settings.spoofFromCharset,
 				settings.spoofToCharset,
 				settings.unlockFontSelection ? 1 : 0,
+				settings.fontHookVerboseLog ? 1 : 0,
 				settings.enableCnJpMap ? L"enabled" : L"disabled",
 				settings.cnJpMapVerboseLog ? 1 : 0,
 				settings.cnJpMapReadEncoding);
@@ -1867,7 +1876,6 @@ namespace CialloHook
 			if (settings.hookDWriteCreateFactory)
 			{
 				logHookAttach(L"HookDWriteCreateFactory", HookDWriteCreateFactory());
-					logHookAttach(L"HookD2D1CreateFactory", HookD2D1CreateFactory());
 			}
 
 			if (settings.hookGdipCreateFontFamilyFromName)
@@ -2110,6 +2118,45 @@ namespace CialloHook
 				(uint32_t)settings.rules.size(), settings.titleMode, titleReadCp, titleWriteCp, settings.enableVerboseLog ? 1 : 0);
 		}
 
+		void ApplyScreenCaptureProtectionHooks(const ScreenCaptureProtectionSettings& settings)
+		{
+			if (!settings.enable)
+			{
+				CIALLOHOOK_VERBOSE_INFO_LOG(L"ApplyScreenCaptureProtectionHooks: disabled");
+				return;
+			}
+
+			DWORD affinity = settings.mode == L"monitor" ? WDA_MONITOR : WDA_EXCLUDEFROMCAPTURE;
+			SetScreenCaptureProtectionConfig(true, affinity,
+				settings.fallbackToMonitor,
+				settings.protectToolWindows,
+				settings.protectOwnedWindows,
+				settings.enableVerboseLog);
+
+			const bool detourBatchStarted = BeginDetourBatch();
+			bool hookOk = HookScreenCaptureProtectionAPIs(2);
+			if (!CommitDetourBatchIfStarted(detourBatchStarted, L"ApplyScreenCaptureProtectionHooks detour batch"))
+			{
+				LogMessage(LogLevel::Warn, L"ApplyScreenCaptureProtectionHooks: detour batch commit failed");
+				hookOk = false;
+			}
+
+			if (settings.applyExistingWindows)
+			{
+				ApplyScreenCaptureProtectionToExistingWindows();
+			}
+
+			LogMessage(hookOk ? LogLevel::Info : LogLevel::Warn,
+				L"ApplyScreenCaptureProtectionHooks: %s mode=%s affinity=0x%08X fallback=%d existing=%d tool=%d owned=%d verbose=%d",
+				hookOk ? L"ok" : L"partial/failed",
+				settings.mode.c_str(), affinity,
+				settings.fallbackToMonitor ? 1 : 0,
+				settings.applyExistingWindows ? 1 : 0,
+				settings.protectToolWindows ? 1 : 0,
+				settings.protectOwnedWindows ? 1 : 0,
+				settings.enableVerboseLog ? 1 : 0);
+		}
+
 		static bool NeedsTextApiHooks(const AppSettings& settings)
 		{
 			const bool hasTextRules = !settings.textReplace.rules.empty();
@@ -2179,6 +2226,9 @@ namespace CialloHook
 			{
 				LogMessage(LogLevel::Debug, L"ApplyTextHooks: no text/font work, skip text api hooks");
 			}
+
+			CIALLOHOOK_VERBOSE_INFO_LOG(L"Apply hooks: screen capture protection");
+			ApplyScreenCaptureProtectionHooks(settings.screenCaptureProtection);
 
 			CIALLOHOOK_VERBOSE_INFO_LOG(L"Apply hooks: window title");
 			ApplyWindowTitleHooks(settings.windowTitle);

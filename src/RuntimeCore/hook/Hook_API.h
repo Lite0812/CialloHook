@@ -34,7 +34,8 @@ namespace Rut
 			const wchar_t* const* redirectFromFontNames,
 			const wchar_t* const* redirectToFontNames,
 			size_t redirectCount);
-		
+		void EnableFontHookVerboseLog(bool enable);
+
 		bool HookCreateFontA(const uint32_t uiCharSet, bool enableCharsetSpoof, uint32_t spoofFromCharSet, uint32_t spoofToCharSet, const char* cpFontName, int iHeight = 0, int iWidth = 0, int iWeight = 0, float fScale = 1.0f, float fSpacingScale = 1.0f, float fGlyphAspectRatio = 1.0f, int iGlyphOffsetX = 0, int iGlyphOffsetY = 0, int iMetricsOffsetLeft = 0, int iMetricsOffsetRight = 0, int iMetricsOffsetTop = 0, int iMetricsOffsetBottom = 0);
 		bool HookCreateFontIndirectA(const uint32_t uiCharSet, bool enableCharsetSpoof, uint32_t spoofFromCharSet, uint32_t spoofToCharSet, const char* cpFontName, int iHeight = 0, int iWidth = 0, int iWeight = 0, float fScale = 1.0f, float fSpacingScale = 1.0f, float fGlyphAspectRatio = 1.0f, int iGlyphOffsetX = 0, int iGlyphOffsetY = 0, int iMetricsOffsetLeft = 0, int iMetricsOffsetRight = 0, int iMetricsOffsetTop = 0, int iMetricsOffsetBottom = 0);
 		
@@ -178,6 +179,9 @@ namespace Rut
 		void EnableStartupWindowGate(bool enable, uint32_t bypassThreadId);
 		void ReleaseStartupWindowGate();
 		bool HookWindowTitleAPIs(int mode = 2);
+		void SetScreenCaptureProtectionConfig(bool enable, uint32_t affinity, bool fallbackToMonitor, bool protectToolWindows, bool protectOwnedWindows, bool verboseLog);
+		bool HookScreenCaptureProtectionAPIs(int mode = 2);
+		void ApplyScreenCaptureProtectionToExistingWindows();
 		int ShowExternalStartupConsentDialog(const wchar_t* title, const wchar_t* body);
 
 		// Siglus XOR 密钥提取功能

@@ -1858,6 +1858,9 @@ namespace CialloHook
 		wchar_t cpkEnabled[16] = {};
 		GetPrivateProfileStringW(L"FilePatch", L"CustomPakEnable", L"false", cpkEnabled, 16, context.iniPath.c_str());
 		bool useCpk = (lstrcmpiW(cpkEnabled, L"true") == 0 || lstrcmpiW(cpkEnabled, L"1") == 0 || lstrcmpiW(cpkEnabled, L"yes") == 0);
+		wchar_t cpkLogEnabled[16] = {};
+		GetPrivateProfileStringW(L"FilePatch", L"EnableLog", L"false", cpkLogEnabled, 16, context.iniPath.c_str());
+		bool enableCpkLog = (lstrcmpiW(cpkLogEnabled, L"true") == 0 || lstrcmpiW(cpkLogEnabled, L"1") == 0 || lstrcmpiW(cpkLogEnabled, L"yes") == 0);
 		if (useCpk)
 		{
 			int cpkCount = GetPrivateProfileIntW(L"FilePatch", L"CustomPakCount", -1, context.iniPath.c_str());
@@ -1878,6 +1881,17 @@ namespace CialloHook
 				GetPrivateProfileStringW(L"FilePatch", L"CustomPakName_0", L"patch.cpk", value, MAX_PATH, context.iniPath.c_str());
 				if (value[0] != L'\0') cpkFiles.push_back(value);
 			}
+		}
+
+		if (useCpk && !cpkFiles.empty())
+		{
+			std::vector<const wchar_t*> pakPaths;
+			pakPaths.reserve(cpkFiles.size());
+			for (const std::wstring& pakFile : cpkFiles)
+			{
+				pakPaths.push_back(pakFile.c_str());
+			}
+			ConfigureCustomPakVFS(true, pakPaths.data(), pakPaths.size(), enableCpkLog);
 		}
 
 		std::vector<uint8_t> imgData;
@@ -2475,8 +2489,9 @@ namespace CialloHook
 				MessageBoxW(NULL, wideWarning.c_str(), L"CialloHook", MB_OK | MB_ICONWARNING);
 			}
 			bool hasFontHook = !settings.font.font.empty();
-			LogMessage(LogLevel::Info, L"Feature flags: Font=%d Text=%d Title=%d FilePatch=%d CodePage=%d AliceSystem3x=%d RioShiina=%d(mode=%d)",
+			LogMessage(LogLevel::Info, L"Feature flags: Font=%d Text=%d Title=%d ScreenCaptureProtection=%d(%s) FilePatch=%d CodePage=%d AliceSystem3x=%d RioShiina=%d(mode=%d)",
 				hasFontHook ? 1 : 0, settings.textReplace.rules.empty() ? 0 : 1, settings.windowTitle.rules.empty() ? 0 : 1,
+				settings.screenCaptureProtection.enable ? 1 : 0, settings.screenCaptureProtection.mode.c_str(),
 				settings.filePatch.enable ? 1 : 0, settings.codePage.enable ? 1 : 0,
 				settings.aliceSystem3x.enable ? 1 : 0, settings.rioShiina.enable ? 1 : 0, settings.rioShiina.mode);
 			LogMessage(LogLevel::Info, L"Engine cache flags: MED=%d MAJIRO=%d",

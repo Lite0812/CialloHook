@@ -20,6 +20,9 @@ extern "C" {
 /* ---- 最大支持的轨道数 ---- */
 #define WEBM_MAX_TRACKS 8
 
+/* ---- 单个 laced Block 最多包含的帧数 ---- */
+#define WEBM_MAX_LACED_FRAMES 256
+
 /* ---- 编解码器 ID ---- */
 typedef enum WebmCodecType
 {
@@ -86,6 +89,11 @@ typedef struct WebmDemuxer
     int64_t         cluster_ts;       /* 当前 Cluster 的时间戳 */
     EbmlStream      cluster_stream;   /* 当前 Cluster 的内容子流 */
     int             in_cluster;       /* 是否正在读取 Cluster */
+
+    /* laced Block 拆分后的待返回帧 */
+    WebmPacket      pending_packets[WEBM_MAX_LACED_FRAMES];
+    int             pending_count;
+    int             pending_index;
 
     /* 错误信息 */
     char            error_msg[256];

@@ -14,7 +14,8 @@
 		static volatile LONG sg_enableStartupWindowGate = 0;
 		static DWORD sg_startupWindowGateBypassThreadId = 0;
 		static HANDLE sg_startupWindowGateEvent = nullptr;
-		static bool sg_windowTitleApiHooksAttached = false;
+		static bool sg_windowLifecycleApiHooksAttached = false;
+		static bool sg_windowTitleTextApiHooksAttached = false;
 		static pShowWindow rawShowWindow = ShowWindow;
 		static pShowWindowAsync rawShowWindowAsync = ShowWindowAsync;
 		static pSetWindowPos rawSetWindowPos = SetWindowPos;
@@ -22,6 +23,30 @@
 		static CRITICAL_SECTION sg_startupWindowGateLock;
 		static INIT_ONCE sg_startupWindowGateLockInitOnce = INIT_ONCE_STATIC_INIT;
 		static std::vector<HWND> sg_startupDeferredWindows;
+
+#ifndef WDA_NONE
+#define WDA_NONE 0x00000000
+#endif
+#ifndef WDA_MONITOR
+#define WDA_MONITOR 0x00000001
+#endif
+#ifndef WDA_EXCLUDEFROMCAPTURE
+#define WDA_EXCLUDEFROMCAPTURE 0x00000011
+#endif
+
+		typedef BOOL(WINAPI* pSetWindowDisplayAffinityDynamic)(HWND hWnd, DWORD dwAffinity);
+		static volatile LONG sg_enableScreenCaptureProtection = 0;
+		static DWORD sg_screenCaptureProtectionAffinity = WDA_EXCLUDEFROMCAPTURE;
+		static bool sg_screenCaptureProtectionFallbackToMonitor = true;
+		static bool sg_screenCaptureProtectionProtectToolWindows = false;
+		static bool sg_screenCaptureProtectionProtectOwnedWindows = false;
+		static bool sg_screenCaptureProtectionVerboseLog = false;
+		static bool sg_screenCaptureProtectionApiUnavailableLogged = false;
+		static pSetWindowDisplayAffinityDynamic sg_pSetWindowDisplayAffinity = nullptr;
+		static INIT_ONCE sg_setWindowDisplayAffinityInitOnce = INIT_ONCE_STATIC_INIT;
+		static HANDLE sg_screenCaptureProtectionEventThread = nullptr;
+		static HWINEVENTHOOK sg_screenCaptureProtectionCreateHook = nullptr;
+		static HWINEVENTHOOK sg_screenCaptureProtectionShowHook = nullptr;
 
 		// 添加窗口标题替换规则
 		void AddWindowTitleRule(const wchar_t* originalTitle, const wchar_t* newTitle)
@@ -300,6 +325,189 @@
 			}
 		}
 
+		static bool IsScreenCaptureProtectionEnabled()
+		{
+			return InterlockedCompareExchange(&sg_enableScreenCaptureProtection, 0, 0) != 0;
+		}
+
+		static BOOL CALLBACK InitSetWindowDisplayAffinityOnce(PINIT_ONCE initOnce, PVOID parameter, PVOID* context)
+		{
+			UNREFERENCED_PARAMETER(initOnce);
+			UNREFERENCED_PARAMETER(parameter);
+			UNREFERENCED_PARAMETER(context);
+
+			HMODULE user32 = GetModuleHandleW(L"user32.dll");
+			if (!user32)
+			{
+				user32 = LoadLibraryW(L"user32.dll");
+			}
+			if (user32)
+			{
+				sg_pSetWindowDisplayAffinity = reinterpret_cast<pSetWindowDisplayAffinityDynamic>(GetProcAddress(user32, "SetWindowDisplayAffinity"));
+			}
+			return TRUE;
+		}
+
+		static pSetWindowDisplayAffinityDynamic GetSetWindowDisplayAffinityProc()
+		{
+			InitOnceExecuteOnce(&sg_setWindowDisplayAffinityInitOnce, InitSetWindowDisplayAffinityOnce, nullptr, nullptr);
+			if (!sg_pSetWindowDisplayAffinity && !sg_screenCaptureProtectionApiUnavailableLogged)
+			{
+				sg_screenCaptureProtectionApiUnavailableLogged = true;
+				LogMessage(LogLevel::Warn, L"ScreenCaptureProtection: SetWindowDisplayAffinity unavailable");
+			}
+			return sg_pSetWindowDisplayAffinity;
+		}
+
+		static bool IsScreenCaptureProtectionCandidate(HWND hWnd)
+		{
+			if (!hWnd || !IsWindow(hWnd))
+			{
+				return false;
+			}
+
+			DWORD processId = 0;
+			GetWindowThreadProcessId(hWnd, &processId);
+			if (processId != GetCurrentProcessId())
+			{
+				return false;
+			}
+
+			LONG_PTR style = GetWindowLongPtrW(hWnd, GWL_STYLE);
+			if ((style & WS_CHILD) != 0)
+			{
+				return false;
+			}
+
+			if (!sg_screenCaptureProtectionProtectOwnedWindows && GetWindow(hWnd, GW_OWNER) != nullptr)
+			{
+				return false;
+			}
+
+			LONG_PTR exStyle = GetWindowLongPtrW(hWnd, GWL_EXSTYLE);
+			if (!sg_screenCaptureProtectionProtectToolWindows && (exStyle & WS_EX_TOOLWINDOW) != 0)
+			{
+				return false;
+			}
+
+			return true;
+		}
+
+		static bool TrySetWindowDisplayAffinityWithFallback(HWND hWnd, DWORD affinity, DWORD& appliedAffinity, DWORD& lastError)
+		{
+			appliedAffinity = affinity;
+			lastError = ERROR_SUCCESS;
+			pSetWindowDisplayAffinityDynamic setWindowDisplayAffinity = GetSetWindowDisplayAffinityProc();
+			if (!setWindowDisplayAffinity)
+			{
+				lastError = ERROR_PROC_NOT_FOUND;
+				return false;
+			}
+
+			SetLastError(ERROR_SUCCESS);
+			if (setWindowDisplayAffinity(hWnd, affinity))
+			{
+				return true;
+			}
+			lastError = GetLastError();
+
+			if (affinity == WDA_EXCLUDEFROMCAPTURE && sg_screenCaptureProtectionFallbackToMonitor)
+			{
+				appliedAffinity = WDA_MONITOR;
+				SetLastError(ERROR_SUCCESS);
+				if (setWindowDisplayAffinity(hWnd, WDA_MONITOR))
+				{
+					lastError = ERROR_SUCCESS;
+					return true;
+				}
+				lastError = GetLastError();
+			}
+			return false;
+		}
+
+		static bool TryApplyScreenCaptureProtection(HWND hWnd, const wchar_t* reason)
+		{
+			if (!IsScreenCaptureProtectionEnabled() || !IsScreenCaptureProtectionCandidate(hWnd))
+			{
+				return false;
+			}
+
+			DWORD appliedAffinity = sg_screenCaptureProtectionAffinity;
+			DWORD lastError = ERROR_SUCCESS;
+			bool ok = TrySetWindowDisplayAffinityWithFallback(hWnd, sg_screenCaptureProtectionAffinity, appliedAffinity, lastError);
+			if (ok)
+			{
+				if (sg_screenCaptureProtectionVerboseLog)
+				{
+					LogMessage(LogLevel::Info, L"ScreenCaptureProtection: applied hwnd=%p affinity=0x%08X reason=%s",
+						hWnd, appliedAffinity, reason ? reason : L"(unknown)");
+				}
+				return true;
+			}
+
+			LogMessage(sg_screenCaptureProtectionVerboseLog ? LogLevel::Warn : LogLevel::Debug,
+				L"ScreenCaptureProtection: failed hwnd=%p affinity=0x%08X fallback=%d gle=%lu reason=%s",
+				hWnd, sg_screenCaptureProtectionAffinity, sg_screenCaptureProtectionFallbackToMonitor ? 1 : 0,
+				(unsigned long)lastError, reason ? reason : L"(unknown)");
+			return false;
+		}
+
+		void SetScreenCaptureProtectionConfig(bool enable, uint32_t affinity, bool fallbackToMonitor, bool protectToolWindows, bool protectOwnedWindows, bool verboseLog)
+		{
+			sg_screenCaptureProtectionAffinity = affinity == WDA_MONITOR ? WDA_MONITOR : WDA_EXCLUDEFROMCAPTURE;
+			sg_screenCaptureProtectionFallbackToMonitor = fallbackToMonitor;
+			sg_screenCaptureProtectionProtectToolWindows = protectToolWindows;
+			sg_screenCaptureProtectionProtectOwnedWindows = protectOwnedWindows;
+			sg_screenCaptureProtectionVerboseLog = verboseLog;
+			InterlockedExchange(&sg_enableScreenCaptureProtection, enable ? 1 : 0);
+			LogMessage(LogLevel::Info, L"ScreenCaptureProtection: enable=%d affinity=0x%08X fallback=%d tool=%d owned=%d verbose=%d",
+				enable ? 1 : 0, sg_screenCaptureProtectionAffinity, fallbackToMonitor ? 1 : 0,
+				protectToolWindows ? 1 : 0, protectOwnedWindows ? 1 : 0, verboseLog ? 1 : 0);
+		}
+
+		struct ScreenCaptureProtectionEnumContext
+		{
+			uint32_t observed = 0;
+			uint32_t candidates = 0;
+			uint32_t applied = 0;
+		};
+
+		static BOOL CALLBACK EnumScreenCaptureProtectionProc(HWND hWnd, LPARAM lParam)
+		{
+			ScreenCaptureProtectionEnumContext* context = reinterpret_cast<ScreenCaptureProtectionEnumContext*>(lParam);
+			if (!context)
+			{
+				return TRUE;
+			}
+			context->observed++;
+			if (!IsScreenCaptureProtectionCandidate(hWnd))
+			{
+				return TRUE;
+			}
+			context->candidates++;
+			if (TryApplyScreenCaptureProtection(hWnd, L"EnumWindows"))
+			{
+				context->applied++;
+			}
+			return TRUE;
+		}
+
+		void ApplyScreenCaptureProtectionToExistingWindows()
+		{
+			if (!IsScreenCaptureProtectionEnabled())
+			{
+				return;
+			}
+			ScreenCaptureProtectionEnumContext context = {};
+			if (!EnumWindows(EnumScreenCaptureProtectionProc, reinterpret_cast<LPARAM>(&context)))
+			{
+				LogMessage(LogLevel::Warn, L"ScreenCaptureProtection: EnumWindows failed, gle=%lu", GetLastError());
+				return;
+			}
+			LogMessage(LogLevel::Info, L"ScreenCaptureProtection: existing windows observed=%u candidates=%u applied=%u",
+				context.observed, context.candidates, context.applied);
+		}
+
 		void EnableStartupWindowGate(bool enable, uint32_t bypassThreadId)
 		{
 			EnsureStartupWindowGateLock();
@@ -489,6 +697,7 @@
 			{
 				RememberStartupDeferredWindow(hWnd);
 			}
+			TryApplyScreenCaptureProtection(hWnd, L"CreateWindowExA");
 			if (hasUnicodeReplacement)
 			{
 				ApplyWindowTitleUnicode(hWnd, newTitleW);
@@ -535,6 +744,7 @@
 					{
 						RememberStartupDeferredWindow(hWnd);
 					}
+					TryApplyScreenCaptureProtection(hWnd, L"CreateWindowExW");
 					TryApplyWindowTitle(hWnd);
 					return hWnd;
 				}
@@ -544,6 +754,7 @@
 			{
 				RememberStartupDeferredWindow(hWnd);
 			}
+			TryApplyScreenCaptureProtection(hWnd, L"CreateWindowExW");
 			TryApplyWindowTitle(hWnd);
 			return hWnd;
 		}
@@ -572,6 +783,10 @@
 				RememberStartupDeferredWindow(hWnd);
 				return TRUE;
 			}
+			if (IsStartupShowCommand(nCmdShow))
+			{
+				TryApplyScreenCaptureProtection(hWnd, L"ShowWindow");
+			}
 			return rawShowWindow(hWnd, nCmdShow);
 		}
 		BOOL WINAPI newShowWindow(HWND hWnd, int nCmdShow)
@@ -596,6 +811,10 @@
 			{
 				RememberStartupDeferredWindow(hWnd);
 				return TRUE;
+			}
+			if (IsStartupShowCommand(nCmdShow))
+			{
+				TryApplyScreenCaptureProtection(hWnd, L"ShowWindowAsync");
 			}
 			return rawShowWindowAsync(hWnd, nCmdShow);
 		}
@@ -622,6 +841,10 @@
 				RememberStartupDeferredWindow(hWnd);
 				uFlags &= ~SWP_SHOWWINDOW;
 				uFlags |= SWP_HIDEWINDOW;
+			}
+			else if ((uFlags & SWP_SHOWWINDOW) != 0)
+			{
+				TryApplyScreenCaptureProtection(hWnd, L"SetWindowPos");
 			}
 			return rawSetWindowPos(hWnd, hWndInsertAfter, X, Y, cx, cy, uFlags);
 		}
@@ -747,6 +970,7 @@
 			{
 				return;
 			}
+			TryApplyScreenCaptureProtection(hWnd, L"WinEvent");
 			TryApplyWindowTitle(hWnd);
 		}
 
@@ -835,6 +1059,72 @@
 		}
 		//*********END Hook SetWindowTextW*********
 
+		static bool EnsureWindowLifecycleApiHooksAttached(const wchar_t* owner)
+		{
+			if (sg_windowLifecycleApiHooksAttached)
+			{
+				LogMessage(LogLevel::Info, L"%s: lifecycle api hooks already attached", owner ? owner : L"WindowLifecycle");
+				return true;
+			}
+			bool hasFailed = false;
+			hasFailed |= HookCreateWindowExA();
+			hasFailed |= HookCreateWindowExW();
+			hasFailed |= HookShowWindow();
+			hasFailed |= HookShowWindowAsync();
+			hasFailed |= HookSetWindowPos();
+			if (!hasFailed)
+			{
+				sg_windowLifecycleApiHooksAttached = true;
+			}
+			return !hasFailed;
+		}
+
+		static bool EnsureWindowTitleTextApiHooksAttached()
+		{
+			if (sg_windowTitleTextApiHooksAttached)
+			{
+				LogMessage(LogLevel::Info, L"HookWindowTitleAPIs: text api hooks already attached");
+				return true;
+			}
+			bool hasFailed = false;
+			hasFailed |= HookSetWindowTextA();
+			hasFailed |= HookSetWindowTextW();
+			if (!hasFailed)
+			{
+				sg_windowTitleTextApiHooksAttached = true;
+			}
+			return !hasFailed;
+		}
+
+		bool HookScreenCaptureProtectionAPIs(int mode)
+		{
+			if (!IsScreenCaptureProtectionEnabled())
+			{
+				LogMessage(LogLevel::Info, L"HookScreenCaptureProtectionAPIs: disabled");
+				return true;
+			}
+			if (mode < 0 || mode > 2)
+			{
+				mode = 2;
+			}
+
+			bool useApiHook = (mode == 0 || mode == 2);
+			bool useEventHook = (mode == 1 || mode == 2);
+			bool hasFailed = false;
+			if (useApiHook)
+			{
+				hasFailed |= !EnsureWindowLifecycleApiHooksAttached(L"HookScreenCaptureProtectionAPIs");
+			}
+			if (useEventHook)
+			{
+				hasFailed |= !StartWindowTitleEventMode();
+			}
+			bool ok = !hasFailed;
+			LogMessage(ok ? LogLevel::Info : LogLevel::Error, L"HookScreenCaptureProtectionAPIs: %s mode=%d api=%d event=%d",
+				ok ? L"ok" : L"failed", mode, useApiHook ? 1 : 0, useEventHook ? 1 : 0);
+			return ok;
+		}
+
 		// 启用窗口标题Hook
 		bool HookWindowTitleAPIs(int mode)
 		{
@@ -858,24 +1148,8 @@
 			bool hasFailed = false;
 			if (useApiHook)
 			{
-				if (!sg_windowTitleApiHooksAttached)
-				{
-					hasFailed |= HookCreateWindowExA();
-					hasFailed |= HookCreateWindowExW();
-					hasFailed |= HookShowWindow();
-					hasFailed |= HookShowWindowAsync();
-					hasFailed |= HookSetWindowPos();
-					hasFailed |= HookSetWindowTextA();
-					hasFailed |= HookSetWindowTextW();
-					if (!hasFailed)
-					{
-						sg_windowTitleApiHooksAttached = true;
-					}
-				}
-				else
-				{
-					LogMessage(LogLevel::Info, L"HookWindowTitleAPIs: api hooks already attached");
-				}
+				hasFailed |= !EnsureWindowLifecycleApiHooksAttached(L"HookWindowTitleAPIs");
+				hasFailed |= !EnsureWindowTitleTextApiHooksAttached();
 			}
 			if (useEventHook)
 			{

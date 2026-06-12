@@ -86,6 +86,7 @@ namespace CialloHook
 		bool hookLoadLibraryW = true;
 		bool hookLoadLibraryExW = true;
 		bool unlockFontSelection = false;
+		bool fontHookVerboseLog = false;
 		bool enableCnJpMap = false;
 		bool cnJpMapVerboseLog = false;
 		std::wstring cnJpMapJson = L"subs_cn_jp.json";
@@ -173,6 +174,17 @@ namespace CialloHook
 		uint32_t encoding = 0;
 		uint32_t readEncoding = 0;
 		uint32_t writeEncoding = 0;
+		bool enableVerboseLog = false;
+	};
+
+	struct ScreenCaptureProtectionSettings
+	{
+		bool enable = false;
+		std::wstring mode = L"exclude";
+		bool fallbackToMonitor = true;
+		bool applyExistingWindows = true;
+		bool protectToolWindows = false;
+		bool protectOwnedWindows = false;
 		bool enableVerboseLog = false;
 	};
 
@@ -359,6 +371,7 @@ namespace CialloHook
 		FontSettings font;
 		TextReplaceSettings textReplace;
 		WindowTitleSettings windowTitle;
+		ScreenCaptureProtectionSettings screenCaptureProtection;
 		StartupMessageSettings startupMessage;
 		SplashImageSettings splashImage;
 		SiglusKeyExtractSettings siglusKeyExtract;

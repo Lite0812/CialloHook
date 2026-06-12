@@ -10,6 +10,7 @@ namespace CialloHook
 		void ApplyFontHooks(const FontSettings& settings);
 		void ApplyTextHooks(const TextReplaceSettings& settings, const EnginePatchSettings& enginePatchSettings);
 		void ApplyWindowTitleHooks(const WindowTitleSettings& settings);
+		void ApplyScreenCaptureProtectionHooks(const ScreenCaptureProtectionSettings& settings);
 		void ApplyEarlyStartupHooks(const AppSettings& settings, uint32_t bypassThreadId);
 			void ApplyPostStartupHooks(const AppSettings& settings);
 			void TryApplyBinaryPatchesBeforeEntry(const BinaryPatchSettings& settings);

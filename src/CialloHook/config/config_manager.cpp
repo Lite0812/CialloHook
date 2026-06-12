@@ -652,6 +652,7 @@ namespace CialloHook
 			settings.font.hookLoadLibraryW = GetBoolOrDefault(context, fontSection, L"HookLoadLibraryW", hookGroupLateLoad);
 			settings.font.hookLoadLibraryExW = GetBoolOrDefault(context, fontSection, L"HookLoadLibraryExW", hookGroupLateLoad);
 			settings.font.unlockFontSelection = GetBoolOrDefault(context, fontSection, L"UnlockFontSelection", true);
+			settings.font.fontHookVerboseLog = GetBoolOrDefault(context, fontSection, L"FontHookVerboseLog", false);
 			if (context.ini.Has(fontSection, L"EnableCnJpMap"))
 			{
 				settings.font.enableCnJpMap = GetBoolOrDefault(context, fontSection, L"EnableCnJpMap", false);
@@ -860,6 +861,33 @@ namespace CialloHook
 					settings.windowTitle.rules.emplace_back(L"*", title);
 				}
 			}
+
+			settings.screenCaptureProtection.enable = GetBoolOrDefault(context, L"ScreenCaptureProtection", L"Enable", false);
+			settings.screenCaptureProtection.mode = Rut::StrX::Trim(GetStringOrDefault(context, L"ScreenCaptureProtection", L"Mode", L"exclude"));
+			std::transform(settings.screenCaptureProtection.mode.begin(), settings.screenCaptureProtection.mode.end(), settings.screenCaptureProtection.mode.begin(),
+				[](wchar_t ch) { return static_cast<wchar_t>(std::towlower(ch)); });
+			if (settings.screenCaptureProtection.mode == L"excludefromcapture"
+				|| settings.screenCaptureProtection.mode == L"exclude_from_capture"
+				|| settings.screenCaptureProtection.mode == L"wda_exclude")
+			{
+				settings.screenCaptureProtection.mode = L"exclude";
+			}
+			else if (settings.screenCaptureProtection.mode == L"wda_monitor")
+			{
+				settings.screenCaptureProtection.mode = L"monitor";
+			}
+			else if (settings.screenCaptureProtection.mode != L"exclude"
+				&& settings.screenCaptureProtection.mode != L"monitor")
+			{
+				std::wstring invalidMode = settings.screenCaptureProtection.mode;
+				settings.screenCaptureProtection.mode = L"exclude";
+				AppendWarning(context, L"ScreenCaptureProtection.Mode = \"" + invalidMode + L"\" 无效，已回退为 exclude");
+			}
+			settings.screenCaptureProtection.fallbackToMonitor = GetBoolOrDefault(context, L"ScreenCaptureProtection", L"FallbackToMonitor", true);
+			settings.screenCaptureProtection.applyExistingWindows = GetBoolOrDefault(context, L"ScreenCaptureProtection", L"ApplyExistingWindows", true);
+			settings.screenCaptureProtection.protectToolWindows = GetBoolOrDefault(context, L"ScreenCaptureProtection", L"ProtectToolWindows", false);
+			settings.screenCaptureProtection.protectOwnedWindows = GetBoolOrDefault(context, L"ScreenCaptureProtection", L"ProtectOwnedWindows", false);
+			settings.screenCaptureProtection.enableVerboseLog = GetBoolOrDefault(context, L"ScreenCaptureProtection", L"EnableVerboseLog", false);
 
 			settings.startupMessage.enable = GetBoolOrDefault(context, L"StartupMessage", L"Enable", false);
 			settings.startupMessage.style = GetIntOrDefault(context, L"StartupMessage", L"Style", 1, 1, 2);

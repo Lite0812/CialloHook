@@ -300,18 +300,54 @@ headers_done:
  *
  * SimpleBlock 格式：
  *   [TrackNumber VINT] [Timestamp int16 big-endian] [Flags uint8]
- *   [帧数据...]
+ *   [Lacing header（可选）] [帧数据...]
  *
  * Flags:
  *   bit 7 (0x80) = keyframe
- *   bit 3-2 (0x06) = lacing type (00=none, 01=Xiph, 11=EBML, 10=fixed)
+ *   bit 2-1 (0x06) = lacing type (00=none, 01=Xiph, 10=fixed, 11=EBML)
  *   bit 0 (0x01) = discardable
  * ================================================================ */
 
-static int parse_simple_block(WebmDemuxer* d, const uint8_t* bdata, size_t bsize,
-                              int64_t cluster_ts, WebmPacket* pkt,
-                              const uint8_t* alpha_data, size_t alpha_size,
-                              int64_t block_duration)
+typedef struct WebmBlockHeader
+{
+    uint64_t       track_number;
+    int16_t        rel_ts;
+    uint8_t        flags;
+    int            lacing;
+    const uint8_t* payload;
+    size_t         payload_size;
+} WebmBlockHeader;
+
+static void clear_pending_packets(WebmDemuxer* d)
+{
+    d->pending_count = 0;
+    d->pending_index = 0;
+}
+
+static int pop_pending_packet(WebmDemuxer* d, WebmPacket* pkt)
+{
+    if (d->pending_index < d->pending_count)
+    {
+        *pkt = d->pending_packets[d->pending_index++];
+        if (d->pending_index >= d->pending_count)
+        {
+            clear_pending_packets(d);
+        }
+        return 1;
+    }
+    clear_pending_packets(d);
+    return 0;
+}
+
+static int size_add_overflow(size_t a, size_t b, size_t* out)
+{
+    if (b > (size_t)-1 - a) return 1;
+    *out = a + b;
+    return 0;
+}
+
+static int parse_block_header(const uint8_t* bdata, size_t bsize,
+                              WebmBlockHeader* out)
 {
     EbmlStream bs;
     ebml_stream_init(&bs, bdata, bsize);
@@ -323,42 +359,235 @@ static int parse_simple_block(WebmDemuxer* d, const uint8_t* bdata, size_t bsize
         return 0;
     }
 
-    /* 相对时间戳：2 字节有符号大端序 */
-    int16_t rel_ts = (int16_t)((bs.data[bs.pos] << 8) | bs.data[bs.pos + 1]);
+    out->track_number = (uint64_t)track_num;
+    out->rel_ts = (int16_t)((bs.data[bs.pos] << 8) | bs.data[bs.pos + 1]);
     bs.pos += 2;
 
-    uint8_t flags = bs.data[bs.pos];
-    bs.pos += 1;
+    out->flags = bs.data[bs.pos++];
+    out->lacing = (out->flags >> 1) & 0x03;
+    out->payload = bs.data + bs.pos;
+    out->payload_size = ebml_stream_remaining(&bs);
+    return 1;
+}
 
-    /* 只处理无 lacing 的情况（WebM 闪屏场景通常不需要 lacing） */
-    int lacing = (flags >> 1) & 0x03;
-    if (lacing != 0)
+static int64_t read_ebml_lace_sint(EbmlStream* s, int* ok)
+{
+    int bytes = 0;
+    int64_t raw = ebml_read_vint(s, &bytes);
+    if (raw < 0 || bytes <= 0)
     {
-        /* TODO: 支持 lacing 需要额外解析帧大小表 */
-        /* 对于闪屏用途，没有 lacing 的 WebM 是常见的 */
-        return 0; /* 跳过有 lacing 的 Block */
+        if (ok) *ok = 0;
+        return 0;
     }
 
-    /* 帧数据 = Block 剩余部分 */
-    size_t frame_size = ebml_stream_remaining(&bs);
-    const uint8_t* frame_data = bs.data + bs.pos;
+    int bits = bytes * 7;
+    int64_t bias = ((int64_t)1 << (bits - 1)) - 1;
+    if (ok) *ok = 1;
+    return raw - bias;
+}
 
-    pkt->track_number = (uint64_t)track_num;
+static int assign_frame_pointers(EbmlStream* ls, const size_t* sizes,
+                                 const uint8_t** frame_data,
+                                 size_t* frame_size, int frame_count)
+{
+    const uint8_t* p = ls->data + ls->pos;
+    const uint8_t* end = ls->data + ls->size;
+
+    for (int i = 0; i < frame_count; ++i)
+    {
+        if (sizes[i] > (size_t)(end - p)) return 0;
+        frame_data[i] = p;
+        frame_size[i] = sizes[i];
+        p += sizes[i];
+    }
+    return p == end;
+}
+
+static int parse_xiph_lacing(EbmlStream* ls, const uint8_t** frame_data,
+                             size_t* frame_size, int frame_count)
+{
+    size_t sizes[WEBM_MAX_LACED_FRAMES];
+    size_t total_known = 0;
+    memset(sizes, 0, sizeof(sizes));
+
+    for (int i = 0; i < frame_count - 1; ++i)
+    {
+        size_t sz = 0;
+        for (;;)
+        {
+            if (ebml_stream_remaining(ls) < 1) return 0;
+            uint8_t v = ls->data[ls->pos++];
+            if (size_add_overflow(sz, v, &sz)) return 0;
+            if (v != 255) break;
+        }
+        sizes[i] = sz;
+        if (size_add_overflow(total_known, sz, &total_known)) return 0;
+    }
+
+    size_t remaining = ebml_stream_remaining(ls);
+    if (total_known > remaining) return 0;
+    sizes[frame_count - 1] = remaining - total_known;
+
+    return assign_frame_pointers(ls, sizes, frame_data, frame_size, frame_count);
+}
+
+static int parse_fixed_lacing(EbmlStream* ls, const uint8_t** frame_data,
+                              size_t* frame_size, int frame_count)
+{
+    size_t remaining = ebml_stream_remaining(ls);
+    if (frame_count <= 0 || remaining % (size_t)frame_count != 0) return 0;
+
+    size_t sz = remaining / (size_t)frame_count;
+    for (int i = 0; i < frame_count; ++i)
+    {
+        frame_data[i] = ls->data + ls->pos + (size_t)i * sz;
+        frame_size[i] = sz;
+    }
+    return 1;
+}
+
+static int parse_ebml_lacing(EbmlStream* ls, const uint8_t** frame_data,
+                             size_t* frame_size, int frame_count)
+{
+    size_t sizes[WEBM_MAX_LACED_FRAMES];
+    size_t total_known = 0;
+    memset(sizes, 0, sizeof(sizes));
+
+    int vint_bytes = 0;
+    int64_t first_size = ebml_read_vint(ls, &vint_bytes);
+    if (first_size < 0) return 0;
+
+    sizes[0] = (size_t)first_size;
+    total_known = sizes[0];
+
+    int64_t prev = first_size;
+    for (int i = 1; i < frame_count - 1; ++i)
+    {
+        int ok = 0;
+        int64_t delta = read_ebml_lace_sint(ls, &ok);
+        if (!ok) return 0;
+
+        int64_t cur = prev + delta;
+        if (cur < 0) return 0;
+
+        sizes[i] = (size_t)cur;
+        if (size_add_overflow(total_known, sizes[i], &total_known)) return 0;
+        prev = cur;
+    }
+
+    size_t remaining = ebml_stream_remaining(ls);
+    if (total_known > remaining) return 0;
+    sizes[frame_count - 1] = remaining - total_known;
+
+    return assign_frame_pointers(ls, sizes, frame_data, frame_size, frame_count);
+}
+
+static int parse_block_frames(const WebmBlockHeader* bh,
+                              const uint8_t** frame_data,
+                              size_t* frame_size, int* frame_count)
+{
+    if (bh->lacing == 0)
+    {
+        frame_data[0] = bh->payload;
+        frame_size[0] = bh->payload_size;
+        *frame_count = 1;
+        return 1;
+    }
+
+    if (bh->payload_size < 1) return 0;
+
+    EbmlStream ls;
+    ebml_stream_init(&ls, bh->payload, bh->payload_size);
+    int count = (int)ls.data[ls.pos++] + 1;
+    if (count <= 1 || count > WEBM_MAX_LACED_FRAMES) return 0;
+
+    int ok = 0;
+    switch (bh->lacing)
+    {
+    case 1:
+        ok = parse_xiph_lacing(&ls, frame_data, frame_size, count);
+        break;
+    case 2:
+        ok = parse_fixed_lacing(&ls, frame_data, frame_size, count);
+        break;
+    case 3:
+        ok = parse_ebml_lacing(&ls, frame_data, frame_size, count);
+        break;
+    default:
+        ok = 0;
+        break;
+    }
+
+    if (!ok) return 0;
+    *frame_count = count;
+    return 1;
+}
+
+static void fill_packet_from_frame(WebmDemuxer* d, WebmPacket* pkt,
+                                   const WebmBlockHeader* bh,
+                                   const uint8_t* frame_data,
+                                   size_t frame_size,
+                                   int frame_index,
+                                   int frame_count,
+                                   const uint8_t* alpha_data,
+                                   size_t alpha_size,
+                                   int64_t block_duration)
+{
+    int64_t base_ts = ((int64_t)bh->rel_ts + d->cluster_ts) * (int64_t)d->timestamp_scale;
+    int64_t duration = block_duration;
+
+    if (frame_count > 1 && block_duration > 0)
+    {
+        int64_t per_frame = block_duration / frame_count;
+        base_ts += per_frame * frame_index;
+        duration = (frame_index == frame_count - 1)
+            ? (block_duration - per_frame * (frame_count - 1))
+            : per_frame;
+    }
+
+    pkt->track_number = bh->track_number;
     pkt->data = frame_data;
     pkt->data_size = frame_size;
-    pkt->timestamp_ns = (cluster_ts + rel_ts) * (int64_t)d->timestamp_scale;
-    pkt->is_key = (flags & 0x80) ? 1 : 0;
-    pkt->alpha_data = alpha_data;
-    pkt->alpha_size = alpha_size;
-    pkt->duration_ns = block_duration;
+    pkt->timestamp_ns = base_ts;
+    pkt->is_key = (bh->flags & 0x80) ? 1 : 0;
+    pkt->alpha_data = (frame_count == 1) ? alpha_data : NULL;
+    pkt->alpha_size = (frame_count == 1) ? alpha_size : 0;
+    pkt->duration_ns = duration;
+}
 
-    return 1;
+static int queue_block_packets(WebmDemuxer* d, const uint8_t* bdata, size_t bsize,
+                               int64_t cluster_ts,
+                               const uint8_t* alpha_data, size_t alpha_size,
+                               int64_t block_duration)
+{
+    WebmBlockHeader bh;
+    const uint8_t* frame_data[WEBM_MAX_LACED_FRAMES];
+    size_t frame_size[WEBM_MAX_LACED_FRAMES];
+    int frame_count = 0;
+
+    clear_pending_packets(d);
+
+    if (!parse_block_header(bdata, bsize, &bh)) return 0;
+    if (!parse_block_frames(&bh, frame_data, frame_size, &frame_count)) return 0;
+
+    for (int i = 0; i < frame_count; ++i)
+    {
+        memset(&d->pending_packets[i], 0, sizeof(d->pending_packets[i]));
+        fill_packet_from_frame(d, &d->pending_packets[i], &bh,
+                               frame_data[i], frame_size[i], i, frame_count,
+                               alpha_data, alpha_size, block_duration);
+    }
+
+    d->pending_count = frame_count;
+    d->pending_index = 0;
+    (void)cluster_ts; /* cluster_ts is read from d->cluster_ts for consistency */
+    return frame_count > 0;
 }
 
 /* ---- BlockGroup 解析（包含 BlockAdditions） ---- */
 
-static int parse_block_group(WebmDemuxer* d, EbmlStream* bgsub,
-                             int64_t cluster_ts, WebmPacket* pkt)
+static int queue_block_group_packets(WebmDemuxer* d, EbmlStream* bgsub,
+                                     int64_t cluster_ts)
 {
     const uint8_t* block_data = NULL;
     size_t block_size = 0;
@@ -443,8 +672,8 @@ static int parse_block_group(WebmDemuxer* d, EbmlStream* bgsub,
         return 0;
     }
 
-    return parse_simple_block(d, block_data, block_size, cluster_ts, pkt,
-                              alpha_data, alpha_size, block_duration);
+    return queue_block_packets(d, block_data, block_size, cluster_ts,
+                               alpha_data, alpha_size, block_duration);
 }
 
 /* ================================================================
@@ -500,6 +729,14 @@ int webm_demuxer_read_packet(WebmDemuxer* demuxer, WebmPacket* pkt)
 
     for (;;)
     {
+        while (pop_pending_packet(demuxer, pkt))
+        {
+            if (pkt->track_number == vtrack->track_number)
+            {
+                return 1;
+            }
+        }
+
         /* 如果正在 Cluster 内部，继续读取 Block */
         if (demuxer->in_cluster)
         {
@@ -525,14 +762,15 @@ int webm_demuxer_read_packet(WebmDemuxer* demuxer, WebmPacket* pkt)
                                                             (size_t)child.size);
                     if (!bdata) continue;
 
-                    memset(pkt, 0, sizeof(*pkt));
-                    if (parse_simple_block(demuxer, bdata, (size_t)child.size,
-                                           demuxer->cluster_ts, pkt,
-                                           NULL, 0, 0))
+                    if (queue_block_packets(demuxer, bdata, (size_t)child.size,
+                                            demuxer->cluster_ts, NULL, 0, 0))
                     {
-                        if (pkt->track_number == vtrack->track_number)
+                        while (pop_pending_packet(demuxer, pkt))
                         {
-                            return 1; /* 成功返回一个视频包 */
+                            if (pkt->track_number == vtrack->track_number)
+                            {
+                                return 1; /* 成功返回一个视频包 */
+                            }
                         }
                     }
                     continue;
@@ -543,14 +781,16 @@ int webm_demuxer_read_packet(WebmDemuxer* demuxer, WebmPacket* pkt)
                     EbmlStream bgsub;
                     ebml_sub_stream(cs, &child, &bgsub);
 
-                    memset(pkt, 0, sizeof(*pkt));
-                    if (parse_block_group(demuxer, &bgsub, demuxer->cluster_ts,
-                                          pkt))
+                    if (queue_block_group_packets(demuxer, &bgsub,
+                                                  demuxer->cluster_ts))
                     {
                         ebml_skip_element(cs, &child);
-                        if (pkt->track_number == vtrack->track_number)
+                        while (pop_pending_packet(demuxer, pkt))
                         {
-                            return 1;
+                            if (pkt->track_number == vtrack->track_number)
+                            {
+                                return 1;
+                            }
                         }
                     }
                     else
@@ -612,6 +852,7 @@ int webm_demuxer_rewind(WebmDemuxer* demuxer)
     demuxer->segment_stream.pos = demuxer->cluster_start;
     demuxer->in_cluster = 0;
     demuxer->cluster_ts = 0;
+    clear_pending_packets(demuxer);
     return 1;
 }
 
@@ -640,6 +881,11 @@ int webm_demuxer_read_next_packet(WebmDemuxer* demuxer, WebmPacket* pkt)
 
     for (;;)
     {
+        if (pop_pending_packet(demuxer, pkt))
+        {
+            return 1;
+        }
+
         if (demuxer->in_cluster)
         {
             EbmlStream* cs = &demuxer->cluster_stream;
@@ -658,9 +904,9 @@ int webm_demuxer_read_next_packet(WebmDemuxer* demuxer, WebmPacket* pkt)
                 {
                     const uint8_t* bdata = ebml_read_binary(cs, (size_t)child.size);
                     if (!bdata) continue;
-                    memset(pkt, 0, sizeof(*pkt));
-                    if (parse_simple_block(demuxer, bdata, (size_t)child.size,
-                                           demuxer->cluster_ts, pkt, NULL, 0, 0))
+                    if (queue_block_packets(demuxer, bdata, (size_t)child.size,
+                                            demuxer->cluster_ts, NULL, 0, 0) &&
+                        pop_pending_packet(demuxer, pkt))
                     {
                         return 1; /* 返回任意轨道的包 */
                     }
@@ -671,11 +917,13 @@ int webm_demuxer_read_next_packet(WebmDemuxer* demuxer, WebmPacket* pkt)
                 {
                     EbmlStream bgsub;
                     ebml_sub_stream(cs, &child, &bgsub);
-                    memset(pkt, 0, sizeof(*pkt));
-                    if (parse_block_group(demuxer, &bgsub, demuxer->cluster_ts, pkt))
+                    if (queue_block_group_packets(demuxer, &bgsub, demuxer->cluster_ts))
                     {
                         ebml_skip_element(cs, &child);
-                        return 1;
+                        if (pop_pending_packet(demuxer, pkt))
+                        {
+                            return 1;
+                        }
                     }
                     else
                     {
