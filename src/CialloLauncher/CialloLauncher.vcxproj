@@ -53,6 +53,10 @@
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <Import Project="..\CialloHook\config\build_options.props" Condition="exists('..\CialloHook\config\build_options.props')" />
+  <PropertyGroup>
+    <CialloHookFeatureCustomPak Condition="'$(CialloHookFeatureCustomPak)'==''">true</CialloHookFeatureCustomPak>
+  </PropertyGroup>
   <ImportGroup Label="ExtensionSettings">
   </ImportGroup>
   <ImportGroup Label="Shared">
@@ -190,7 +194,7 @@
       <Project>{458b082f-937b-4cab-9405-68b4df3af90f}</Project>
     </ProjectReference>
   </ItemGroup>
-  <ItemDefinitionGroup Condition="'$(Configuration)'=='Release'">
+  <ItemDefinitionGroup Condition="'$(Configuration)'=='Release' and '$(CialloHookFeatureCustomPak)'!='false'">
     <PostBuildEvent>
       <Command>python "$(ProjectDir)..\LitePAK_tool\tools\litepak_codecrypt_patch.py" "$(TargetPath)"</Command>
       <Message>Encrypting RuntimeCore protected code section...</Message>

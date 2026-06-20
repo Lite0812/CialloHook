@@ -45,6 +45,7 @@ PROPS_PATH = ROOT / "src" / "CialloHook" / "config" / "build_options.props"
 OVERRIDES_PATH = ROOT / "src" / "CialloHook" / "config" / "gui_config_overrides.h"
 STATE_PATH = ROOT / "tools" / "build_gui_state.ini"
 BUILD_SCRIPT = ROOT / "build_all.ps1"
+WEBM_BUILD_SCRIPT = ROOT / "build_webm.ps1"
 PLATFORM_ALL = "all"
 LEGACY_PLATFORM_ALL = "x86/x64 全量"
 THEME_SYSTEM = "跟随系统"
@@ -2105,7 +2106,11 @@ class BuildGui(QMainWindow):
         self.save_all()
         if self.process is not None:
             return
-        self.pending_build_platforms = build_platforms(self.platform.currentText())
+        selected_platform = self.platform.currentText()
+        if self.target.currentText() == "CialloWebM" and selected_platform in {PLATFORM_ALL, LEGACY_PLATFORM_ALL}:
+            self.pending_build_platforms = ["both"]
+        else:
+            self.pending_build_platforms = build_platforms(selected_platform)
         self.set_busy(True)
         self.tabs.setCurrentIndex(self.tabs.count() - 1)
         self.start_next_build()
@@ -2118,20 +2123,23 @@ class BuildGui(QMainWindow):
             return
         platform = self.pending_build_platforms.pop(0)
         self.current_build_platform = platform
+        target = self.target.currentText()
+        script = WEBM_BUILD_SCRIPT if target == "CialloWebM" else BUILD_SCRIPT
+        script_platform = platform if platform != "all" else "both"
         args = [
             "-NoLogo",
             "-NoProfile",
             "-ExecutionPolicy",
             "Bypass",
             "-File",
-            str(BUILD_SCRIPT),
+            str(script),
             "-Platform",
-            platform,
+            script_platform,
             "-Configuration",
             self.configuration.currentText(),
-            "-Target",
-            self.target.currentText(),
         ]
+        if target != "CialloWebM":
+            args.extend(["-Target", target])
         self.process = QProcess(self)
         self.process.setWorkingDirectory(str(ROOT))
         self.process.setProgram("powershell.exe")
