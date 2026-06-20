@@ -208,24 +208,6 @@ namespace CialloHook
 		return fallback;
 	}
 
-	static bool GetBoolWithAliasOrDefault(
-		ConfigReadContext& context,
-		const wchar_t* section,
-		const wchar_t* primaryKey,
-		const wchar_t* aliasKey,
-		bool fallback)
-	{
-		if (context.ini.Has(section, primaryKey))
-		{
-			return GetBoolOrDefault(context, section, primaryKey, fallback);
-		}
-		if (aliasKey && context.ini.Has(section, aliasKey))
-		{
-			return GetBoolOrDefault(context, section, aliasKey, fallback);
-		}
-		return fallback;
-	}
-
 	static int GetIntOrDefault(ConfigReadContext& context, const wchar_t* section, const wchar_t* key, int fallback, int minValue = (std::numeric_limits<int>::min)(), int maxValue = (std::numeric_limits<int>::max)())
 	{
 		if (!context.ini.Has(section, key))
@@ -256,26 +238,6 @@ namespace CialloHook
 			return fallback;
 		}
 		return static_cast<uint32_t>(parsedValue);
-	}
-
-	static uint32_t GetUIntWithAliasOrDefault(
-		ConfigReadContext& context,
-		const wchar_t* section,
-		const wchar_t* primaryKey,
-		const wchar_t* aliasKey,
-		uint32_t fallback,
-		uint32_t minValue = 0,
-		uint32_t maxValue = (std::numeric_limits<uint32_t>::max)())
-	{
-		if (context.ini.Has(section, primaryKey))
-		{
-			return GetUIntOrDefault(context, section, primaryKey, fallback, minValue, maxValue);
-		}
-		if (aliasKey && context.ini.Has(section, aliasKey))
-		{
-			return GetUIntOrDefault(context, section, aliasKey, fallback, minValue, maxValue);
-		}
-		return fallback;
 	}
 
 	static uint64_t GetUInt64OrDefault(
@@ -546,16 +508,32 @@ namespace CialloHook
 
 	std::wstring ConfigManager::DescribeSource(const std::wstring& iniPath)
 	{
+#if CIALLOHOOK_CONFIG_SOURCE_BUILTIN
+		(void)iniPath;
+		return GetBuiltInConfigSourceLabel();
+#else
 		const ConfigSourceSelection selection = GetEffectiveConfigSourceSelection();
 		if (selection.mode == ConfigSourceMode::BuiltIn)
 		{
 			return GetBuiltInConfigSourceLabel();
 		}
 		return ResolveEffectiveIniPath(iniPath);
+#endif
 	}
 
 	bool ConfigManager::Load(const std::wstring& iniPath, AppSettings& settings, std::string& errorMessage, std::string* warningMessage)
 	{
+#if CIALLOHOOK_CONFIG_SOURCE_BUILTIN
+		(void)iniPath;
+		settings = AppSettings{};
+		ApplyBuiltInConfig(settings);
+		errorMessage.clear();
+		if (warningMessage)
+		{
+			warningMessage->clear();
+		}
+		return true;
+#else
 		const ConfigSourceSelection selection = GetEffectiveConfigSourceSelection();
 		if (selection.mode == ConfigSourceMode::BuiltIn)
 		{
@@ -576,7 +554,7 @@ namespace CialloHook
 
 			const wchar_t* fontSection = L"CialloHook";
 			settings.font.charset = GetUIntOrDefault(context, fontSection, L"Charset", 0x00, 0x00, 0xFF);
-			settings.font.enableCharsetSpoof = GetBoolWithAliasOrDefault(context, fontSection, L"EnableCharsetSpoof", L"EnableCodepageSpoof", false);
+			settings.font.enableCharsetSpoof = GetBoolOrDefault(context, fontSection, L"EnableCharsetSpoof", false);
 			settings.font.spoofFromCharset = GetUIntOrDefault(context, fontSection, L"SpoofFromCharset", 0x80, 0x00, 0xFF);
 			settings.font.spoofToCharset = GetUIntOrDefault(context, fontSection, L"SpoofToCharset", 0x01, 0x00, 0xFF);
 			settings.font.font = GetStringOrDefault(context, fontSection, L"Font", L"");
@@ -653,57 +631,11 @@ namespace CialloHook
 			settings.font.hookLoadLibraryExW = GetBoolOrDefault(context, fontSection, L"HookLoadLibraryExW", hookGroupLateLoad);
 			settings.font.unlockFontSelection = GetBoolOrDefault(context, fontSection, L"UnlockFontSelection", true);
 			settings.font.fontHookVerboseLog = GetBoolOrDefault(context, fontSection, L"FontHookVerboseLog", false);
-			if (context.ini.Has(fontSection, L"EnableCnJpMap"))
-			{
-				settings.font.enableCnJpMap = GetBoolOrDefault(context, fontSection, L"EnableCnJpMap", false);
-			}
-			else
-			{
-				settings.font.enableCnJpMap = GetBoolOrDefault(context, L"TextReplace", L"EnableCnJpMap", false);
-			}
-			if (context.ini.Has(fontSection, L"CnJpMapVerboseLog"))
-			{
-				settings.font.cnJpMapVerboseLog = GetBoolOrDefault(context, fontSection, L"CnJpMapVerboseLog", false);
-			}
-			else
-			{
-				settings.font.cnJpMapVerboseLog = GetBoolOrDefault(context, L"TextReplace", L"CnJpMapVerboseLog", false);
-			}
-			if (context.ini.Has(fontSection, L"CnJpMapJson"))
-			{
-				settings.font.cnJpMapJson = GetStringOrDefault(context, fontSection, L"CnJpMapJson", L"subs_cn_jp.json");
-			}
-			else
-			{
-				settings.font.cnJpMapJson = GetStringOrDefault(context, L"TextReplace", L"CnJpMapJson", L"subs_cn_jp.json");
-			}
-			if (context.ini.Has(fontSection, L"CnJpMapEncoding"))
-			{
-				settings.font.cnJpMapEncoding = GetUIntOrDefault(context, fontSection, L"CnJpMapEncoding", 0);
-			}
-			else
-			{
-				settings.font.cnJpMapEncoding = GetUIntOrDefault(context, L"TextReplace", L"CnJpMapEncoding", 0);
-			}
-			uint32_t defaultCnJpReadEncoding = settings.font.cnJpMapEncoding;
-			if (context.ini.Has(fontSection, L"CnJpMapReadEncoding") || context.ini.Has(fontSection, L"CnJpMapWriteEncoding"))
-			{
-				settings.font.cnJpMapReadEncoding = GetUIntWithAliasOrDefault(
-					context,
-					fontSection,
-					L"CnJpMapReadEncoding",
-					L"CnJpMapWriteEncoding",
-					defaultCnJpReadEncoding);
-			}
-			else
-			{
-				settings.font.cnJpMapReadEncoding = GetUIntWithAliasOrDefault(
-					context,
-					L"TextReplace",
-					L"CnJpMapReadEncoding",
-					L"CnJpMapWriteEncoding",
-					defaultCnJpReadEncoding);
-			}
+			settings.font.enableCnJpMap = GetBoolOrDefault(context, fontSection, L"EnableCnJpMap", false);
+			settings.font.cnJpMapVerboseLog = GetBoolOrDefault(context, fontSection, L"CnJpMapVerboseLog", false);
+			settings.font.cnJpMapJson = GetStringOrDefault(context, fontSection, L"CnJpMapJson", L"subs_cn_jp.json");
+			settings.font.cnJpMapEncoding = 0;
+			settings.font.cnJpMapReadEncoding = GetUIntOrDefault(context, fontSection, L"CnJpMapReadEncoding", 0);
 			settings.font.fontHeight = GetIntOrDefault(context, fontSection, L"FontHeight", 0);
 			settings.font.fontWidth = GetIntOrDefault(context, fontSection, L"FontWidth", 0);
 			settings.font.fontWeight = GetIntOrDefault(context, fontSection, L"FontWeight", 0);
@@ -805,8 +737,7 @@ namespace CialloHook
 				settings.textReplace.hookExitProcessGuard = GetBoolOrDefault(context, L"TextReplace", L"HookExitProcessGuard", false);
 
 			settings.windowTitle.rules.clear();
-			settings.windowTitle.titleMode = GetIntOrDefault(context, L"WindowTitle", L"TitleMode",
-				GetIntOrDefault(context, L"Window", L"TitleMode", 2, 0, 2), 0, 2);
+			settings.windowTitle.titleMode = GetIntOrDefault(context, L"WindowTitle", L"TitleMode", 2, 0, 2);
 			settings.windowTitle.encoding = GetUIntOrDefault(context, L"WindowTitle", L"Encoding", 0);
 			settings.windowTitle.readEncoding = GetUIntOrDefault(context, L"WindowTitle", L"ReadEncoding", settings.windowTitle.encoding);
 			uint32_t defaultWindowWriteEncoding = settings.windowTitle.readEncoding == 0
@@ -832,36 +763,6 @@ namespace CialloHook
 					}
 				}
 			}
-			if (settings.windowTitle.rules.empty()
-				&& context.ini.Has(L"WindowTitle", L"OriginalTitle")
-				&& context.ini.Has(L"WindowTitle", L"NewTitle"))
-			{
-				std::wstring original = DecodeRuleTextValue((std::wstring)context.ini[L"WindowTitle"][L"OriginalTitle"]);
-				std::wstring replacement = DecodeRuleTextValue((std::wstring)context.ini[L"WindowTitle"][L"NewTitle"]);
-				if (!original.empty() && !replacement.empty())
-				{
-					settings.windowTitle.rules.emplace_back(original, replacement);
-				}
-			}
-			if (settings.windowTitle.rules.empty()
-				&& context.ini.Has(L"WindowTitle", L"Title"))
-			{
-				std::wstring title = DecodeRuleTextValue((std::wstring)context.ini[L"WindowTitle"][L"Title"]);
-				if (!title.empty())
-				{
-					settings.windowTitle.rules.emplace_back(L"*", title);
-				}
-			}
-			if (settings.windowTitle.rules.empty()
-				&& context.ini.Has(L"Window", L"Title"))
-			{
-				std::wstring title = DecodeRuleTextValue((std::wstring)context.ini[L"Window"][L"Title"]);
-				if (!title.empty())
-				{
-					settings.windowTitle.rules.emplace_back(L"*", title);
-				}
-			}
-
 			settings.screenCaptureProtection.enable = GetBoolOrDefault(context, L"ScreenCaptureProtection", L"Enable", false);
 			settings.screenCaptureProtection.mode = Rut::StrX::Trim(GetStringOrDefault(context, L"ScreenCaptureProtection", L"Mode", L"exclude"));
 			std::transform(settings.screenCaptureProtection.mode.begin(), settings.screenCaptureProtection.mode.end(), settings.screenCaptureProtection.mode.begin(),
@@ -939,14 +840,6 @@ namespace CialloHook
 
 			settings.binaryPatch.enable = GetBoolOrDefault(context, L"BinaryPatch", L"Enable", false);
 			settings.binaryPatch.patchFiles = GetIndexedList(context, L"BinaryPatch", L"PatchFileCount", L"PatchFileName_");
-			if (settings.binaryPatch.patchFiles.empty())
-			{
-				std::wstring singlePatchFile = Rut::StrX::Trim(GetStringOrDefault(context, L"BinaryPatch", L"PatchFile", L""));
-				if (!singlePatchFile.empty())
-				{
-					settings.binaryPatch.patchFiles.push_back(singlePatchFile);
-				}
-			}
 			settings.binaryPatch.enableLog = GetBoolOrDefault(context, L"BinaryPatch", L"EnableLog", false);
 			settings.binaryPatch.verifyOldBytes = GetBoolOrDefault(context, L"BinaryPatch", L"VerifyOldBytes", false);
 			settings.binaryPatch.failOnMissingModule = GetBoolOrDefault(context, L"BinaryPatch", L"FailOnMissingModule", false);
@@ -965,65 +858,33 @@ namespace CialloHook
 			if (settings.binaryPatch.enable && settings.binaryPatch.patchFiles.empty())
 			{
 				settings.binaryPatch.enable = false;
-				AppendWarning(context, L"BinaryPatch.Enable 已开启，但未配置有效的 PatchFileName_i / PatchFile，已自动关闭");
+				AppendWarning(context, L"BinaryPatch.Enable 已开启，但未配置有效的 PatchFileName_i，已自动关闭");
 			}
 
 			settings.fileSpoof.enable = GetBoolOrDefault(context, L"FileSpoof", L"Enable", false);
 			settings.fileSpoof.spoofFiles = GetIndexedList(context, L"FileSpoof", L"SpoofFileCount", L"SpoofFileName_");
-			if (settings.fileSpoof.spoofFiles.empty())
-			{
-				settings.fileSpoof.spoofFiles = GetIndexedList(context, L"FileSpoof", L"SpoofFileCount", L"SpoofFile_");
-			}
 			settings.fileSpoof.spoofDirectories = GetIndexedList(context, L"FileSpoof", L"SpoofDirectoryCount", L"SpoofDirectoryName_");
-			if (settings.fileSpoof.spoofDirectories.empty())
-			{
-				settings.fileSpoof.spoofDirectories = GetIndexedList(context, L"FileSpoof", L"SpoofDirectoryCount", L"SpoofDirectory_");
-			}
 			settings.fileSpoof.enableLog = GetBoolOrDefault(context, L"FileSpoof", L"EnableLog", false);
 
 			settings.directoryRedirect.enable = GetBoolOrDefault(context, L"DirectoryRedirect", L"Enable", false);
 			settings.directoryRedirect.rules = GetIndexedRedirectRuleList(context, L"DirectoryRedirect", L"RuleCount", L"Rule_");
-			if (settings.directoryRedirect.rules.empty())
-			{
-				settings.directoryRedirect.rules = GetIndexedRedirectRuleList(context, L"DirectoryRedirect", L"RedirectCount", L"RedirectRule_");
-			}
-			if (settings.directoryRedirect.rules.empty())
-			{
-				settings.directoryRedirect.rules = GetIndexedRedirectRuleList(context, L"DirectoryRedirect", L"SavePathCount", L"SavePath_");
-			}
 			settings.directoryRedirect.enableLog = GetBoolOrDefault(context, L"DirectoryRedirect", L"EnableLog", false);
 			if (settings.directoryRedirect.enable && settings.directoryRedirect.rules.empty())
 			{
 				settings.directoryRedirect.enable = false;
-				AppendWarning(context, L"DirectoryRedirect.Enable 已开启，但未配置有效的 Rule_i / RedirectRule_i / SavePath_i，已自动关闭");
+				AppendWarning(context, L"DirectoryRedirect.Enable 已开启，但未配置有效的 Rule_i，已自动关闭");
 			}
 
 			settings.registry.enable = GetBoolOrDefault(context, L"Registry", L"Enable", false);
 			settings.registry.files = GetIndexedList(context, L"Registry", L"FileCount", L"FileName_");
-			if (settings.registry.files.empty())
-			{
-				std::wstring legacyFile = GetStringOrDefault(context, L"Registry", L"File", L"game.reg");
-				if (!Rut::StrX::Trim(legacyFile).empty())
-				{
-					settings.registry.files.push_back(legacyFile);
-				}
-			}
 			settings.registry.enableLog = GetBoolOrDefault(context, L"Registry", L"EnableLog", false);
 			if (settings.registry.enable && settings.registry.files.empty())
 			{
 				settings.registry.enable = false;
-				AppendWarning(context, L"Registry.Enable 已开启，但未配置有效的 FileName_i / File，已自动关闭");
+				AppendWarning(context, L"Registry.Enable 已开启，但未配置有效的 FileName_i，已自动关闭");
 			}
 
 			const wchar_t* registryBootstrapSection = L"RegistryBootstrap";
-			if (!context.ini.Has(L"RegistryBootstrap", L"Enable")
-				&& !context.ini.Has(L"RegistryBootstrap", L"RuleCount")
-				&& (context.ini.Has(L"Registry", L"RuleCount") || context.ini.Has(L"Registry", L"Key_0")))
-			{
-				registryBootstrapSection = L"Registry";
-				AppendWarning(context, L"RegistryBootstrap 配置看起来写在了 [Registry] 段内，已兼容读取；建议补上 [RegistryBootstrap] 段名");
-			}
-
 			settings.registryBootstrap.enable = GetBoolOrDefault(context, registryBootstrapSection, L"Enable", false);
 				settings.registryBootstrap.cleanupOnExit = GetBoolOrDefault(context, registryBootstrapSection, L"CleanupOnExit", true);
 				settings.registryBootstrap.enableLog = GetBoolOrDefault(context, registryBootstrapSection, L"EnableLog", false);
@@ -1085,10 +946,10 @@ namespace CialloHook
 				}
 
 				settings.localeEmulator.enable = GetBoolOrDefault(context, L"LocaleEmulator", L"Enable", false);
-			settings.localeEmulator.ansiCodePage = GetUIntWithAliasOrDefault(context, L"LocaleEmulator", L"AnsiCodePage", L"CodePage", 932);
-			settings.localeEmulator.oemCodePage = GetUIntWithAliasOrDefault(context, L"LocaleEmulator", L"OemCodePage", L"CodePage", settings.localeEmulator.ansiCodePage);
+			settings.localeEmulator.ansiCodePage = GetUIntOrDefault(context, L"LocaleEmulator", L"AnsiCodePage", 932);
+			settings.localeEmulator.oemCodePage = GetUIntOrDefault(context, L"LocaleEmulator", L"OemCodePage", settings.localeEmulator.ansiCodePage);
 			settings.localeEmulator.localeID = GetUIntOrDefault(context, L"LocaleEmulator", L"LocaleID", 0x411);
-			settings.localeEmulator.defaultCharset = GetUIntWithAliasOrDefault(context, L"LocaleEmulator", L"DefaultCharset", L"Charset", 128, 0, 0xFF);
+			settings.localeEmulator.defaultCharset = GetUIntOrDefault(context, L"LocaleEmulator", L"DefaultCharset", 128, 0, 0xFF);
 			settings.localeEmulator.hookUILanguageAPI = GetUIntOrDefault(context, L"LocaleEmulator", L"HookUILanguageAPI", 0);
 			settings.localeEmulator.timezone = GetStringOrDefault(context, L"LocaleEmulator", L"Timezone", L"Tokyo Standard Time");
 			if (Rut::StrX::Trim(settings.localeEmulator.timezone).empty())
@@ -1162,42 +1023,13 @@ namespace CialloHook
 			}
 			settings.engineCache.med = GetBoolOrDefault(context, L"GLOBAL", L"MED", false);
 			settings.engineCache.majiro = GetBoolOrDefault(context, L"GLOBAL", L"MAJIRO", false);
-			settings.enginePatches.enableKrkrPatch = GetBoolWithAliasOrDefault(
-				context, L"EnginePatches", L"EnableKrkrPatch", L"KrkrPatch",
-				GetBoolWithAliasOrDefault(context, L"GLOBAL", L"EnableKrkrPatch", L"KrkrPatch", false));
-			settings.enginePatches.krkrPatchVerboseLog = GetBoolOrDefault(
-				context, L"EnginePatches", L"KrkrPatchVerboseLog",
-				GetBoolOrDefault(context, L"GLOBAL", L"KrkrPatchVerboseLog", false));
-			settings.enginePatches.enableKrkrCxdecBridge = GetBoolWithAliasOrDefault(
-				context, L"EnginePatches", L"EnableKrkrCxdecBridge", L"KrkrCxdecBridge",
-				GetBoolWithAliasOrDefault(context, L"GLOBAL", L"EnableKrkrCxdecBridge", L"KrkrCxdecBridge", false));
-			settings.enginePatches.krkrBootstrapBypass = GetBoolOrDefault(
-				context, L"EnginePatches", L"KrkrBootstrapBypass",
-				GetBoolOrDefault(context, L"GLOBAL", L"KrkrBootstrapBypass", false));
-			settings.enginePatches.krkrPatchNames = GetIndexedList(context, L"EnginePatches", L"KrkrPatchCount", L"KrkrPatchName_");
-			if (settings.enginePatches.krkrPatchNames.empty())
-			{
-				settings.enginePatches.krkrPatchNames = GetIndexedList(context, L"GLOBAL", L"KrkrPatchCount", L"KrkrPatchName_");
-			}
-			if (settings.enginePatches.krkrPatchNames.empty())
-			{
-				std::wstring singleKrkrPatchName = GetStringOrDefault(context, L"EnginePatches", L"KrkrPatchName", L"");
-				if (Rut::StrX::Trim(singleKrkrPatchName).empty())
-				{
-					singleKrkrPatchName = GetStringOrDefault(context, L"GLOBAL", L"KrkrPatchName", L"");
-				}
-				singleKrkrPatchName = Rut::StrX::Trim(singleKrkrPatchName);
-				if (!singleKrkrPatchName.empty())
-				{
-					settings.enginePatches.krkrPatchNames.push_back(singleKrkrPatchName);
-				}
-			}
-			settings.enginePatches.enableWafflePatch = GetBoolWithAliasOrDefault(
-				context, L"EnginePatches", L"EnableWafflePatch", L"WafflePatch",
-				GetBoolWithAliasOrDefault(context, L"GLOBAL", L"EnableWafflePatch", L"WafflePatch", false));
-			settings.enginePatches.waffleFixGetTextCrash = GetBoolOrDefault(
-				context, L"EnginePatches", L"WaffleFixGetTextCrash",
-				GetBoolOrDefault(context, L"GLOBAL", L"WaffleFixGetTextCrash", true));
+			settings.enginePatches.enableKrkrPatch = GetBoolOrDefault(context, L"Krkr", L"EnableKrkrPatch", false);
+			settings.enginePatches.krkrPatchVerboseLog = GetBoolOrDefault(context, L"Krkr", L"KrkrPatchVerboseLog", false);
+			settings.enginePatches.enableKrkrCxdecBridge = GetBoolOrDefault(context, L"Krkr", L"EnableKrkrCxdecBridge", false);
+			settings.enginePatches.krkrBootstrapBypass = GetBoolOrDefault(context, L"Krkr", L"KrkrBootstrapBypass", false);
+			settings.enginePatches.krkrPatchNames = GetIndexedList(context, L"Krkr", L"KrkrPatchCount", L"KrkrPatchName_");
+			settings.enginePatches.enableWafflePatch = GetBoolOrDefault(context, L"GLOBAL", L"EnableWafflePatch", false);
+			settings.enginePatches.waffleFixGetTextCrash = true;
 
 			if (warningMessage)
 			{
@@ -1211,5 +1043,6 @@ namespace CialloHook
 			errorMessage = err.what();
 			return false;
 		}
+#endif
 	}
 }

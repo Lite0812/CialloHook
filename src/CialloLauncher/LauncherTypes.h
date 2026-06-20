@@ -92,6 +92,7 @@ namespace CialloLauncher
 		bool debugMode = false;
 		bool logToFile = false;
 		bool logToConsole = false;
+		bool filePatchEnable = false;
 		bool customPakEnable = false;
 		bool enableLocaleEmulator = false;
 		LEB localeEmulatorBlock = {};

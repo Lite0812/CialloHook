@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("all","ciallohook","ciallolauncher","runtime")]
+    [ValidateSet("all","ciallohook","ciallolauncher","runtime","LitePAK_tool","CialloWebM")]
     [string]$Target = "all",
     [ValidateSet("Debug","Release")]
     [string]$Configuration = "Release",
@@ -39,6 +39,15 @@ function Sync-HookIni {
         throw "Missing config file: $sourceCialloHookIni"
     }
 
+    $proxyExportsEnabled = $true
+    $buildOptionsHeader = Join-Path $Root "src\CialloHook\config\build_options.h"
+    if (Test-Path $buildOptionsHeader) {
+        $buildOptionsText = Get-Content -LiteralPath $buildOptionsHeader -Raw -ErrorAction SilentlyContinue
+        if ($buildOptionsText -match "(?m)^\s*#define\s+CIALLOHOOK_FEATURE_PROXY_EXPORTS\s+0\b") {
+            $proxyExportsEnabled = $false
+        }
+    }
+
     $buildPlatform = if ($Platform -eq "x86") { "x86" } else { "x64" }
     $targets = @(
         Join-Path $Root ("out\bin\" + $buildPlatform + "\" + $Configuration)
@@ -60,12 +69,20 @@ function Sync-HookIni {
     foreach ($targetDir in $targets) {
         if (Test-Path $targetDir) {
             Copy-Item -Path $sourceCialloHookIni -Destination (Join-Path $targetDir "CialloHook.ini") -Force
-            Copy-Item -Path $sourceCialloHookIni -Destination (Join-Path $targetDir "version.ini") -Force
-            Copy-Item -Path $sourceCialloHookIni -Destination (Join-Path $targetDir "winmm.ini") -Force
+            if ($proxyExportsEnabled) {
+                Copy-Item -Path $sourceCialloHookIni -Destination (Join-Path $targetDir "version.ini") -Force
+                Copy-Item -Path $sourceCialloHookIni -Destination (Join-Path $targetDir "winmm.ini") -Force
+            } else {
+                Remove-IfExists (Join-Path $targetDir "version.ini")
+                Remove-IfExists (Join-Path $targetDir "winmm.ini")
+            }
             $builtDll = Join-Path $targetDir "CialloHook.dll"
-            if (Test-Path $builtDll) {
+            if ($proxyExportsEnabled -and (Test-Path $builtDll)) {
                 Copy-Item -Path $builtDll -Destination (Join-Path $targetDir "version.dll") -Force
                 Copy-Item -Path $builtDll -Destination (Join-Path $targetDir "winmm.dll") -Force
+            } elseif (-not $proxyExportsEnabled) {
+                Remove-IfExists (Join-Path $targetDir "version.dll")
+                Remove-IfExists (Join-Path $targetDir "winmm.dll")
             }
 
             foreach ($extraFile in $extraRuntimeFiles) {
@@ -191,7 +208,7 @@ $msTarget = if ($Action -eq "clean") { "Clean;Build" } else { "Build" }
 $detoursX64 = Join-Path $root "third\detours\lib.X64\detours.lib"
 $detoursX64Alt = Join-Path $root "third\detours\lib.X64\detours_x64.lib"
 
-if ($Platform -eq "x64" -and $Target -ne "runtime" -and -not (Test-Path $detoursX64)) {
+if ($Platform -eq "x64" -and @("all","ciallohook","ciallolauncher") -contains $Target -and -not (Test-Path $detoursX64)) {
     if (Test-Path $detoursX64Alt) {
         Copy-Item -Path $detoursX64Alt -Destination $detoursX64 -Force
     } else {
@@ -203,12 +220,14 @@ $project = $null
 if ($Target -eq "ciallohook") { $project = "src\CialloHook\CialloHook.vcxproj" }
 if ($Target -eq "ciallolauncher") { $project = "src\CialloLauncher\CialloLauncher.vcxproj" }
 if ($Target -eq "runtime") { $project = "src\RuntimeCore\RuntimeCore.vcxproj" }
+if ($Target -eq "LitePAK_tool") { $project = "src\LitePAK_tool\projects\LitePAK_tool.vcxproj" }
+if ($Target -eq "CialloWebM") { $project = "src\CialloWebM\projects\CialloWebM.vcxproj" }
 
 function Invoke-Build {
     param([string]$TargetName)
     $msbuildParallelArg = if ($Platform -eq "x86") { "/m:1" } else { "/m" }
     if ($project) {
-        $projPlatform = if ($Platform -eq "x86") { "x86" } else { $Platform }
+        $projPlatform = if ($Platform -eq "x86") { "Win32" } else { $Platform }
         & $msbuild $project $msbuildParallelArg "/t:$TargetName" "/p:Configuration=$Configuration" "/p:Platform=$projPlatform" "/p:BuildProjectReferences=true" | Out-Host
     } else {
         & $msbuild "CialloHook.sln" $msbuildParallelArg "/t:$TargetName" "/p:Configuration=$Configuration" "/p:Platform=$Platform" | Out-Host

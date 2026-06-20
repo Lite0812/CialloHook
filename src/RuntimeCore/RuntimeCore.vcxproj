@@ -47,37 +47,38 @@
     <ClCompile Include="hook\Hook.cpp" />
     <ClCompile Include="hook\Hook_API.cpp" />
     <ClCompile Include="hook\LocaleEmulatorSupport.cpp" />
-    <ClCompile Include="io\CustomPakVFS.cpp" />
-    <ClCompile Include="..\LitePAK_tool\unpack\litepak_unpack.c" />
-    <ClCompile Include="..\LitePAK_tool\common\litepak_format.c" />
-    <ClCompile Include="..\LitePAK_tool\common\litepak_crypto.c" />
-    <ClCompile Include="..\LitePAK_tool\common\litepak_prng.c" />
-    <ClCompile Include="..\LitePAK_tool\common\litepak_compress.c" />
-    <ClCompile Include="..\LitePAK_tool\common\litepak_utils.c" />
-    <ClCompile Include="..\LitePAK_tool\common\litepak_secure.c" />
-    <ClCompile Include="..\LitePAK_tool\common\litepak_codecrypt.c" />
-    <ClCompile Include="..\LitePAK_tool\common\litepak_data_protect.c" />
-    <ClCompile Include="..\LitePAK_tool\common\litepak_material_core.c" />
-    <ClCompile Include="..\LitePAK_tool\common\litepak_material_table_a.c" />
-    <ClCompile Include="..\LitePAK_tool\common\litepak_material_table_b.c" />
-    <ClCompile Include="..\LitePAK_tool\common\litepak_material_table_c.c" />
-    <ClCompile Include="..\LitePAK_tool\common\litepak_personal.c" />
-    <ClCompile Include="..\LitePAK_tool\common\litepak_wb_vm.c" />
-    <ClCompile Include="..\LitePAK_tool\common\litepak_wb_bytecode.c" />
-    <ClCompile Include="..\LitePAK_tool\common\blake2b.c" />
-    <ClCompile Include="..\LitePAK_tool\common\aes_gcm.c" />
-    <ClCompile Include="..\LitePAK_tool\common\ed25519.c" />
+    <ClCompile Include="io\CustomPakVFS.cpp" Condition="'$(CialloHookFeatureCustomPak)'!='false'" />
+    <ClCompile Include="io\CustomPakVFSStub.cpp" Condition="'$(CialloHookFeatureCustomPak)'=='false'" />
+    <ClCompile Include="..\LitePAK_tool\unpack\litepak_unpack.c" Condition="'$(CialloHookFeatureCustomPak)'!='false'" />
+    <ClCompile Include="..\LitePAK_tool\common\litepak_format.c" Condition="'$(CialloHookFeatureCustomPak)'!='false'" />
+    <ClCompile Include="..\LitePAK_tool\common\litepak_crypto.c" Condition="'$(CialloHookFeatureCustomPak)'!='false'" />
+    <ClCompile Include="..\LitePAK_tool\common\litepak_prng.c" Condition="'$(CialloHookFeatureCustomPak)'!='false'" />
+    <ClCompile Include="..\LitePAK_tool\common\litepak_compress.c" Condition="'$(CialloHookFeatureCustomPak)'!='false'" />
+    <ClCompile Include="..\LitePAK_tool\common\litepak_utils.c" Condition="'$(CialloHookFeatureCustomPak)'!='false'" />
+    <ClCompile Include="..\LitePAK_tool\common\litepak_secure.c" Condition="'$(CialloHookFeatureCustomPak)'!='false'" />
+    <ClCompile Include="..\LitePAK_tool\common\litepak_codecrypt.c" Condition="'$(CialloHookFeatureCustomPak)'!='false'" />
+    <ClCompile Include="..\LitePAK_tool\common\litepak_data_protect.c" Condition="'$(CialloHookFeatureCustomPak)'!='false'" />
+    <ClCompile Include="..\LitePAK_tool\common\litepak_material_core.c" Condition="'$(CialloHookFeatureCustomPak)'!='false'" />
+    <ClCompile Include="..\LitePAK_tool\common\litepak_material_table_a.c" Condition="'$(CialloHookFeatureCustomPak)'!='false'" />
+    <ClCompile Include="..\LitePAK_tool\common\litepak_material_table_b.c" Condition="'$(CialloHookFeatureCustomPak)'!='false'" />
+    <ClCompile Include="..\LitePAK_tool\common\litepak_material_table_c.c" Condition="'$(CialloHookFeatureCustomPak)'!='false'" />
+    <ClCompile Include="..\LitePAK_tool\common\litepak_personal.c" Condition="'$(CialloHookFeatureCustomPak)'!='false'" />
+    <ClCompile Include="..\LitePAK_tool\common\litepak_wb_vm.c" Condition="'$(CialloHookFeatureCustomPak)'!='false'" />
+    <ClCompile Include="..\LitePAK_tool\common\litepak_wb_bytecode.c" Condition="'$(CialloHookFeatureCustomPak)'!='false'" />
+    <ClCompile Include="..\LitePAK_tool\common\blake2b.c" Condition="'$(CialloHookFeatureCustomPak)'!='false'" />
+    <ClCompile Include="..\LitePAK_tool\common\aes_gcm.c" Condition="'$(CialloHookFeatureCustomPak)'!='false'" />
+    <ClCompile Include="..\LitePAK_tool\common\ed25519.c" Condition="'$(CialloHookFeatureCustomPak)'!='false'" />
     <ClCompile Include="io\File.cpp" />
     <ClCompile Include="io\File_Enum.cpp" />
     <ClCompile Include="io\INI.cpp" />
     <ClCompile Include="io\INI_Value.cpp" />
-    <ClCompile Include="..\..\third\lzma\LzmaDec.c" />
-    <ClCompile Include="..\..\third\miniz\miniz.c" />
-    <ClCompile Include="..\..\third\zstd\zstddeclib.c" />
+    <ClCompile Include="..\..\third\lzma\LzmaDec.c" Condition="'$(CialloHookFeatureCustomPak)'!='false'" />
+    <ClCompile Include="..\..\third\miniz\miniz.c" Condition="'$(CialloHookFeatureCustomPak)'!='false' or '$(CialloHookFeatureEngineCache)'!='false' or '$(CialloHookFeatureKrkrPatch)'!='false'" />
+    <ClCompile Include="..\..\third\zstd\zstddeclib.c" Condition="'$(CialloHookFeatureCustomPak)'!='false'" />
   </ItemGroup>
   <ItemGroup>
-    <MASM Include="..\LitePAK_tool\unpack\litepak_secure_core_x86.asm" Condition="'$(Platform)'=='Win32'" />
-    <MASM Include="..\LitePAK_tool\unpack\litepak_secure_core_x64.asm" Condition="'$(Platform)'=='x64'" />
+    <MASM Include="..\LitePAK_tool\unpack\litepak_secure_core_x86.asm" Condition="'$(Platform)'=='Win32' and '$(CialloHookFeatureCustomPak)'!='false'" />
+    <MASM Include="..\LitePAK_tool\unpack\litepak_secure_core_x64.asm" Condition="'$(Platform)'=='x64' and '$(CialloHookFeatureCustomPak)'!='false'" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>16.0</VCProjectVersion>
@@ -115,6 +116,11 @@
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <Import Project="..\CialloHook\config\build_options.props" Condition="exists('..\CialloHook\config\build_options.props')" />
+  <PropertyGroup>
+    <CialloHookFeatureCustomPak Condition="'$(CialloHookFeatureCustomPak)'==''">true</CialloHookFeatureCustomPak>
+    <CialloHookFeatureKrkrPatch Condition="'$(CialloHookFeatureKrkrPatch)'==''">true</CialloHookFeatureKrkrPatch>
+  </PropertyGroup>
   <ImportGroup Label="ExtensionSettings">
     <Import Project="$(VCTargetsPath)\BuildCustomizations\masm.props" />
   </ImportGroup>

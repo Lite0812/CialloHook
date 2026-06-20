@@ -377,9 +377,10 @@ INT APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 		if (config.debugMode)
 		{
 			wchar_t msg[768];
-			swprintf_s(msg, 768, L"[Debug] Ready to launch\nTarget: %s\nInject DLL count: %u\nLocaleEmulator: %s\nCustomPak: %s",
+			swprintf_s(msg, 768, L"[Debug] Ready to launch\nTarget: %s\nInject DLL count: %u\nFilePatch: %s\nLocaleEmulator: %s\nCustomPak: %s",
 				config.targetExe.c_str(),
 				static_cast<uint32_t>(config.targetDllNames.size()),
+				config.filePatchEnable ? L"ON" : L"OFF",
 				config.enableLocaleEmulator ? L"ON" : L"OFF",
 				config.customPakEnable ? L"ON" : L"OFF");
 			MessageBoxW(nullptr, msg, L"CialloHook - Debug", MB_OK | MB_ICONINFORMATION);

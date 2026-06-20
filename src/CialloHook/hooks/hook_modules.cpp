@@ -3,6 +3,11 @@
 #include "binary_patch_1337.h"
 #include "krkr_plugin_bridge.h"
 #include "rio_shiina_hooks.h"
+#include "../config/build_options.h"
+
+#ifndef CIALLOHOOK_FEATURE_KRKR_PATCH
+#define CIALLOHOOK_FEATURE_KRKR_PATCH 1
+#endif
 
 #include <Windows.h>
 #include <gdiplus.h>
@@ -2202,21 +2207,32 @@ namespace CialloHook
 
 		void ApplyPostStartupHooks(const AppSettings& settings)
 		{
+#if CIALLOHOOK_FEATURE_FILE_PATCH || CIALLOHOOK_FEATURE_KRKR_PATCH
 			CIALLOHOOK_VERBOSE_INFO_LOG(L"Apply hooks: file patch");
 			ApplyFilePatchHooks(settings.filePatch, settings.fileSpoof, settings.directoryRedirect, settings.enginePatches);
+#endif
 
+#if CIALLOHOOK_FEATURE_BINARY_PATCH
 			CIALLOHOOK_VERBOSE_INFO_LOG(L"Apply hooks: binary patch");
 			ApplyBinaryPatches(settings.binaryPatch);
+#endif
 
+#if CIALLOHOOK_FEATURE_ALICE_SYSTEM3X
 			CIALLOHOOK_VERBOSE_INFO_LOG(L"Apply hooks: alice system3x");
 			ApplyAliceSystem3xHooks(settings.aliceSystem3x, settings.filePatch);
+#endif
 
+#if CIALLOHOOK_FEATURE_SIGLUS_KEY_EXTRACT
 			CIALLOHOOK_VERBOSE_INFO_LOG(L"Apply hooks: siglus key extract");
 			ApplySiglusKeyExtract(settings.siglusKeyExtract);
+#endif
 
+#if CIALLOHOOK_FEATURE_RIO_SHIINA
 			CIALLOHOOK_VERBOSE_INFO_LOG(L"Apply hooks: rio shiina");
 			ApplyRioShiinaHooks(settings.rioShiina, settings.filePatch);
+#endif
 
+#if CIALLOHOOK_FEATURE_TEXT
 			CIALLOHOOK_VERBOSE_INFO_LOG(L"Apply hooks: text");
 			if (NeedsTextApiHooks(settings))
 			{
@@ -2226,38 +2242,63 @@ namespace CialloHook
 			{
 				LogMessage(LogLevel::Debug, L"ApplyTextHooks: no text/font work, skip text api hooks");
 			}
+#endif
 
+#if CIALLOHOOK_FEATURE_SCREEN_CAPTURE_PROTECTION
 			CIALLOHOOK_VERBOSE_INFO_LOG(L"Apply hooks: screen capture protection");
 			ApplyScreenCaptureProtectionHooks(settings.screenCaptureProtection);
+#endif
 
+#if CIALLOHOOK_FEATURE_WINDOW_TITLE
 			CIALLOHOOK_VERBOSE_INFO_LOG(L"Apply hooks: window title");
 			ApplyWindowTitleHooks(settings.windowTitle);
+#endif
 
+#if CIALLOHOOK_FEATURE_REGISTRY_BOOTSTRAP
 			CIALLOHOOK_VERBOSE_INFO_LOG(L"Apply hooks: registry bootstrap");
 			ApplyRegistryBootstrap(settings.registryBootstrap);
+#endif
 
+#if CIALLOHOOK_FEATURE_REGISTRY
 			CIALLOHOOK_VERBOSE_INFO_LOG(L"Apply hooks: registry");
 			ApplyRegistryHooks(settings.registry);
+#endif
 
+#if CIALLOHOOK_FEATURE_CODEPAGE
 			CIALLOHOOK_VERBOSE_INFO_LOG(L"Apply hooks: code page");
 			ApplyCodePageHooks(settings.codePage);
+#endif
 
+#if CIALLOHOOK_FEATURE_LOCALE_EMULATOR
 			CIALLOHOOK_VERBOSE_INFO_LOG(L"Apply hooks: locale emulator");
 			ApplyLocaleEmulatorHooks(settings.localeEmulator);
+#endif
 
+#if CIALLOHOOK_FEATURE_FONT
 			CIALLOHOOK_VERBOSE_INFO_LOG(L"Apply hooks: font");
 			ApplyFontHooks(settings.font);
+#endif
 			ReleaseStartupWindowGate();
 		}
 
 		void ApplyAliceSystem3xHooks(const AliceSystem3xSettings& settings, const FilePatchSettings& filePatchSettings)
 		{
+#if CIALLOHOOK_FEATURE_ALICE_SYSTEM3X
 			AliceSystem3xHooks::Apply(settings, filePatchSettings);
+#else
+			(void)settings;
+			(void)filePatchSettings;
+#endif
 		}
 
 		void ApplyRioShiinaHooks(const RioShiinaSettings& settings, const FilePatchSettings& filePatchSettings)
 		{
+#if CIALLOHOOK_FEATURE_RIO_SHIINA
 			RioShiinaHooks::Apply(settings, filePatchSettings);
+#else
+			(void)settings;
+			(void)filePatchSettings;
+#endif
 		}
 
 		void ApplySiglusKeyExtract(const SiglusKeyExtractSettings& settings)
@@ -2311,7 +2352,14 @@ namespace CialloHook
 			sg_activeFontPatchFolders.clear();
 			sg_activeModuleAssetPatchFolders.clear();
 			sg_activeModuleAssetCustomPak = false;
-			if (!patchSettings.enable && !patchSettings.customPakEnable && !spoofSettings.enable && !directoryRedirectSettings.enable && !enginePatchSettings.enableKrkrPatch)
+			EnginePatchSettings effectiveEnginePatchSettings = enginePatchSettings;
+#if !CIALLOHOOK_FEATURE_KRKR_PATCH
+			effectiveEnginePatchSettings.enableKrkrPatch = false;
+			effectiveEnginePatchSettings.krkrBootstrapBypass = false;
+			effectiveEnginePatchSettings.enableKrkrCxdecBridge = false;
+			effectiveEnginePatchSettings.krkrPatchNames.clear();
+#endif
+			if (!patchSettings.enable && !patchSettings.customPakEnable && !spoofSettings.enable && !directoryRedirectSettings.enable && !effectiveEnginePatchSettings.enableKrkrPatch)
 			{
 				CIALLOHOOK_VERBOSE_INFO_LOG(L"ApplyFilePatchHooks: disabled (patch, custom pak, spoof, redirect and krkrpatch)");
 				return;
@@ -2347,8 +2395,8 @@ namespace CialloHook
 			std::vector<std::wstring> krkrPatchFolders;
 			std::vector<std::wstring> krkrPatchArchives;
 			std::vector<std::wstring> krkrPatchBaseNames;
-			CollectKrkrPatchTargets(enginePatchSettings, gameDir, krkrPatchRoots, krkrPatchFolders, krkrPatchArchives);
-			CollectKrkrPatchBaseNames(enginePatchSettings, krkrPatchBaseNames);
+			CollectKrkrPatchTargets(effectiveEnginePatchSettings, gameDir, krkrPatchRoots, krkrPatchFolders, krkrPatchArchives);
+			CollectKrkrPatchBaseNames(effectiveEnginePatchSettings, krkrPatchBaseNames);
 
 			std::vector<const wchar_t*> spoofFiles;
 			for (const std::wstring& file : spoofSettings.spoofFiles)
@@ -2493,17 +2541,19 @@ namespace CialloHook
 				patchSettings.enableLog
 			);
 			Rut::HookX::SetCustomPakReadMode(patchSettings.vfsMode);
+#if CIALLOHOOK_FEATURE_KRKR_PATCH
 			ConfigureKrkrPluginPatchTargets(
-				enginePatchSettings.enableKrkrPatch,
-				enginePatchSettings.krkrPatchVerboseLog,
-				enginePatchSettings.krkrBootstrapBypass,
-				enginePatchSettings.enableKrkrCxdecBridge,
+				effectiveEnginePatchSettings.enableKrkrPatch,
+				effectiveEnginePatchSettings.krkrPatchVerboseLog,
+				effectiveEnginePatchSettings.krkrBootstrapBypass,
+				effectiveEnginePatchSettings.enableKrkrCxdecBridge,
 				gameDir,
 				filePatchFolders,
 				filePatchCustomPakFiles,
 				krkrPatchBaseNames,
 				krkrPatchFolders,
 				krkrPatchArchives);
+#endif
 
 			LogMessage(hookSuccess ? LogLevel::Info : LogLevel::Error, L"ApplyFilePatchHooks: patchFolders=%u/%u spoofFiles=%u spoofDirectories=%u redirectRules=%u/%u pakFiles=%u/%u customPak=%d vfsMode=%d hook=%s",
 				(uint32_t)patchFolders.size(),

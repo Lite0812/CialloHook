@@ -1,7 +1,9 @@
 ﻿#pragma once
 
+#include "build_options.h"
 #include "settings.h"
 #include "../../CialloLauncher/LauncherTypes.h"
+#include "gui_config_overrides.h"
 
 #include <cwchar>
 
@@ -33,8 +35,12 @@ namespace CialloHook
 	inline ConfigSourceSelection GetConfigSourceSelection()
 	{
 		ConfigSourceSelection selection = {};
+#if CIALLOHOOK_CONFIG_SOURCE_BUILTIN
+		selection.mode = ConfigSourceMode::BuiltIn;
+#else
 		selection.mode = ConfigSourceMode::IniFile;
-		selection.iniPathOverride = nullptr;
+#endif
+		selection.iniPathOverride = CIALLOHOOK_CONFIG_INI_OVERRIDE;
 		// selection.mode = ConfigSourceMode::BuiltIn;
 		// selection.iniPathOverride = L".\\MyConfig.ini";
 		return selection;
@@ -371,9 +377,13 @@ namespace CialloHook
 		settings.rioShiina.specDvdFileSize = 0;
 		settings.rioShiina.enableLog = false;
 
-		// ======================== [GLOBAL] 引擎兼容补丁 ========================
+		// ======================== [GLOBAL] 引擎缓存 / Waffle 补丁 ========================
 		settings.engineCache.med = false;
 		settings.engineCache.majiro = false;
+		settings.enginePatches.enableWafflePatch = false;
+		settings.enginePatches.waffleFixGetTextCrash = true;
+
+		// ======================== [Krkr] KRKR 引擎补丁 ========================
 		settings.enginePatches.enableKrkrPatch = false;
 		settings.enginePatches.krkrPatchVerboseLog = false;
 		settings.enginePatches.krkrPatchNames = {
@@ -381,8 +391,6 @@ namespace CialloHook
 		};
 		settings.enginePatches.krkrBootstrapBypass = false;
 		settings.enginePatches.enableKrkrCxdecBridge = false;
-		settings.enginePatches.enableWafflePatch = false;
-		settings.enginePatches.waffleFixGetTextCrash = true;
 
 		// ======================== [LocaleEmulator] 转区 ========================
 		// proxy 模式下由 winmm.dll/version.dll 直接重启转区；loader 模式下由 CialloLauncher 处理。
@@ -441,6 +449,8 @@ namespace CialloHook
 		settings.debug.enable = true;
 		settings.debug.logToFile = true;
 		settings.debug.logToConsole = true;
+
+		ApplyGuiBuiltInConfigOverrides(settings);
 	}
 
 	inline void ApplyBuiltInLauncherConfig(CialloLauncher::LauncherConfig& config)
@@ -470,6 +480,7 @@ namespace CialloHook
 
 		// ======================== [FilePatch] 文件热补丁 ========================
 		// 供 Loader 提前解析补丁目录与 CustomPak，默认与 CialloHook.ini 一致。
+		config.filePatchEnable = true;
 		config.patchFolders = {
 			L"patch",
 		};
@@ -487,6 +498,8 @@ namespace CialloHook
 		config.localeEmulatorBlock.DefaultCharset = 128;
 		config.localeEmulatorBlock.HookUILanguageAPI = 0;
 		SetBuiltInLauncherTimezone(config.localeEmulatorBlock, L"Tokyo Standard Time");
+
+		ApplyGuiBuiltInLauncherConfigOverrides(config);
 	}
 
 	inline const wchar_t* GetBuiltInConfigSourceLabel()

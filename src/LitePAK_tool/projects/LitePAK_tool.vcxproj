@@ -60,6 +60,9 @@
   <ItemGroup>
     <ClInclude Include="..\include\litepak.h" />
   </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="LitePAK_tool.rc" />
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />
 </Project>

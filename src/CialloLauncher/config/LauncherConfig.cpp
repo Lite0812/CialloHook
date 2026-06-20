@@ -103,27 +103,6 @@ namespace
 		return parsedValue;
 	}
 
-	uint32_t GetIniUIntWithAliasOrDefault(
-		INI_File& ini,
-		std::vector<std::wstring>& warnings,
-		const wchar_t* section,
-		const wchar_t* primaryKey,
-		const wchar_t* aliasKey,
-		uint32_t fallback,
-		uint32_t minValue = 0,
-		uint32_t maxValue = (std::numeric_limits<uint32_t>::max)())
-	{
-		if (ini.Has(section, primaryKey))
-		{
-			return GetIniUIntOrDefault(ini, warnings, section, primaryKey, fallback, minValue, maxValue);
-		}
-		if (aliasKey && ini.Has(section, aliasKey))
-		{
-			return GetIniUIntOrDefault(ini, warnings, section, aliasKey, fallback, minValue, maxValue);
-		}
-		return fallback;
-	}
-
 	std::wstring GetIniStringOrDefault(INI_File& ini, const wchar_t* section, const wchar_t* key, const wchar_t* fallback)
 	{
 		return ini.Has(section, key) ? static_cast<std::wstring>(ini[section][key]) : std::wstring(fallback);
@@ -222,7 +201,7 @@ namespace
 		config.launcherSection = L"BuiltIn";
 		config.targetDllCount = static_cast<uint32_t>(config.targetDllNames.size());
 
-		if (config.patchFolders.empty())
+		if (config.filePatchEnable && config.patchFolders.empty())
 		{
 			config.patchFolders.emplace_back(L"patch");
 		}
@@ -345,20 +324,24 @@ namespace CialloLauncher
 		LogMessage(LogLevel::Info, L"Target executable: %s", config.targetExe.c_str());
 		LogMessage(LogLevel::Info, L"Configured dll count: %u", config.targetDllCount);
 
-		uint32_t patchFolderCount = GetIniUIntOrDefault(ini, configWarnings, L"FilePatch", L"PatchFolderCount", 0, 0, 4096);
-		config.patchFolders.reserve(patchFolderCount > 0 ? patchFolderCount : 1);
-		for (uint32_t i = 0; i < patchFolderCount; ++i)
+		config.filePatchEnable = GetIniBoolOrDefault(ini, configWarnings, L"FilePatch", L"Enable", false);
+		if (config.filePatchEnable)
 		{
-			std::wstring patchKey = std::wstring(L"PatchFolderName_") + std::to_wstring(i);
-			std::wstring patchPath = ini.Has(L"FilePatch", patchKey) ? static_cast<std::wstring>(ini[L"FilePatch"][patchKey]) : L"";
-			if (!patchPath.empty())
+			uint32_t patchFolderCount = GetIniUIntOrDefault(ini, configWarnings, L"FilePatch", L"PatchFolderCount", 0, 0, 4096);
+			config.patchFolders.reserve(patchFolderCount > 0 ? patchFolderCount : 1);
+			for (uint32_t i = 0; i < patchFolderCount; ++i)
 			{
-				config.patchFolders.emplace_back(patchPath);
+				std::wstring patchKey = std::wstring(L"PatchFolderName_") + std::to_wstring(i);
+				std::wstring patchPath = ini.Has(L"FilePatch", patchKey) ? static_cast<std::wstring>(ini[L"FilePatch"][patchKey]) : L"";
+				if (!patchPath.empty())
+				{
+					config.patchFolders.emplace_back(patchPath);
+				}
 			}
-		}
-		if (config.patchFolders.empty())
-		{
-			config.patchFolders.emplace_back(L"patch");
+			if (config.patchFolders.empty())
+			{
+				config.patchFolders.emplace_back(L"patch");
+			}
 		}
 
 		config.customPakEnable = GetIniBoolOrDefault(ini, configWarnings, L"FilePatch", L"CustomPakEnable", false);
@@ -395,10 +378,10 @@ namespace CialloLauncher
 		if (config.enableLocaleEmulator)
 		{
 			LEB& leb = config.localeEmulatorBlock;
-			leb.AnsiCodePage = GetIniUIntWithAliasOrDefault(ini, configWarnings, L"LocaleEmulator", L"AnsiCodePage", L"CodePage", 932);
-			leb.OemCodePage = GetIniUIntWithAliasOrDefault(ini, configWarnings, L"LocaleEmulator", L"OemCodePage", L"CodePage", leb.AnsiCodePage);
+			leb.AnsiCodePage = GetIniUIntOrDefault(ini, configWarnings, L"LocaleEmulator", L"AnsiCodePage", 932);
+			leb.OemCodePage = GetIniUIntOrDefault(ini, configWarnings, L"LocaleEmulator", L"OemCodePage", leb.AnsiCodePage);
 			leb.LocaleID = GetIniUIntOrDefault(ini, configWarnings, L"LocaleEmulator", L"LocaleID", 0x411);
-			leb.DefaultCharset = GetIniUIntWithAliasOrDefault(ini, configWarnings, L"LocaleEmulator", L"DefaultCharset", L"Charset", 128, 0, 0xFF);
+			leb.DefaultCharset = GetIniUIntOrDefault(ini, configWarnings, L"LocaleEmulator", L"DefaultCharset", 128, 0, 0xFF);
 			leb.HookUILanguageAPI = GetIniUIntOrDefault(ini, configWarnings, L"LocaleEmulator", L"HookUILanguageAPI", 0);
 			LogMessage(LogLevel::Info, L"LE config: ACP=%u OEM=%u Locale=0x%X Charset=%u",
 				leb.AnsiCodePage, leb.OemCodePage, leb.LocaleID, leb.DefaultCharset);

@@ -104,6 +104,9 @@
     <ClCompile Include="io\CustomPakVFS.cpp">
       <Filter>io</Filter>
     </ClCompile>
+    <ClCompile Include="io\CustomPakVFSStub.cpp">
+      <Filter>io</Filter>
+    </ClCompile>
     <ClCompile Include="..\LitePAK_tool\unpack\litepak_unpack.c">
       <Filter>external\LitePAK</Filter>
     </ClCompile>

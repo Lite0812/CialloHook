@@ -268,10 +268,10 @@ namespace CialloHook
 						LogMessage(LogLevel::Warn, L"RioShiina: RegCreateKeyExW failed for %s (error=%ld)", regPath.c_str(), status);
 						return false;
 					}
-					DWORD instMode = 0;
+					BYTE instMode[4] = { 0, 0, 0, 0 };
 					bool ok = SetRegistryStringValue(key, L"DataPath", L".\\savedata\\")
 						&& SetRegistryStringValue(key, L"InstPath", L".\\")
-						&& RegSetValueExW(key, L"InstMode", 0, REG_DWORD, reinterpret_cast<const BYTE*>(&instMode), sizeof(instMode)) == ERROR_SUCCESS;
+						&& RegSetValueExW(key, L"InstMode", 0, REG_BINARY, instMode, sizeof(instMode)) == ERROR_SUCCESS;
 					RegCloseKey(key);
 					if (!ok)
 					{
@@ -283,34 +283,70 @@ namespace CialloHook
 					return true;
 				}
 
+				static std::string TrimIniToken(std::string value)
+				{
+					size_t begin = 0;
+					while (begin < value.size() && static_cast<unsigned char>(value[begin]) <= ' ')
+					{
+						++begin;
+					}
+					size_t end = value.size();
+					while (end > begin && static_cast<unsigned char>(value[end - 1]) <= ' ')
+					{
+						--end;
+					}
+					return value.substr(begin, end - begin);
+				}
+
 				static bool TryDiscoverRioRegistryPath(const fs::path& iniPath, std::wstring& regPathOut)
 				{
 					regPathOut.clear();
-					std::string iniPathA = WideToAnsi(iniPath.wstring());
-					if (iniPathA.empty())
+					std::ifstream ifs(iniPath, std::ios::binary);
+					if (!ifs)
 					{
 						return false;
 					}
-					std::vector<char> sections(65536, '\0');
-					DWORD sectionLength = GetPrivateProfileSectionNamesA(sections.data(), static_cast<DWORD>(sections.size()), iniPathA.c_str());
-					if (sectionLength == 0)
+					std::string line;
+					bool inRioSection = false;
+					while (std::getline(ifs, line))
 					{
-						return false;
-					}
-					for (const char* section = sections.data(); *section != '\0'; section += std::strlen(section) + 1)
-					{
-						std::wstring sectionName = SjisToWide(section);
-						if (!StartsWith(sectionName, L"椎名里緒"))
+						if (!line.empty() && line.back() == '\r')
+						{
+							line.pop_back();
+						}
+						std::string trimmed = TrimIniToken(line);
+						if (trimmed.empty() || trimmed[0] == ';' || trimmed[0] == '#')
 						{
 							continue;
 						}
-						std::vector<char> regValue(4096, '\0');
-						DWORD valueLength = GetPrivateProfileStringA(section, "Reg", "", regValue.data(), static_cast<DWORD>(regValue.size()), iniPathA.c_str());
-						if (valueLength == 0)
+						if (trimmed.front() == '[')
 						{
-							break;
+							size_t close = trimmed.find(']');
+							if (close == std::string::npos)
+							{
+								inRioSection = false;
+								continue;
+							}
+							std::wstring sectionName = SjisToWide(trimmed.substr(1, close - 1));
+							inRioSection = StartsWith(sectionName, L"椎名里緒");
+							continue;
 						}
-						regPathOut = SjisToWide(std::string(regValue.data(), valueLength));
+						if (!inRioSection)
+						{
+							continue;
+						}
+						size_t equal = trimmed.find('=');
+						if (equal == std::string::npos)
+						{
+							continue;
+						}
+						std::string key = TrimIniToken(trimmed.substr(0, equal));
+						if (key != "Reg")
+						{
+							continue;
+						}
+						std::string value = TrimIniToken(trimmed.substr(equal + 1));
+						regPathOut = SjisToWide(value);
 						return !regPathOut.empty();
 					}
 					return false;
@@ -339,30 +375,46 @@ namespace CialloHook
 					{
 						return true;
 					}
-					std::error_code ec;
-					for (const auto& entry : fs::directory_iterator(fs::path(sg_gameDir), ec))
+					std::vector<fs::path> scanDirs;
+					scanDirs.push_back(fs::path(sg_gameDir));
+					std::error_code currentPathEc;
+					fs::path currentPath = fs::current_path(currentPathEc);
+					if (!currentPathEc && currentPath != scanDirs.front())
 					{
-						if (ec)
+						scanDirs.push_back(currentPath);
+					}
+					bool registryWritten = false;
+					for (const auto& scanDir : scanDirs)
+					{
+						std::error_code ec;
+						for (const auto& entry : fs::directory_iterator(scanDir, ec))
+						{
+							if (ec)
+							{
+								break;
+							}
+							if (!entry.is_regular_file())
+							{
+								continue;
+							}
+							std::wstring fileNameLower = Rut::StrX::Trim(entry.path().filename().wstring());
+							std::transform(fileNameLower.begin(), fileNameLower.end(), fileNameLower.begin(), towlower);
+							if (fileNameLower.size() < 4 || fileNameLower.compare(fileNameLower.size() - 4, 4, L".ini") != 0 || (fileNameLower.size() >= 8 && fileNameLower.compare(fileNameLower.size() - 8, 8, L".jlx.ini") == 0))
+							{
+								continue;
+							}
+							std::wstring regPath;
+							if (!TryDiscoverRioRegistryPath(entry.path(), regPath))
+							{
+								continue;
+							}
+							registryWritten = WriteRioRegistryBootstrap(regPath);
+							break;
+						}
+						if (registryWritten)
 						{
 							break;
 						}
-						if (!entry.is_regular_file())
-						{
-							continue;
-						}
-						std::wstring fileNameLower = Rut::StrX::Trim(entry.path().filename().wstring());
-						std::transform(fileNameLower.begin(), fileNameLower.end(), fileNameLower.begin(), towlower);
-						if (fileNameLower.size() < 4 || fileNameLower.compare(fileNameLower.size() - 4, 4, L".ini") != 0 || (fileNameLower.size() >= 8 && fileNameLower.compare(fileNameLower.size() - 8, 8, L".jlx.ini") == 0))
-						{
-							continue;
-						}
-						std::wstring regPath;
-						if (!TryDiscoverRioRegistryPath(entry.path(), regPath))
-						{
-							continue;
-						}
-						WriteRioRegistryBootstrap(regPath);
-						break;
 					}
 					bool batchStarted = BeginDetourBatch();
 					bool failed = !AttachDetour(reinterpret_cast<void**>(&sg_rawRegOpenKeyExA), reinterpret_cast<void*>(HookRegOpenKeyExA));

@@ -53,6 +53,12 @@
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <Import Project="config\build_options.props" Condition="exists('config\build_options.props')" />
+  <PropertyGroup>
+    <CialloHookFeatureCodeCryptPatch Condition="'$(CialloHookFeatureCodeCryptPatch)'==''">true</CialloHookFeatureCodeCryptPatch>
+    <CialloHookFeatureKrkrPatch Condition="'$(CialloHookFeatureKrkrPatch)'==''">true</CialloHookFeatureKrkrPatch>
+    <CialloHookFeatureProxyExports Condition="'$(CialloHookFeatureProxyExports)'==''">true</CialloHookFeatureProxyExports>
+  </PropertyGroup>
   <ImportGroup Label="ExtensionSettings">
   </ImportGroup>
   <ImportGroup Label="Shared">
@@ -93,7 +99,7 @@
       <AdditionalLibraryDirectories>..\..\third\detours\lib.X86;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>detours.lib;bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <ImageHasSafeExceptionHandlers Condition="'$(Platform)'=='Win32'">false</ImageHasSafeExceptionHandlers>
-      <ModuleDefinitionFile>entry\version.def</ModuleDefinitionFile>
+      <ModuleDefinitionFile Condition="'$(CialloHookFeatureProxyExports)'!='false'">entry\version.def</ModuleDefinitionFile>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -125,7 +131,7 @@
       <AdditionalLibraryDirectories>..\..\third\detours\lib.X86;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>detours.lib;bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <ImageHasSafeExceptionHandlers Condition="'$(Platform)'=='Win32'">false</ImageHasSafeExceptionHandlers>
-      <ModuleDefinitionFile>entry\version.def</ModuleDefinitionFile>
+      <ModuleDefinitionFile Condition="'$(CialloHookFeatureProxyExports)'!='false'">entry\version.def</ModuleDefinitionFile>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
@@ -144,7 +150,7 @@
       <AdditionalLibraryDirectories>..\..\third\detours\lib.X64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>detours.lib;bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <ImageHasSafeExceptionHandlers Condition="'$(Platform)'=='Win32'">false</ImageHasSafeExceptionHandlers>
-      <ModuleDefinitionFile>entry\version.def</ModuleDefinitionFile>
+      <ModuleDefinitionFile Condition="'$(CialloHookFeatureProxyExports)'!='false'">entry\version.def</ModuleDefinitionFile>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -175,30 +181,32 @@
       <AdditionalLibraryDirectories>..\..\third\detours\lib.X64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>detours.lib;bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <ImageHasSafeExceptionHandlers Condition="'$(Platform)'=='Win32'">false</ImageHasSafeExceptionHandlers>
-      <ModuleDefinitionFile>entry\version.def</ModuleDefinitionFile>
+      <ModuleDefinitionFile Condition="'$(CialloHookFeatureProxyExports)'!='false'">entry\version.def</ModuleDefinitionFile>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="config\config_manager.cpp" />
     <ClCompile Include="core\hook_manager.cpp" />
     <ClCompile Include="entry\dllmain.cpp" />
-    <ClCompile Include="hooks\binary_patch_1337.cpp" />
+    <ClCompile Include="hooks\binary_patch_1337.cpp" Condition="'$(CialloHookFeatureBinaryPatch)'!='false'" />
     <ClCompile Include="hooks\hook_modules.cpp" />
-    <ClCompile Include="hooks\alice_system3x_hooks.cpp" />
-    <ClCompile Include="hooks\krkr_plugin_bridge.cpp" />
-    <ClCompile Include="hooks\rio_shiina_hooks.cpp" />
-    <ClCompile Include="entry\Proxy.cpp" />
-    <ClCompile Include="entry\WinMMExports.cpp">
+    <ClCompile Include="hooks\alice_system3x_hooks.cpp" Condition="'$(CialloHookFeatureAliceSystem3x)'!='false'" />
+    <ClCompile Include="hooks\krkr_plugin_bridge.cpp" Condition="'$(CialloHookFeatureKrkrPatch)'!='false'" />
+    <ClCompile Include="hooks\rio_shiina_hooks.cpp" Condition="'$(CialloHookFeatureRioShiina)'!='false'" />
+    <ClCompile Include="entry\Proxy.cpp" Condition="'$(CialloHookFeatureProxyExports)'!='false'" />
+    <ClCompile Include="entry\WinMMExports.cpp" Condition="'$(CialloHookFeatureProxyExports)'!='false'">
       <WholeProgramOptimization>false</WholeProgramOptimization>
     </ClCompile>
-    <ClCompile Include="..\..\third\krkrplugin\CompilerHelper.cpp" />
-    <ClCompile Include="..\..\third\krkrplugin\KrkrPatchStream.cpp" />
-    <ClCompile Include="..\..\third\krkrplugin\Pe.cpp" />
-    <ClCompile Include="..\..\third\krkrplugin\tp_stub.cpp" />
+    <ClCompile Include="..\..\third\krkrplugin\CompilerHelper.cpp" Condition="'$(CialloHookFeatureKrkrPatch)'!='false'" />
+    <ClCompile Include="..\..\third\krkrplugin\KrkrPatchStream.cpp" Condition="'$(CialloHookFeatureKrkrPatch)'!='false'" />
+    <ClCompile Include="..\..\third\krkrplugin\Pe.cpp" Condition="'$(CialloHookFeatureKrkrPatch)'!='false'" />
+    <ClCompile Include="..\..\third\krkrplugin\tp_stub.cpp" Condition="'$(CialloHookFeatureKrkrPatch)'!='false'" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="config\build_options.h" />
     <ClInclude Include="config\config_manager.h" />
     <ClInclude Include="config\config_source.h" />
+    <ClInclude Include="config\gui_config_overrides.h" />
     <ClInclude Include="config\settings.h" />
     <ClInclude Include="core\hook_manager.h" />
     <ClInclude Include="hooks\binary_patch_1337.h" />
@@ -220,6 +228,10 @@
     <ClInclude Include="..\..\third\krkrplugin\CallingConvention\ThiscallToCdeclAdapter.h" />
   </ItemGroup>
   <ItemGroup>
+    <ResourceCompile Include="CialloHook.rc" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="config\build_options.props" />
     <None Include="config\CialloHook.ini" />
     <None Include="config\CialloHook_Example.ini" />
     <None Include="entry\version.def" />
@@ -230,24 +242,14 @@
     </ProjectReference>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
-  <PropertyGroup>
-    <PostBuildEventUseInBuild>true</PostBuildEventUseInBuild>
-  </PropertyGroup>
-  <ItemDefinitionGroup>
-    <PostBuildEvent>
-      <Command>
-if exist "$(ProjectDir)config\CialloHook.ini" (
-  copy /Y "$(ProjectDir)config\CialloHook.ini" "$(OutDir)CialloHook.ini" >nul
-  copy /Y "$(ProjectDir)config\CialloHook.ini" "$(OutDir)winmm.ini" >nul
-  copy /Y "$(ProjectDir)config\CialloHook.ini" "$(OutDir)version.ini" >nul
-)
-if "$(Configuration)"=="Release" (
-  python "$(ProjectDir)..\LitePAK_tool\tools\litepak_codecrypt_patch.py" "$(TargetPath)"
-)
-</Command>
-      <Message>Copying CialloHook.ini to output directory...</Message>
-    </PostBuildEvent>
-  </ItemDefinitionGroup>
+  <Target Name="CialloHookCopyDefaultIni" AfterTargets="Build">
+    <Copy SourceFiles="$(ProjectDir)config\CialloHook.ini" DestinationFiles="$(OutDir)CialloHook.ini" Condition="Exists('$(ProjectDir)config\CialloHook.ini') and !Exists('$(OutDir)CialloHook.ini')" />
+    <Copy SourceFiles="$(ProjectDir)config\CialloHook.ini" DestinationFiles="$(OutDir)winmm.ini" Condition="Exists('$(ProjectDir)config\CialloHook.ini') and !Exists('$(OutDir)winmm.ini')" />
+    <Copy SourceFiles="$(ProjectDir)config\CialloHook.ini" DestinationFiles="$(OutDir)version.ini" Condition="Exists('$(ProjectDir)config\CialloHook.ini') and !Exists('$(OutDir)version.ini')" />
+  </Target>
+  <Target Name="CialloHookCodeCryptPatch" AfterTargets="Build" Condition="'$(Configuration)'=='Release' and '$(CialloHookFeatureCodeCryptPatch)'!='false'">
+    <Exec Command="python &quot;$(ProjectDir)..\LitePAK_tool\tools\litepak_codecrypt_patch.py&quot; &quot;$(TargetPath)&quot;" />
+  </Target>
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
 </Project>

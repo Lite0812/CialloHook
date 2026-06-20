@@ -1,4 +1,11 @@
 #include "krkr_plugin_bridge.h"
+#include "../config/build_options.h"
+
+#ifndef CIALLOHOOK_FEATURE_KRKR_PATCH
+#define CIALLOHOOK_FEATURE_KRKR_PATCH 1
+#endif
+
+#if CIALLOHOOK_FEATURE_KRKR_PATCH
 
 #include <Windows.h>
 
@@ -1925,3 +1932,37 @@ static HRESULT WINAPI HookV2Link(iTVPFunctionExporter* pExporter)
 		}
 	}
 }
+
+#else
+
+namespace CialloHook
+{
+	namespace HookModules
+	{
+		void ConfigureKrkrPluginPatchTargets(
+			bool enableKrkrPatch,
+			bool verboseLog,
+			bool bootstrapBypass,
+			bool enableCxdecBridge,
+			const std::wstring& gameDir,
+			const std::vector<std::wstring>& patchRoots,
+			const std::vector<std::wstring>& customPakFiles,
+			const std::vector<std::wstring>& patchBaseNames,
+			const std::vector<std::wstring>& patchFolders,
+			const std::vector<std::wstring>& patchArchives)
+		{
+			(void)enableKrkrPatch;
+			(void)verboseLog;
+			(void)bootstrapBypass;
+			(void)enableCxdecBridge;
+			(void)gameDir;
+			(void)patchRoots;
+			(void)customPakFiles;
+			(void)patchBaseNames;
+			(void)patchFolders;
+			(void)patchArchives;
+		}
+	}
+}
+
+#endif

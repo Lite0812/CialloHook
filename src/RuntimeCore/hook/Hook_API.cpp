@@ -3,6 +3,50 @@
 #include "Hook_API_DEF.h"
 #include "CustomPakVFS.h"
 
+#if __has_include("../../CialloHook/config/build_options.h")
+#include "../../CialloHook/config/build_options.h"
+#endif
+
+#ifndef CIALLOHOOK_FEATURE_FONT
+#define CIALLOHOOK_FEATURE_FONT 1
+#endif
+#ifndef CIALLOHOOK_FEATURE_TEXT
+#define CIALLOHOOK_FEATURE_TEXT 1
+#endif
+#ifndef CIALLOHOOK_FEATURE_WINDOW_TITLE
+#define CIALLOHOOK_FEATURE_WINDOW_TITLE 1
+#endif
+#ifndef CIALLOHOOK_FEATURE_SCREEN_CAPTURE_PROTECTION
+#define CIALLOHOOK_FEATURE_SCREEN_CAPTURE_PROTECTION 1
+#endif
+#ifndef CIALLOHOOK_FEATURE_FILE_PATCH
+#define CIALLOHOOK_FEATURE_FILE_PATCH 1
+#endif
+#ifndef CIALLOHOOK_FEATURE_REGISTRY
+#define CIALLOHOOK_FEATURE_REGISTRY 1
+#endif
+#ifndef CIALLOHOOK_FEATURE_CODEPAGE
+#define CIALLOHOOK_FEATURE_CODEPAGE 1
+#endif
+#ifndef CIALLOHOOK_FEATURE_LOCALE_EMULATOR
+#define CIALLOHOOK_FEATURE_LOCALE_EMULATOR 1
+#endif
+#ifndef CIALLOHOOK_FEATURE_STARTUP_MESSAGE
+#define CIALLOHOOK_FEATURE_STARTUP_MESSAGE 1
+#endif
+#ifndef CIALLOHOOK_FEATURE_SPLASH_IMAGE
+#define CIALLOHOOK_FEATURE_SPLASH_IMAGE 1
+#endif
+#ifndef CIALLOHOOK_FEATURE_SIGLUS_KEY_EXTRACT
+#define CIALLOHOOK_FEATURE_SIGLUS_KEY_EXTRACT 1
+#endif
+#ifndef CIALLOHOOK_FEATURE_CUSTOM_PAK
+#define CIALLOHOOK_FEATURE_CUSTOM_PAK 1
+#endif
+#ifndef CIALLOHOOK_FEATURE_KRKR_PATCH
+#define CIALLOHOOK_FEATURE_KRKR_PATCH 1
+#endif
+
 #include <Windows.h>
 #include <vector>
 #include <string>
@@ -623,14 +667,228 @@ namespace Rut
 		}
 
 
+#if CIALLOHOOK_FEATURE_FONT
 #include "hook_api/font_hooks.inl"
+#else
+		bool LoadFontFromFile(const wchar_t*, bool) { return false; }
+		void SetFontHookRules(const wchar_t* const*, size_t, const wchar_t* const*, const wchar_t* const*, size_t) {}
+		void EnableFontHookVerboseLog(bool) {}
+#define CIALLOHOOK_STUB_FONT_HOOK0(name) bool name() { return false; }
+#define CIALLOHOOK_STUB_FONT_HOOK1(name, t1) bool name(t1) { return false; }
+		bool HookCreateFontA(const uint32_t, bool, uint32_t, uint32_t, const char*, int, int, int, float, float, float, int, int, int, int, int, int) { return false; }
+		bool HookCreateFontIndirectA(const uint32_t, bool, uint32_t, uint32_t, const char*, int, int, int, float, float, float, int, int, int, int, int, int) { return false; }
+		bool HookCreateFontW(const uint32_t, bool, uint32_t, uint32_t, const wchar_t*, int, int, int, float, float, float, int, int, int, int, int, int) { return false; }
+		bool HookCreateFontIndirectW(const uint32_t, bool, uint32_t, uint32_t, const wchar_t*, int, int, int, float, float, float, int, int, int, int, int, int) { return false; }
+		CIALLOHOOK_STUB_FONT_HOOK1(HookEnumFontFamiliesExA, bool)
+		CIALLOHOOK_STUB_FONT_HOOK1(HookEnumFontFamiliesExW, bool)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookCreateFontIndirectExA)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookCreateFontIndirectExW)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookGetObjectA)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookGetObjectW)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookGetTextFaceA)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookGetTextFaceW)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookGetTextMetricsA)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookGetTextMetricsW)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookGetCharABCWidthsA)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookGetCharABCWidthsW)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookGetCharABCWidthsFloatA)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookGetCharABCWidthsFloatW)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookGetCharWidthA)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookGetCharWidthW)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookGetCharWidth32A)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookGetCharWidth32W)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookGetKerningPairsA)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookGetKerningPairsW)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookGetOutlineTextMetricsA)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookGetOutlineTextMetricsW)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookAddFontResourceA)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookAddFontResourceW)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookAddFontResourceExA)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookAddFontMemResourceEx)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookRemoveFontResourceA)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookRemoveFontResourceW)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookRemoveFontResourceExA)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookRemoveFontMemResourceEx)
+		CIALLOHOOK_STUB_FONT_HOOK1(HookEnumFontsA, bool)
+		CIALLOHOOK_STUB_FONT_HOOK1(HookEnumFontsW, bool)
+		CIALLOHOOK_STUB_FONT_HOOK1(HookEnumFontFamiliesA, bool)
+		CIALLOHOOK_STUB_FONT_HOOK1(HookEnumFontFamiliesW, bool)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookChooseFontA)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookChooseFontW)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookGetCharWidthFloatA)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookGetCharWidthFloatW)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookGetCharWidthI)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookGetCharABCWidthsI)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookGetTextExtentPointI)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookGetTextExtentExPointI)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookGetFontData)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookGetFontLanguageInfo)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookGetFontUnicodeRanges)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookDWriteCreateFactory)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookD2D1CreateFactory)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookGdipCreateFontFamilyFromName)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookGdipCreateFontFromLogfontW)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookGdipCreateFontFromLogfontA)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookGdipCreateFontFromHFONT)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookGdipCreateFontFromDC)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookGdipCreateFont)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookGdipDrawString)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookGdipDrawDriverString)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookGdipMeasureString)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookGdipMeasureCharacterRanges)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookGdipMeasureDriverString)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookLoadLibraryW)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookLoadLibraryExW)
+#undef CIALLOHOOK_STUB_FONT_HOOK0
+#undef CIALLOHOOK_STUB_FONT_HOOK1
+#endif
+
+#if CIALLOHOOK_FEATURE_TEXT || CIALLOHOOK_FEATURE_FONT
 #include "hook_api/text_hooks.inl"
+#else
+		void AddTextReplaceRule(const char*, const char*) {}
+		void AddTextReplaceRuleW(const wchar_t*, const wchar_t*) {}
+		void SetTextReplaceEncoding(uint32_t) {}
+		void SetTextReplaceEncodings(uint32_t, uint32_t) {}
+		void EnableTextReplaceVerboseLog(bool) {}
+		void SetTextReplaceBypass(bool) {}
+		void SetCnJpMapEncoding(uint32_t) {}
+		void SetWaffleGetTextCrashPatchEnabled(bool) {}
+		void EnableCnJpMap(bool) {}
+		void EnableCnJpMapVerboseLog(bool) {}
+		bool LoadCnJpMapFile(const wchar_t*) { return false; }
+		bool IsCnJpMapEnabled() { return false; }
+		std::wstring ProcessGlyphStageTextW(const wchar_t* text, int length)
+		{
+			if (!text)
+			{
+				return L"";
+			}
+			return length < 0 ? std::wstring(text) : std::wstring(text, text + length);
+		}
+#define CIALLOHOOK_STUB_TEXT_HOOK(name) bool name() { return false; }
+		CIALLOHOOK_STUB_TEXT_HOOK(HookTextOutA)
+		CIALLOHOOK_STUB_TEXT_HOOK(HookTextOutW)
+		CIALLOHOOK_STUB_TEXT_HOOK(HookExtTextOutA)
+		CIALLOHOOK_STUB_TEXT_HOOK(HookExtTextOutW)
+		CIALLOHOOK_STUB_TEXT_HOOK(HookDrawTextA)
+		CIALLOHOOK_STUB_TEXT_HOOK(HookDrawTextW)
+		CIALLOHOOK_STUB_TEXT_HOOK(HookDrawTextExA)
+		CIALLOHOOK_STUB_TEXT_HOOK(HookDrawTextExW)
+		CIALLOHOOK_STUB_TEXT_HOOK(HookPolyTextOutA)
+		CIALLOHOOK_STUB_TEXT_HOOK(HookPolyTextOutW)
+		CIALLOHOOK_STUB_TEXT_HOOK(HookTabbedTextOutA)
+		CIALLOHOOK_STUB_TEXT_HOOK(HookTabbedTextOutW)
+		CIALLOHOOK_STUB_TEXT_HOOK(HookGetTabbedTextExtentA)
+		CIALLOHOOK_STUB_TEXT_HOOK(HookGetTabbedTextExtentW)
+		CIALLOHOOK_STUB_TEXT_HOOK(HookGetTextExtentPoint32A)
+		CIALLOHOOK_STUB_TEXT_HOOK(HookGetTextExtentPoint32W)
+		CIALLOHOOK_STUB_TEXT_HOOK(HookGetTextExtentExPointA)
+		CIALLOHOOK_STUB_TEXT_HOOK(HookGetTextExtentExPointW)
+		CIALLOHOOK_STUB_TEXT_HOOK(HookGetTextExtentPointA)
+		CIALLOHOOK_STUB_TEXT_HOOK(HookGetTextExtentPointW)
+		CIALLOHOOK_STUB_TEXT_HOOK(HookGetCharacterPlacementA)
+		CIALLOHOOK_STUB_TEXT_HOOK(HookGetCharacterPlacementW)
+		CIALLOHOOK_STUB_TEXT_HOOK(HookGetGlyphIndicesA)
+		CIALLOHOOK_STUB_TEXT_HOOK(HookGetGlyphIndicesW)
+		CIALLOHOOK_STUB_TEXT_HOOK(HookGetGlyphOutlineA)
+		CIALLOHOOK_STUB_TEXT_HOOK(HookGetGlyphOutlineW)
+#undef CIALLOHOOK_STUB_TEXT_HOOK
+#endif
+
+#if CIALLOHOOK_FEATURE_TEXT
 #include "hook_api/ui_text_hooks.inl"
+#else
+#define CIALLOHOOK_STUB_UI_TEXT_HOOK(name) bool name() { return false; }
+		CIALLOHOOK_STUB_UI_TEXT_HOOK(HookMessageBoxA)
+		CIALLOHOOK_STUB_UI_TEXT_HOOK(HookSetDlgItemTextA)
+		CIALLOHOOK_STUB_UI_TEXT_HOOK(HookSendDlgItemMessageA)
+		CIALLOHOOK_STUB_UI_TEXT_HOOK(HookSendDlgItemMessageW)
+		CIALLOHOOK_STUB_UI_TEXT_HOOK(HookSendMessageA)
+		CIALLOHOOK_STUB_UI_TEXT_HOOK(HookSendMessageW)
+		CIALLOHOOK_STUB_UI_TEXT_HOOK(HookAppendMenuA)
+		CIALLOHOOK_STUB_UI_TEXT_HOOK(HookModifyMenuA)
+		CIALLOHOOK_STUB_UI_TEXT_HOOK(HookInsertMenuA)
+		CIALLOHOOK_STUB_UI_TEXT_HOOK(HookInsertMenuItemA)
+		CIALLOHOOK_STUB_UI_TEXT_HOOK(HookSetMenuItemInfoA)
+		CIALLOHOOK_STUB_UI_TEXT_HOOK(HookMessageBoxIndirectA)
+		CIALLOHOOK_STUB_UI_TEXT_HOOK(HookDrawThemeText)
+		CIALLOHOOK_STUB_UI_TEXT_HOOK(HookDrawThemeTextEx)
+		CIALLOHOOK_STUB_UI_TEXT_HOOK(HookDefWindowProcA)
+		CIALLOHOOK_STUB_UI_TEXT_HOOK(HookDefWindowProcW)
+		CIALLOHOOK_STUB_UI_TEXT_HOOK(HookDialogBoxParamA)
+		CIALLOHOOK_STUB_UI_TEXT_HOOK(HookDialogBoxParamW)
+		CIALLOHOOK_STUB_UI_TEXT_HOOK(HookCreateDialogParamA)
+		CIALLOHOOK_STUB_UI_TEXT_HOOK(HookCreateDialogParamW)
+		CIALLOHOOK_STUB_UI_TEXT_HOOK(HookDialogBoxIndirectParamA)
+		CIALLOHOOK_STUB_UI_TEXT_HOOK(HookDialogBoxIndirectParamW)
+		CIALLOHOOK_STUB_UI_TEXT_HOOK(HookCreateDialogIndirectParamA)
+		CIALLOHOOK_STUB_UI_TEXT_HOOK(HookCreateDialogIndirectParamW)
+		CIALLOHOOK_STUB_UI_TEXT_HOOK(HookPropertySheetA)
+		CIALLOHOOK_STUB_UI_TEXT_HOOK(HookExitProcessGuard)
+#undef CIALLOHOOK_STUB_UI_TEXT_HOOK
+#endif
+
+#if CIALLOHOOK_FEATURE_WINDOW_TITLE || CIALLOHOOK_FEATURE_SCREEN_CAPTURE_PROTECTION || CIALLOHOOK_FEATURE_STARTUP_MESSAGE
 #include "hook_api/window_hooks.inl"
+#else
+		void AddWindowTitleRule(const wchar_t*, const wchar_t*) {}
+		void SetWindowTitleEncoding(uint32_t) {}
+		void SetWindowTitleEncodings(uint32_t, uint32_t) {}
+		void EnableWindowTitleVerboseLog(bool) {}
+		void SetWindowTitleReplaceBypass(bool) {}
+		void EnableStartupWindowGate(bool, uint32_t) {}
+		void ReleaseStartupWindowGate() {}
+		bool HookWindowTitleAPIs(int) { return false; }
+		void SetScreenCaptureProtectionConfig(bool, uint32_t, bool, bool, bool, bool) {}
+		bool HookScreenCaptureProtectionAPIs(int) { return false; }
+		void ApplyScreenCaptureProtectionToExistingWindows() {}
+#endif
+
+#if CIALLOHOOK_FEATURE_FILE_PATCH || CIALLOHOOK_FEATURE_CUSTOM_PAK || CIALLOHOOK_FEATURE_SPLASH_IMAGE || CIALLOHOOK_FEATURE_LOCALE_EMULATOR || CIALLOHOOK_FEATURE_KRKR_PATCH
 #include "hook_api/file_hooks.inl"
+#else
+		void SetPatchFolder(const wchar_t*, bool) {}
+		void SetPatchFolders(const wchar_t* const*, size_t, bool) {}
+		void SetSpoofRules(const wchar_t* const*, size_t, const wchar_t* const*, size_t, bool) {}
+		void SetDirectoryRedirectRules(const wchar_t* const*, const wchar_t* const*, size_t, bool) {}
+		void SetSyntheticFilePrefixSizeRule(const wchar_t*, uint64_t, bool) {}
+		void ClearSyntheticFileRules() {}
+		void SetCustomPakVFS(bool, const wchar_t* const*, size_t, bool) {}
+		void SetCustomPakReadMode(int) {}
+		bool TryGetCustomPakDiskCachePath(const wchar_t*, std::wstring&) { return false; }
+		void CleanupCustomPakCacheOnShutdown() {}
+		bool HookFileAPIs() { return false; }
+		bool UnhookFileAPIs() { return false; }
+#endif
+
+#if CIALLOHOOK_FEATURE_SIGLUS_KEY_EXTRACT
 #include "hook_api/siglus_hooks.inl"
+#else
+		void SetKeyExtractConfig(const wchar_t*, const wchar_t*, bool) {}
+		bool EnableSiglusKeyExtract() { return false; }
+		bool IsSiglusKeyExtracted() { return false; }
+#endif
+
+#if CIALLOHOOK_FEATURE_REGISTRY
 #include "hook_api/registry_hooks.inl"
+#else
+		bool LoadVirtualRegistryFile(const wchar_t*, bool) { return false; }
+		bool LoadVirtualRegistryFiles(const wchar_t* const*, size_t, bool) { return false; }
+		bool HookRegistryAPIs() { return false; }
+		bool UnhookRegistryAPIs() { return false; }
+#endif
+
+#if CIALLOHOOK_FEATURE_CODEPAGE || CIALLOHOOK_FEATURE_LOCALE_EMULATOR
 #include "hook_api/codepage_hooks.inl"
+#else
+		void SetCodePageMapping(uint32_t, uint32_t) {}
+		bool HookMultiByteToWideChar() { return false; }
+		bool HookWideCharToMultiByte() { return false; }
+		bool HookCodePageAPIs() { return false; }
+		void SetLocaleEmulatorLanguage(uint32_t) {}
+		bool HookUILanguageAPIs() { return false; }
+#endif
 
     }
 }

@@ -180,7 +180,7 @@ namespace CialloLauncher
 		LocaleEmulatorLoaderOptions loaderOptions;
 		loaderOptions.tempDir = GetCustomPakCacheDir(L"LocaleEmulator");
 		loaderOptions.patchBaseDir = GetDirectoryPath(selfPath);
-		loaderOptions.patchFolders = config.patchFolders.empty() ? nullptr : &config.patchFolders;
+		loaderOptions.patchFolders = (config.filePatchEnable && !config.patchFolders.empty()) ? &config.patchFolders : nullptr;
 		loaderOptions.logPrefix = L"Launcher";
 		loaderOptions.preferLocalLoader = true;
 

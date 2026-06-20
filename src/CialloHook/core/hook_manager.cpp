@@ -22,6 +22,7 @@
 #include "../../RuntimeCore/io/CustomPakVFS.h"
 #include "../../RuntimeCore/hook/Hook_API.h"
 #include "../../RuntimeCore/hook/LocaleEmulatorSupport.h"
+#include "../config/build_options.h"
 #include "../config/config_manager.h"
 #include "../hooks/hook_modules.h"
 
@@ -1795,6 +1796,10 @@ namespace CialloHook
 
 	void HookManager::ShowSplashFromEntryPoint(HMODULE dllModule)
 	{
+#if !CIALLOHOOK_FEATURE_SPLASH_IMAGE
+		(void)dllModule;
+		return;
+#else
 		const ModuleSettingsContext context = BuildModuleSettingsContext(dllModule);
 		if (context.iniPath.empty()) return;
 
@@ -1994,6 +1999,7 @@ namespace CialloHook
 		{
 			RunSplashAnimationSafe(imgData.data(), imgData.size(), &ss);
 		}
+#endif
 	}
 
 	static void FillTimeZone(const std::wstring& timezone, RTL_TIME_ZONE_INFORMATION& tzi)
@@ -2260,6 +2266,10 @@ namespace CialloHook
 
 	bool HookManager::TryEarlyLocaleEmulatorRelaunch(HMODULE dllModule)
 	{
+#if !CIALLOHOOK_FEATURE_LOCALE_EMULATOR
+		(void)dllModule;
+		return false;
+#else
 		try
 		{
 			const ModuleSettingsContext context = BuildModuleSettingsContext(dllModule);
@@ -2277,10 +2287,15 @@ namespace CialloHook
 		{
 			return false;
 		}
+#endif
 	}
 
 	bool HookManager::TryHandleConsentInDllMain(HMODULE dllModule)
 	{
+#if !CIALLOHOOK_FEATURE_STARTUP_MESSAGE
+		(void)dllModule;
+		return true;
+#else
 		try
 		{
 			const ModuleSettingsContext context = BuildModuleSettingsContext(dllModule);
@@ -2323,6 +2338,7 @@ namespace CialloHook
 		{
 			return true;
 		}
+#endif
 	}
 
 	bool HookManager::TryLoadStartupSettings(HMODULE dllModule, AppSettings& settings)
@@ -2342,6 +2358,10 @@ namespace CialloHook
 
 	void HookManager::TryApplyBinaryPatchesBeforeEntry(HMODULE dllModule)
 	{
+#if !CIALLOHOOK_FEATURE_BINARY_PATCH
+		(void)dllModule;
+		return;
+#else
 		try
 		{
 			const ModuleSettingsContext context = BuildModuleSettingsContext(dllModule);
@@ -2367,11 +2387,16 @@ namespace CialloHook
 		{
 			LogMessage(LogLevel::Warn, L"BinaryPatch(pre-entry): HookManager unknown exception, fallback to runtime");
 		}
+#endif
 	}
 
 
 	void HookManager::TryRequestBinaryPatchOnFirstPatchHit(HMODULE dllModule)
 	{
+#if !CIALLOHOOK_FEATURE_BINARY_PATCH
+		(void)dllModule;
+		return;
+#else
 		try
 		{
 			const ModuleSettingsContext context = BuildModuleSettingsContext(dllModule);
@@ -2396,6 +2421,7 @@ namespace CialloHook
 		{
 			LogMessage(LogLevel::Warn, L"BinaryPatch(HWBP): HookManager unknown exception");
 		}
+#endif
 	}
 
 		void HookManager::RegisterLocaleEmulatorStagedFilesFromEnvironment()
@@ -2501,17 +2527,22 @@ namespace CialloHook
 				(uint32_t)settings.enginePatches.krkrPatchNames.size(),
 				settings.enginePatches.enableWafflePatch ? 1 : 0,
 				settings.enginePatches.waffleFixGetTextCrash ? 1 : 0);
+#if CIALLOHOOK_FEATURE_ENGINE_CACHE
 			RunEngineCacheCleanup(settings.engineCache);
+#endif
 
 			std::wstring dllNameLower = ToLowerCopy(dllNameNoExt);
 			bool isWinmmProxy = (dllNameLower == L"winmm");
 			LogMessage(LogLevel::Info, L"Load mode: %s", isWinmmProxy ? L"proxy(winmm)" : L"dll");
 
+#if CIALLOHOOK_FEATURE_LOCALE_EMULATOR
 			if (TryRelaunchWithLocaleEmulator(settings))
 			{
 				return;
 			}
+#endif
 
+#if CIALLOHOOK_FEATURE_STARTUP_MESSAGE
 			if (!startupMessageConsentAlreadyGranted)
 			{
 				if (!ShowStartupMessage(settings.startupMessage))
@@ -2525,6 +2556,7 @@ namespace CialloHook
 			{
 				LogMessage(LogLevel::Info, L"StartupMessage: prior consent already granted, skip in-process dialog");
 			}
+#endif
 			HookModules::ApplyPostStartupHooks(settings);
 			LogMessage(LogLevel::Info, L"All hook modules applied");
 		}

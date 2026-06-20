@@ -6,7 +6,15 @@
 
 #include "../../RuntimeCore/hook/Hook.h"
 #include "../../RuntimeCore/hook/Hook_API.h"
+#include "../config/build_options.h"
+
+#ifndef CIALLOHOOK_FEATURE_PROXY_EXPORTS
+#define CIALLOHOOK_FEATURE_PROXY_EXPORTS 1
+#endif
+
+#if CIALLOHOOK_FEATURE_PROXY_EXPORTS
 #include "Proxy.h"
+#endif
 #include "../core/hook_manager.h"
 #include "../hooks/hook_modules.h"
 
@@ -660,6 +668,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
 			BootstrapLog(L"DLL_PROCESS_ATTACH: module=%s", modulePath[0] ? modulePath : L"(unknown)");
 		}
 		{
+#if CIALLOHOOK_FEATURE_PROXY_EXPORTS
 			const bool isWinmmProxy = IsWinmmProxyModule(hModule);
 			BootstrapLog(L"DLL_PROCESS_ATTACH: isWinmmProxy=%d", isWinmmProxy ? 1 : 0);
 			if (isWinmmProxy)
@@ -672,6 +681,9 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
 				Proxy::Init();
 				BootstrapLog(L"DllMain: Proxy::Init success");
 			}
+#else
+			BootstrapLog(L"DllMain: proxy exports disabled, skip Proxy::Init");
+#endif
 		}
 		sg_previousTopLevelExceptionFilter = SetUnhandledExceptionFilter(TopLevelExceptionFilter);
 		if (CialloHook::HookManager::TryEarlyLocaleEmulatorRelaunch(hModule))
