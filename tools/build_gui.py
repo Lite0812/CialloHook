@@ -1845,6 +1845,7 @@ class BuildGui(QMainWindow):
         self.detail_widgets: dict[str, object] = {}
         self.table_widgets: dict[str, TableEditor] = {}
         self.help_labels: list[QLabel] = []
+        self.creating_detail_page = False
 
         self.setWindowTitle("CialloHook 编译配置器")
         self.resize(1280, 860)
@@ -1992,7 +1993,7 @@ class BuildGui(QMainWindow):
         self.tabs.addTab(page, "功能裁剪")
 
     def make_detail_tab(self) -> None:
-        groups: list[tuple[str, list[str], list[str], tuple[str, ...]]] = [
+        self.detail_groups: list[tuple[str, list[str], list[str], tuple[str, ...]]] = [
             ("基础", ["load_mode", "debug_enable", "debug_file", "debug_console", "startup_attach_mode", "startup_delay_ms", "startup_wait_gui", "startup_window_gate"], [], ()),
             ("字体", ["font_charset", "font_name", "font_name_override", "font_charset_spoof", "font_spoof_from", "font_spoof_to", "font_unlock", "font_verbose", "font_cnjp_enable", "font_cnjp_verbose", "font_cnjp_json", "font_cnjp_read_encoding", "font_height", "font_width", "font_weight", "font_scale", "font_spacing_scale", "font_glyph_aspect", "font_glyph_offset_x", "font_glyph_offset_y", "font_metrics_left", "font_metrics_right", "font_metrics_top", "font_metrics_bottom"], ["font_skip_fonts", "font_redirect_rules"], ("CIALLOHOOK_FEATURE_FONT",)),
             ("字体 API", [f"font_{name}" for name in FONT_HOOKS], [], ("CIALLOHOOK_FEATURE_FONT",)),
@@ -2032,18 +2033,42 @@ class BuildGui(QMainWindow):
         self.detail_stack = QStackedWidget()
         page_layout.addWidget(self.detail_stack, 1)
 
-        self.detail_pages: list[tuple[int, tuple[str, ...]]] = []
-        for title, field_keys, table_keys, required_features in groups:
-            group_page, layout = self.scroll_page()
-            self.add_form_section(layout, title, field_keys, table_keys)
-            layout.addStretch(1)
-            page_index = self.detail_stack.addWidget(group_page)
+        self.detail_pages: list[tuple[int | None, tuple[str, ...]]] = []
+        for group in self.detail_groups:
+            title = group[0]
+            required_features = group[3]
             self.detail_nav.addItem(title)
-            self.detail_pages.append((page_index, required_features))
-        self.detail_nav.currentRowChanged.connect(self.detail_stack.setCurrentIndex)
+            self.detail_pages.append((None, required_features))
+        self.detail_nav.currentRowChanged.connect(self.show_detail_page)
+        self.show_detail_page(0)
         self.detail_nav.setCurrentRow(0)
         self.refresh_detail_visibility()
         self.tabs.addTab(page, "详细设置")
+
+    def show_detail_page(self, row: int) -> None:
+        if row < 0 or row >= len(self.detail_pages):
+            return
+        was_enabled = self.detail_stack.updatesEnabled()
+        self.detail_stack.setUpdatesEnabled(False)
+        try:
+            page_index, required_features = self.detail_pages[row]
+            if page_index is None:
+                title, field_keys, table_keys, _ = self.detail_groups[row]
+                self.creating_detail_page = True
+                try:
+                    group_page, layout = self.scroll_page()
+                    self.add_form_section(layout, title, field_keys, table_keys)
+                    layout.addStretch(1)
+                finally:
+                    self.creating_detail_page = False
+                page_index = self.detail_stack.addWidget(group_page)
+                self.detail_pages[row] = (page_index, required_features)
+                self.set_help_visible(self.show_help.isChecked())
+            if page_index is not None:
+                self.detail_stack.setCurrentIndex(page_index)
+        finally:
+            self.detail_stack.setUpdatesEnabled(was_enabled)
+            self.detail_stack.update()
 
     def make_pack_tool_tab(self) -> None:
         page, layout = self.scroll_page()
@@ -2469,7 +2494,8 @@ class BuildGui(QMainWindow):
         if not hasattr(self, "detail_pages"):
             return
         first_visible = -1
-        for item_index, (page_index, required_features) in enumerate(self.detail_pages):
+        for item_index, detail_page in enumerate(self.detail_pages):
+            required_features = detail_page[1]
             visible = all(self.checkboxes[key].isChecked() for key in required_features)
             item = self.detail_nav.item(item_index)
             item.setHidden(not visible)
@@ -2479,7 +2505,7 @@ class BuildGui(QMainWindow):
         if first_visible >= 0 and (current_item is None or current_item.isHidden()):
             self.detail_nav.setCurrentRow(first_visible)
         elif self.detail_nav.currentRow() >= 0:
-            self.detail_stack.setCurrentIndex(self.detail_pages[self.detail_nav.currentRow()][0])
+            self.show_detail_page(self.detail_nav.currentRow())
 
     def add_form_section(self, parent: QVBoxLayout, title: str, field_keys: list[str], table_keys: list[str]) -> None:
         if field_keys:
@@ -2543,12 +2569,20 @@ class BuildGui(QMainWindow):
 
     def register_help_label(self, label: QLabel) -> None:
         self.help_labels.append(label)
-        if hasattr(self, "show_help"):
+        if hasattr(self, "show_help") and not getattr(self, "creating_detail_page", False):
             label.setVisible(self.show_help.isChecked())
 
     def set_help_visible(self, visible: bool) -> None:
-        for label in getattr(self, "help_labels", []):
-            label.setVisible(visible)
+        parent = getattr(self, "detail_stack", None)
+        if parent is not None:
+            parent.setUpdatesEnabled(False)
+        try:
+            for label in getattr(self, "help_labels", []):
+                label.setVisible(visible)
+        finally:
+            if parent is not None:
+                parent.setUpdatesEnabled(True)
+                parent.update()
 
     def make_log_tab(self) -> None:
         page = QWidget()
@@ -2765,10 +2799,19 @@ class BuildGui(QMainWindow):
             "detail": {},
             "tables": {},
         }
+        current_detail = dict(self.state.get("detail", {}))
         for field in FIELDS:
-            state["detail"][field.key] = self.widget_value(field.key)
-        for key, editor in self.table_widgets.items():
-            state["tables"][key] = editor.value()
+            if field.key in self.detail_widgets:
+                state["detail"][field.key] = self.widget_value(field.key)
+            else:
+                state["detail"][field.key] = current_detail.get(field.key, field.default)
+        current_tables = dict(self.state.get("tables", {}))
+        for table in TABLES:
+            editor = self.table_widgets.get(table.key)
+            if editor is not None:
+                state["tables"][table.key] = editor.value()
+            else:
+                state["tables"][table.key] = current_tables.get(table.key, [list(row) for row in table.default])
         return state
 
     def collect_features(self) -> dict[str, bool]:
@@ -2908,9 +2951,12 @@ class BuildGui(QMainWindow):
         for feature in FEATURES:
             self.checkboxes[feature.key].setChecked(bool(defaults["features"][feature.key]))
         for field in FIELDS:
-            self.set_widget_value(field.key, defaults["detail"][field.key])
+            if field.key in self.detail_widgets:
+                self.set_widget_value(field.key, defaults["detail"][field.key])
         for table in TABLES:
-            self.table_widgets[table.key].set_rows(defaults["tables"][table.key])
+            editor = self.table_widgets.get(table.key)
+            if editor is not None:
+                editor.set_rows(defaults["tables"][table.key])
         self.state = defaults
         self.refresh_detail_visibility()
         self.log("已恢复界面默认配置，点击保存后写入文件。")
