@@ -7,8 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from PyQt6.QtCore import QProcess, QProcessEnvironment, Qt, pyqtSignal
-from PyQt6.QtGui import QFont, QPalette
+from PyQt6.QtCore import QEvent, QProcess, QProcessEnvironment, Qt, pyqtSignal
+from PyQt6.QtGui import QFont, QPalette, QTextOption
 from PyQt6.QtWidgets import (
     QApplication,
     QAbstractItemView,
@@ -31,7 +31,9 @@ from PyQt6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSpinBox,
+    QSplitter,
     QStackedWidget,
+    QStyledItemDelegate,
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -108,6 +110,48 @@ class DragDropLineEdit(QLineEdit):
         super().dropEvent(event)
 
 
+class ShiftEnterPlainTextEdit(QPlainTextEdit):
+    def keyPressEvent(self, event) -> None:  # type: ignore[override]
+        if event.key() in {Qt.Key.Key_Return, Qt.Key.Key_Enter} and not (event.modifiers() & Qt.KeyboardModifier.ShiftModifier):
+            self.clearFocus()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+
+class MultilineTableItemDelegate(QStyledItemDelegate):
+    def createEditor(self, parent: QWidget, option: Any, index: Any) -> QWidget:  # type: ignore[override]
+        del option, index
+        editor = ShiftEnterPlainTextEdit(parent)
+        editor.setWordWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
+        editor.setFrameShape(QFrame.Shape.NoFrame)
+        editor.setMinimumHeight(70)
+        return editor
+
+    def setEditorData(self, editor: QWidget, index: Any) -> None:  # type: ignore[override]
+        if isinstance(editor, QPlainTextEdit):
+            editor.setPlainText(str(index.data(Qt.ItemDataRole.EditRole) or ""))
+            return
+        super().setEditorData(editor, index)
+
+    def setModelData(self, editor: QWidget, model: Any, index: Any) -> None:  # type: ignore[override]
+        if isinstance(editor, QPlainTextEdit):
+            model.setData(index, editor.toPlainText(), Qt.ItemDataRole.EditRole)
+            return
+        super().setModelData(editor, model, index)
+
+    def eventFilter(self, editor, event) -> bool:  # type: ignore[override]
+        if isinstance(editor, QPlainTextEdit) and event.type() == QEvent.Type.FocusOut:
+            self.commitData.emit(editor)
+            self.closeEditor.emit(editor, QStyledItemDelegate.EndEditHint.NoHint)
+            return False
+        return super().eventFilter(editor, event)
+
+    def updateEditorGeometry(self, editor: QWidget, option: Any, *args: Any) -> None:  # type: ignore[override]
+        del args
+        editor.setGeometry(option.rect)
+
+
 @dataclass(frozen=True)
 class Feature:
     key: str
@@ -144,18 +188,18 @@ FEATURES: list[Feature] = [
     Feature("CIALLOHOOK_FEATURE_WINDOW_TITLE", "窗口标题", "窗口标题替换和启动窗口门控。"),
     Feature("CIALLOHOOK_FEATURE_SCREEN_CAPTURE_PROTECTION", "防截图/录屏", "基于 SetWindowDisplayAffinity 的截图保护。"),
     Feature("CIALLOHOOK_FEATURE_FILE_PATCH", "文件补丁/VFS", "补丁目录、自定义封包、文件伪装、目录重定向。"),
-    Feature("CIALLOHOOK_FEATURE_CUSTOM_PAK", "CustomPak/资源包", "cpk/lpk/xp3 封包读取、LitePAK 解包和压缩解码支持。"),
+    Feature("CIALLOHOOK_FEATURE_CUSTOM_PAK", "CustomPak/自定义封包", "cpk/lpk/xp3 封包读取、LitePAK 解包和压缩解码支持。"),
     Feature("CIALLOHOOK_FEATURE_REGISTRY", "虚拟注册表", "进程内 .reg 虚拟注册表。"),
     Feature("CIALLOHOOK_FEATURE_REGISTRY_BOOTSTRAP", "注册表临时引导", "启动时写真实注册表，退出时回滚。"),
     Feature("CIALLOHOOK_FEATURE_CODEPAGE", "代码页转换", "MultiByteToWideChar / WideCharToMultiByte 代码页重定向。", True),
-    Feature("CIALLOHOOK_FEATURE_LOCALE_EMULATOR", "Locale Emulator", "LE/LEP 转区重启和语言 API Hook。"),
+    Feature("CIALLOHOOK_FEATURE_LOCALE_EMULATOR", "LE/LEP 转区", "LE/LEP 转区重启和语言 API Hook。"),
     Feature("CIALLOHOOK_FEATURE_STARTUP_MESSAGE", "启动声明弹窗", "启动确认/免责声明弹窗。"),
     Feature("CIALLOHOOK_FEATURE_SPLASH_IMAGE", "启动图/WebM", "启动图片动画和 WebM 透明视频支持。"),
     Feature("CIALLOHOOK_FEATURE_SIGLUS_KEY_EXTRACT", "Siglus 密钥提取", "SiglusEngine XOR key 提取 Hook。"),
-    Feature("CIALLOHOOK_FEATURE_ALICE_SYSTEM3X", "Alice System3.x", "Alice System3.x / System39 松散文件覆盖。"),
+    Feature("CIALLOHOOK_FEATURE_ALICE_SYSTEM3X", "Alice System3.x", "Alice System3.x 文件补丁。"),
     Feature("CIALLOHOOK_FEATURE_RIO_SHIINA", "RioShiina", "RioShiina 资源覆盖、WARC 解包、注册表/DVD 辅助。"),
     Feature("CIALLOHOOK_FEATURE_BINARY_PATCH", "二进制补丁", "预入口/运行时二进制补丁和硬件断点触发。"),
-    Feature("CIALLOHOOK_FEATURE_CODECRYPT_PATCH", "Release 代码加密补丁", "编译后加密 .lpksc 代码段；体积影响小，但更容易触发启发式误报。"),
+    Feature("CIALLOHOOK_FEATURE_CODECRYPT_PATCH", "Release 代码加密补丁", "编译后加密 .lpksc 代码段；体积影响小，但更容易触发误报。"),
     Feature("CIALLOHOOK_FEATURE_ENGINE_CACHE", "引擎缓存/Waffle", "MED / MAJIRO 字体缓存清理，以及 Waffle 文本崩溃修复。"),
     Feature("CIALLOHOOK_FEATURE_KRKR_PATCH", "Krkr Patch", "KRKR 补丁、Bootstrap 绕过和 Cxdec StorageMedia 桥接。"),
     Feature("CIALLOHOOK_FEATURE_PROXY_EXPORTS", "winmm/version 代理导出", "需要把 DLL 改名为 winmm.dll 或 version.dll 代理加载时启用；普通注入/Launcher 可关闭以减小 DLL。"),
@@ -189,7 +233,7 @@ FEATURE_WARNINGS: tuple[dict[str, Any], ...] = (
         "feature": "CIALLOHOOK_FEATURE_BINARY_PATCH",
         "missing_any": ("CIALLOHOOK_FEATURE_CUSTOM_PAK",),
         "detail": "binary_prefer_pak",
-        "message": "PreferCustomPak 需要 CustomPak/资源包；关闭后只会使用普通补丁文件。",
+        "message": "PreferCustomPak 需要 CustomPak/自定义封包；关闭后只会使用普通补丁文件。",
     },
     {
         "feature": "CIALLOHOOK_FEATURE_ENGINE_CACHE",
@@ -416,7 +460,7 @@ FIELDS: list[Field] = [
     Field("codepage_to", "目标代码页", "int", 936, "codePage.toCodePage", 0, 65001),
     Field("codepage_hook_mbtowc", "Hook MultiByteToWideChar", "bool", True, "codePage.hookMultiByteToWideChar"),
     Field("codepage_hook_wctomb", "Hook WideCharToMultiByte", "bool", True, "codePage.hookWideCharToMultiByte"),
-    Field("locale_enable", "启用 Locale Emulator", "bool", False, "localeEmulator.enable"),
+    Field("locale_enable", "启用 LE/LEP 转区", "bool", False, "localeEmulator.enable"),
     Field("locale_acp", "AnsiCodePage", "int", 932, "localeEmulator.ansiCodePage", 0, 65001),
     Field("locale_oem", "OemCodePage", "int", 932, "localeEmulator.oemCodePage", 0, 65001),
     Field("locale_id", "LocaleID", "hexint", "0x411", "localeEmulator.localeID"),
@@ -426,7 +470,7 @@ FIELDS: list[Field] = [
     Field("startup_msg_enable", "启用启动声明", "bool", False, "startupMessage.enable"),
     Field("startup_msg_style", "声明样式", "int", 1, "startupMessage.style", 1, 2),
     Field("startup_msg_title", "声明标题", "text", "CialloHook", "startupMessage.title"),
-    Field("startup_msg_author", "补丁作者", "text", "", "startupMessage.author"),
+    Field("startup_msg_author", "补丁作者", "multiline", "", "startupMessage.author"),
     Field("startup_msg_text", "声明正文", "multiline", "", "startupMessage.text"),
     Field("splash_enable", "启用启动图/WebM", "bool", False, "splashImage.enable"),
     Field("splash_file", "图片/视频文件", "text", "splash.png", "splashImage.imageFile"),
@@ -469,7 +513,7 @@ FIELDS: list[Field] = [
     Field("binary_verify_old", "校验旧字节", "bool", True, "binaryPatch.verifyOldBytes"),
     Field("binary_fail_missing", "模块缺失则失败", "bool", False, "binaryPatch.failOnMissingModule"),
     Field("binary_fail_write", "写入失败则失败", "bool", False, "binaryPatch.failOnWriteError"),
-    Field("binary_prefer_pak", "优先从 CustomPak 读取", "bool", False, "binaryPatch.preferCustomPak"),
+    Field("binary_prefer_pak", "优先从 CustomPak/自定义封包 读取", "bool", False, "binaryPatch.preferCustomPak"),
     Field("binary_hwbp_enable", "启用硬件断点触发", "bool", False, "binaryPatch.enableHwbp"),
     Field("binary_hwbp_module", "HWBP 模块名", "text", "", "binaryPatch.hwbpModule"),
     Field("binary_hwbp_rva", "HWBP RVA", "hexint", "0", "binaryPatch.hwbpRva"),
@@ -528,7 +572,7 @@ FIELD_HELP: dict[str, str] = {
     "font_verbose": "记录每次字体 API 命中，日志量较大。",
     "font_cnjp_enable": "读取映射文件，在字形查询/宽度/绘制阶段做字形映射。",
     "font_cnjp_verbose": "输出日繁/异体字映射命中详情。",
-    "font_cnjp_json": "映射 JSON 路径，支持补丁目录和 CustomPak 查找。",
+    "font_cnjp_json": "映射 JSON 路径，支持补丁目录和 CustomPak/自定义封包 查找。",
     "font_cnjp_read_encoding": "常见值：932 日文，936 简中，950 繁中，65001 UTF-8。",
     "font_height": "负数表示字符高度，0 表示不固定。",
     "font_width": "0 表示沿用原始宽度；大于 0 会强制固定宽度。",
@@ -585,10 +629,10 @@ FIELD_HELP: dict[str, str] = {
     "locale_hook_ui": "是否 Hook UI 语言相关 API。",
     "locale_timezone": "Windows 时区名，例如 Tokyo Standard Time。",
     "startup_msg_enable": "启动时显示声明/确认弹窗。",
-    "startup_msg_style": "控制声明弹窗样式。",
+    "startup_msg_style": "样式 1：只显示声明正文；样式 2：显示“补丁作者”和“补丁声明”分区。",
     "startup_msg_title": "声明窗口标题。",
-    "startup_msg_author": "补丁作者展示文本。",
-    "startup_msg_text": "声明正文，多行内容会写入 ini。",
+    "startup_msg_author": "补丁作者展示文本；可直接换行，不用输入 \\n。",
+    "startup_msg_text": "声明正文；可直接换行，不用输入 \\n。",
     "splash_enable": "启动时显示图片或 WebM 动画。",
     "splash_file": "支持补丁目录、CustomPak 和游戏根目录查找。",
     "splash_width": "启动图窗口宽度。",
@@ -606,7 +650,7 @@ FIELD_HELP: dict[str, str] = {
     "siglus_output": "提取到的 key 输出路径。",
     "siglus_message": "提取完成后显示弹窗。",
     "siglus_debug": "输出 Siglus 调试日志。",
-    "alice_enable": "启用 Alice System3.x 松散文件覆盖。",
+    "alice_enable": "启用 Alice System3.x 文件补丁。",
     "alice_log": "输出 Alice 资源命中日志。",
     "alice_exists": "Hook 文件存在性检查。",
     "alice_max_size": "允许覆盖读取的最大文件大小。",
@@ -641,8 +685,8 @@ FIELD_HELP: dict[str, str] = {
 TABLE_HELP: dict[str, str] = {
     "font_skip_fonts": "命中这些原始字体名时不做字体 Hook。",
     "font_redirect_rules": "按原始字体名定向替换到指定字体。",
-    "text_rules": "按文本或通配符替换。",
-    "title_rules": "按窗口标题或通配符替换。",
+    "text_rules": "按文本或通配符替换；表格单元格支持 Shift+Enter 直接换行，不用输入 \\n。",
+    "title_rules": "按窗口标题或通配符替换；表格单元格支持 Shift+Enter 直接换行，不用输入 \\n。",
     "file_patch_folders": "编号越后优先级越高。",
     "file_custom_paks": "支持 cpk/xp3/lpk，编号越后优先级越高。",
     "file_spoof_files": "让指定文件表现为存在。",
@@ -1009,7 +1053,7 @@ def table_cpp_value(table: TableSpec, rows: list[list[str]]) -> str:
 def detail_cpp_value(field: Field, detail: dict[str, Any]) -> str:
     value = detail[field.key]
     if field.kind in {"text", "choice", "multiline"}:
-        return cpp_w(str(value))
+        return cpp_w(decode_value(str(value)))
     if field.kind == "bool":
         return cpp_bool(bool(value))
     if field.kind in {"int", "hexint"}:
@@ -1155,7 +1199,7 @@ def ini_value_for_field(detail: dict[str, Any], key: str) -> str:
         return ini_int(value, parse_int(field.default))
     if field.kind == "float":
         return f"{float(value):.3f}".rstrip("0").rstrip(".")
-    return ini_text(value, field.kind == "multiline")
+    return ini_text(decode_value(value), field.kind in {"text", "multiline"})
 
 
 def rows_for(tables: dict[str, list[list[str]]], key: str) -> list[list[str]]:
@@ -1172,6 +1216,10 @@ def append_kv(lines: list[str], key: str, value: Any) -> None:
     lines.append(f"{key} = {value}")
 
 
+def ini_table_text(value: Any) -> str:
+    return ini_text(decode_value(value), True)
+
+
 def append_list(lines: list[str], rows: list[list[str]], count_key: str, item_prefix: str) -> None:
     values = [row[0] for row in rows if row and row[0].strip()]
     append_kv(lines, count_key, len(values))
@@ -1183,18 +1231,18 @@ def append_pair_rules(lines: list[str], rows: list[list[str]], count_key: str, l
     pairs = [row for row in rows if len(row) >= 2 and (row[0].strip() or row[1].strip())]
     append_kv(lines, count_key, len(pairs))
     for index, row in enumerate(pairs):
-        append_kv(lines, f"{left_prefix}{index}", row[0])
-        append_kv(lines, f"{right_prefix}{index}", row[1])
+        append_kv(lines, f"{left_prefix}{index}", ini_table_text(row[0]))
+        append_kv(lines, f"{right_prefix}{index}", ini_table_text(row[1]))
 
 
 def append_font_redirect(lines: list[str], rows: list[list[str]]) -> None:
     rules = [row for row in rows if len(row) >= 2 and any(cell.strip() for cell in row)]
     append_kv(lines, "RedirectFontCount", len(rules))
     for index, row in enumerate(rules):
-        append_kv(lines, f"RedirectFromFont_{index}", row[0])
-        append_kv(lines, f"RedirectToFont_{index}", row[1])
+        append_kv(lines, f"RedirectFromFont_{index}", ini_table_text(row[0]))
+        append_kv(lines, f"RedirectToFont_{index}", ini_table_text(row[1]))
         if len(row) > 2 and row[2].strip():
-            append_kv(lines, f"RedirectToFontName_{index}", row[2])
+            append_kv(lines, f"RedirectToFontName_{index}", ini_table_text(row[2]))
 
 
 def append_registry_bootstrap(lines: list[str], rows: list[list[str]]) -> None:
@@ -1778,6 +1826,8 @@ class TableEditor(QWidget):
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setWordWrap(True)
+        self.table.setItemDelegate(MultilineTableItemDelegate(self.table))
         self.table.setAlternatingRowColors(True)
         self.table.setMinimumHeight(130)
         layout.addWidget(self.table)
@@ -1786,15 +1836,22 @@ class TableEditor(QWidget):
         add_btn = QPushButton("添加")
         remove_btn = QPushButton("删除选中")
         clear_btn = QPushButton("清空")
+        import_btn = QPushButton("导入 TXT")
+        export_btn = QPushButton("导出 TXT")
         buttons.addWidget(add_btn)
         buttons.addWidget(remove_btn)
         buttons.addWidget(clear_btn)
+        if len(spec.columns) >= 2:
+            buttons.addWidget(import_btn)
+            buttons.addWidget(export_btn)
         buttons.addStretch(1)
         layout.addLayout(buttons)
 
         add_btn.clicked.connect(self.add_empty_row)
         remove_btn.clicked.connect(self.remove_selected_rows)
         clear_btn.clicked.connect(lambda: self.table.setRowCount(0))
+        import_btn.clicked.connect(self.import_txt_rules)
+        export_btn.clicked.connect(self.export_txt_rules)
         for row in rows:
             self.add_row(row)
 
@@ -1813,11 +1870,109 @@ class TableEditor(QWidget):
             self.table.setItem(row_index, column, QTableWidgetItem(str(value)))
         for column in range(len(values), len(self.spec.columns)):
             self.table.setItem(row_index, column, QTableWidgetItem(""))
+        self.table.resizeRowToContents(row_index)
 
     def remove_selected_rows(self) -> None:
         rows = sorted({index.row() for index in self.table.selectedIndexes()}, reverse=True)
         for row in rows:
             self.table.removeRow(row)
+
+    @staticmethod
+    def escape_txt_rule_value(value: str, quote_char: str) -> str:
+        escaped = value.replace("\\", r"\\").replace("\r", r"\r").replace("\n", r"\n").replace("\t", r"\t")
+        if quote_char == '"':
+            escaped = escaped.replace('"', r'\"')
+        else:
+            escaped = escaped.replace("“", r"\“").replace("”", r"\”")
+        return escaped
+
+    @staticmethod
+    def read_quoted_txt_value(line: str, start: int) -> tuple[str, int]:
+        if start >= len(line) or line[start] not in {'"', '“'}:
+            raise ValueError("需要以引号开始")
+        quote = line[start]
+        close_quote = '"' if quote == '"' else '”'
+        result: list[str] = []
+        index = start + 1
+        while index < len(line):
+            ch = line[index]
+            if ch == "\\" and index + 1 < len(line):
+                nxt = line[index + 1]
+                if nxt == "n":
+                    result.append("\n")
+                elif nxt == "r":
+                    result.append("\r")
+                elif nxt == "t":
+                    result.append("\t")
+                else:
+                    result.append(nxt)
+                index += 2
+                continue
+            if ch == close_quote:
+                return "".join(result), index + 1
+            result.append(ch)
+            index += 1
+        raise ValueError("缺少结束引号")
+
+    @classmethod
+    def parse_txt_rule_line(cls, line: str) -> tuple[str, str]:
+        left, index = cls.read_quoted_txt_value(line, 0)
+        while index < len(line) and line[index].isspace():
+            index += 1
+        if index >= len(line) or line[index] not in {":", "："}:
+            raise ValueError("缺少冒号分隔符")
+        index += 1
+        while index < len(line) and line[index].isspace():
+            index += 1
+        right, index = cls.read_quoted_txt_value(line, index)
+        if line[index:].strip():
+            raise ValueError("译文后存在多余内容")
+        return left, right
+
+    def export_txt_rules(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(self, f"导出 {self.spec.label}", f"{self.spec.key}.txt", "文本文件 (*.txt);;所有文件 (*)")
+        if not path:
+            return
+        lines: list[str] = []
+        for row in self.value():
+            if len(row) < 2:
+                continue
+            left = self.escape_txt_rule_value(row[0], '"')
+            right = self.escape_txt_rule_value(row[1], "“")
+            lines.append(f'"{left}":“{right}”')
+        Path(path).write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+        QMessageBox.information(self, "导出完成", f"已导出 {len(lines)} 条规则。")
+
+    def import_txt_rules(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, f"导入 {self.spec.label}", "", "文本文件 (*.txt);;所有文件 (*)")
+        if not path:
+            return
+        try:
+            lines = Path(path).read_text(encoding="utf-8-sig").splitlines()
+            rows: list[list[str]] = []
+            errors: list[str] = []
+            for line_number, line in enumerate(lines, 1):
+                if not line.strip():
+                    continue
+                try:
+                    left, right = self.parse_txt_rule_line(line.strip())
+                    row = [""] * len(self.spec.columns)
+                    row[0] = left
+                    row[1] = right
+                    rows.append(row)
+                except ValueError as exc:
+                    errors.append(f"第 {line_number} 行: {exc}")
+            if errors:
+                QMessageBox.warning(self, "导入失败", "TXT 格式应为：\"原文\":“译文”\n\n" + "\n".join(errors[:10]))
+                return
+            if self.value():
+                answer = QMessageBox.question(self, "确认导入", "导入会替换当前表格内容，是否继续？")
+                if answer != QMessageBox.StandardButton.Yes:
+                    return
+            self.set_rows(rows)
+            QMessageBox.information(self, "导入完成", f"已导入 {len(rows)} 条规则。")
+        except Exception as exc:
+            QMessageBox.critical(self, "导入失败", str(exc))
 
     def value(self) -> list[list[str]]:
         rows: list[list[str]] = []
@@ -2002,19 +2157,19 @@ class BuildGui(QMainWindow):
             ("窗口标题", ["title_mode", "title_encoding", "title_read_encoding", "title_write_encoding", "title_verbose"], ["title_rules"], ("CIALLOHOOK_FEATURE_WINDOW_TITLE",)),
             ("防截图", ["capture_enable", "capture_mode", "capture_fallback", "capture_existing", "capture_tool_windows", "capture_owned_windows", "capture_verbose"], [], ("CIALLOHOOK_FEATURE_SCREEN_CAPTURE_PROTECTION",)),
             ("文件补丁", ["file_patch_enable", "file_patch_log", "file_patch_debug"], ["file_patch_folders"], ("CIALLOHOOK_FEATURE_FILE_PATCH",)),
-            ("CustomPak", ["file_custom_pak_enable", "file_vfs_mode"], ["file_custom_paks"], ("CIALLOHOOK_FEATURE_FILE_PATCH", "CIALLOHOOK_FEATURE_CUSTOM_PAK")),
+            ("CustomPak/自定义封包", ["file_custom_pak_enable", "file_vfs_mode"], ["file_custom_paks"], ("CIALLOHOOK_FEATURE_FILE_PATCH", "CIALLOHOOK_FEATURE_CUSTOM_PAK")),
             ("文件欺骗/重定向", ["file_spoof_enable", "file_spoof_log", "dir_redirect_enable", "dir_redirect_log"], ["file_spoof_files", "file_spoof_dirs", "dir_redirect_rules"], ("CIALLOHOOK_FEATURE_FILE_PATCH",)),
             ("虚拟注册表", ["registry_enable", "registry_log"], ["registry_files"], ("CIALLOHOOK_FEATURE_REGISTRY",)),
             ("注册表引导", ["registry_bootstrap_enable", "registry_bootstrap_cleanup", "registry_bootstrap_log"], ["registry_bootstrap_rules"], ("CIALLOHOOK_FEATURE_REGISTRY_BOOTSTRAP",)),
             ("代码页", ["codepage_enable", "codepage_from", "codepage_to", "codepage_hook_mbtowc", "codepage_hook_wctomb"], [], ("CIALLOHOOK_FEATURE_CODEPAGE",)),
-            ("Locale Emulator", ["locale_enable", "locale_acp", "locale_oem", "locale_id", "locale_charset", "locale_hook_ui", "locale_timezone"], [], ("CIALLOHOOK_FEATURE_LOCALE_EMULATOR",)),
+            ("LE/LEP 转区", ["locale_enable", "locale_acp", "locale_oem", "locale_id", "locale_charset", "locale_hook_ui", "locale_timezone"], [], ("CIALLOHOOK_FEATURE_LOCALE_EMULATOR",)),
             ("启动声明", ["startup_msg_enable", "startup_msg_style", "startup_msg_title", "startup_msg_author", "startup_msg_text"], [], ("CIALLOHOOK_FEATURE_STARTUP_MESSAGE",)),
             ("启动图/WebM", ["splash_enable", "splash_file", "splash_width", "splash_height", "splash_entry_effect", "splash_exit_effect", "splash_entry_ms", "splash_hold_ms", "splash_exit_ms", "splash_duration_ms", "splash_position", "splash_interaction"], [], ("CIALLOHOOK_FEATURE_SPLASH_IMAGE",)),
-            ("Siglus", ["siglus_enable", "siglus_gameexe", "siglus_output", "siglus_message", "siglus_debug"], [], ("CIALLOHOOK_FEATURE_SIGLUS_KEY_EXTRACT",)),
-            ("Alice System3.x", ["alice_enable", "alice_log", "alice_exists", "alice_max_size"], ["alice_patch_folders"], ("CIALLOHOOK_FEATURE_ALICE_SYSTEM3X",)),
-            ("RioShiina", ["rio_enable", "rio_mode", "rio_extract_dir", "rio_skip_invalid", "rio_log", "rio_process_reg", "rio_process_dvd", "rio_spec_dvd_size"], ["rio_patch_names", "rio_archives"], ("CIALLOHOOK_FEATURE_RIO_SHIINA",)),
+            ("Siglus 秘钥提取", ["siglus_enable", "siglus_gameexe", "siglus_output", "siglus_message", "siglus_debug"], [], ("CIALLOHOOK_FEATURE_SIGLUS_KEY_EXTRACT",)),
+            ("Alice System3.x 补丁", ["alice_enable", "alice_log", "alice_exists", "alice_max_size"], ["alice_patch_folders"], ("CIALLOHOOK_FEATURE_ALICE_SYSTEM3X",)),
+            ("RioShiina 补丁", ["rio_enable", "rio_mode", "rio_extract_dir", "rio_skip_invalid", "rio_log", "rio_process_reg", "rio_process_dvd", "rio_spec_dvd_size"], ["rio_patch_names", "rio_archives"], ("CIALLOHOOK_FEATURE_RIO_SHIINA",)),
             ("引擎缓存/Waffle", ["engine_cache_med", "engine_cache_majiro", "waffle_patch_enable"], [], ("CIALLOHOOK_FEATURE_ENGINE_CACHE",)),
-            ("Krkr", ["krkr_patch_enable", "krkr_patch_verbose", "krkr_bootstrap_bypass", "krkr_cxdec_bridge"], ["krkr_patch_names"], ("CIALLOHOOK_FEATURE_KRKR_PATCH",)),
+            ("Krkr 补丁", ["krkr_patch_enable", "krkr_patch_verbose", "krkr_bootstrap_bypass", "krkr_cxdec_bridge"], ["krkr_patch_names"], ("CIALLOHOOK_FEATURE_KRKR_PATCH",)),
             ("二进制补丁", ["binary_enable", "binary_log", "binary_verify_old", "binary_fail_missing", "binary_fail_write", "binary_prefer_pak", "binary_hwbp_enable", "binary_hwbp_module", "binary_hwbp_rva"], ["binary_patch_files"], ("CIALLOHOOK_FEATURE_BINARY_PATCH",)),
             ("启动器", ["launcher_target", "launcher_debug"], ["launcher_target_dlls"], ()),
         ]
@@ -2023,15 +2178,23 @@ class BuildGui(QMainWindow):
         page_layout.setContentsMargins(16, 16, 16, 16)
         page_layout.setSpacing(14)
 
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setChildrenCollapsible(False)
+        page_layout.addWidget(splitter)
+
         self.detail_nav = QListWidget()
         self.detail_nav.setObjectName("detailNav")
-        self.detail_nav.setFixedWidth(168)
+        self.detail_nav.setMinimumWidth(120)
+        self.detail_nav.setMaximumWidth(360)
         self.detail_nav.setSpacing(4)
         self.detail_nav.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        page_layout.addWidget(self.detail_nav)
+        splitter.addWidget(self.detail_nav)
 
         self.detail_stack = QStackedWidget()
-        page_layout.addWidget(self.detail_stack, 1)
+        splitter.addWidget(self.detail_stack)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([168, 900])
 
         self.detail_pages: list[tuple[int | None, tuple[str, ...]]] = []
         for group in self.detail_groups:
@@ -2631,6 +2794,7 @@ class BuildGui(QMainWindow):
             edit = QPlainTextEdit(str(value))
             edit.setMinimumHeight(90)
             edit.setMaximumHeight(150)
+            edit.setWordWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
             return edit
         line = QLineEdit(str(value))
         if field.kind == "hexint":
