@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from PyQt6.QtCore import QProcess, Qt
+from PyQt6.QtCore import QProcess, QProcessEnvironment, Qt, pyqtSignal
 from PyQt6.QtGui import QFont, QPalette
 from PyQt6.QtWidgets import (
     QApplication,
@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
+    QFileDialog,
     QFrame,
     QGridLayout,
     QGroupBox,
@@ -46,11 +47,20 @@ OVERRIDES_PATH = ROOT / "src" / "CialloHook" / "config" / "gui_config_overrides.
 STATE_PATH = ROOT / "tools" / "build_gui_state.ini"
 BUILD_SCRIPT = ROOT / "build_all.ps1"
 WEBM_BUILD_SCRIPT = ROOT / "build_webm.ps1"
+CIALLOPAK_TOOL_PATH = ROOT / "tools" / "CialloPAK_tool.py"
+LITEPAK_TOOL_PATH = ROOT / "tools" / "LitePAK_tool.py"
+XP3_TOOL_PATH = ROOT / "tools" / "XP3_tool.py"
 PLATFORM_ALL = "all"
 LEGACY_PLATFORM_ALL = "x86/x64 全量"
 THEME_SYSTEM = "跟随系统"
 THEME_LIGHT = "明亮"
 THEME_DARK = "黑暗"
+PACK_ARCHIVE_FORMATS = {"cpk", "lpk", "xp3"}
+PACK_COMPRESSION_OPTIONS = {
+    "cpk": ("auto", "raw", "zlib", "zstd", "lzma"),
+    "lpk": ("auto", "raw", "zlib", "zstd", "lzma"),
+    "xp3": ("auto", "raw", "zlib"),
+}
 
 
 class WheelPassthroughComboBox(QComboBox):
@@ -66,6 +76,36 @@ class WheelPassthroughSpinBox(QSpinBox):
 class WheelPassthroughDoubleSpinBox(QDoubleSpinBox):
     def wheelEvent(self, event) -> None:  # type: ignore[override]
         event.ignore()
+
+
+class DragDropLineEdit(QLineEdit):
+    pathsDropped = pyqtSignal(list, str)
+
+    def __init__(self, role: str) -> None:
+        super().__init__()
+        self.role = role
+        self.setAcceptDrops(True)
+
+    def dragEnterEvent(self, event) -> None:  # type: ignore[override]
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event) -> None:  # type: ignore[override]
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            super().dragMoveEvent(event)
+
+    def dropEvent(self, event) -> None:  # type: ignore[override]
+        paths = [url.toLocalFile() for url in event.mimeData().urls() if url.isLocalFile()]
+        paths = [path for path in paths if path]
+        if paths:
+            self.pathsDropped.emit(paths, self.role)
+            event.acceptProposedAction()
+            return
+        super().dropEvent(event)
 
 
 @dataclass(frozen=True)
@@ -469,6 +509,175 @@ FIELD_BY_KEY = {field.key: field for field in FIELDS}
 TABLE_BY_KEY = {table.key: table for table in TABLES}
 
 
+FIELD_HELP: dict[str, str] = {
+    "load_mode": "proxy 适合 winmm/version 代理加载；loader 适合启动器注入。",
+    "debug_enable": "开启后会输出 CialloHook 调试日志。",
+    "debug_file": "写入日志文件，便于事后排查。",
+    "debug_console": "启动控制台实时显示日志，部分游戏可能影响前台体验。",
+    "startup_attach_mode": "immediate 立即安装 Hook；delay 延迟；entrypoint 尽量等入口点附近再安装。",
+    "startup_delay_ms": "AttachMode=delay 时使用，单位毫秒。",
+    "startup_wait_gui": "等待主窗口出现后再继续部分初始化。",
+    "startup_window_gate": "需要窗口相关 Hook 配合，用于等待/识别启动窗口。",
+    "font_charset": "常见值：0x86 简中，0x88 繁中，0x80 日文，0x00 不强制。",
+    "font_name": "可填系统字体名或字体文件路径；留空则不做全局字体替换。",
+    "font_name_override": "字体文件内部名识别不准时手动覆盖。",
+    "font_charset_spoof": "只在原始字符集命中 SpoofFromCharset 时替换。",
+    "font_spoof_from": "被替换的原始字符集。",
+    "font_spoof_to": "替换后的目标字符集。",
+    "font_unlock": "字体枚举时不过滤字体/字符集，可看到更多字体。",
+    "font_verbose": "记录每次字体 API 命中，日志量较大。",
+    "font_cnjp_enable": "读取映射文件，在字形查询/宽度/绘制阶段做字形映射。",
+    "font_cnjp_verbose": "输出日繁/异体字映射命中详情。",
+    "font_cnjp_json": "映射 JSON 路径，支持补丁目录和 CustomPak 查找。",
+    "font_cnjp_read_encoding": "常见值：932 日文，936 简中，950 繁中，65001 UTF-8。",
+    "font_height": "负数表示字符高度，0 表示不固定。",
+    "font_width": "0 表示沿用原始宽度；大于 0 会强制固定宽度。",
+    "font_weight": "0 不改，400 正常，700 粗体。",
+    "font_scale": "字体缩放倍数；FontHeight 不为 0 时通常无效。",
+    "font_spacing_scale": "只调整字符间距，不直接拉伸字形。",
+    "font_glyph_aspect": "字形宽高比，>1 更宽，<1 更窄。",
+    "font_glyph_offset_x": "字形左右平移，左负右正。",
+    "font_glyph_offset_y": "字形上下平移，上正下负。",
+    "font_metrics_left": "调整左侧度量留白。",
+    "font_metrics_right": "调整右侧度量留白。",
+    "font_metrics_top": "调整顶部度量空间。",
+    "font_metrics_bottom": "调整底部度量空间。",
+    "text_encoding": "通用编码；0 通常表示按读/写编码分别处理。",
+    "text_read_encoding": "从游戏 API 参数读取文本时使用的代码页。",
+    "text_write_encoding": "替换文本写回游戏 API 时使用的代码页。",
+    "text_verbose": "输出文本替换命中详情，日志量可能很大。",
+    "title_mode": "控制标题替换策略，通常保持默认即可。",
+    "title_encoding": "标题通用编码；0 表示按读/写编码处理。",
+    "title_read_encoding": "读取窗口标题时使用的代码页。",
+    "title_write_encoding": "写回窗口标题时使用的代码页。",
+    "title_verbose": "输出标题替换命中详情。",
+    "capture_enable": "通过窗口显示亲和性减少截图/录屏捕获。",
+    "capture_mode": "exclude 隐藏窗口内容；monitor 为兼容回退模式。",
+    "capture_fallback": "exclude 失败时尝试 monitor。",
+    "capture_existing": "启动后对已有窗口也应用保护。",
+    "capture_tool_windows": "是否保护工具窗口。",
+    "capture_owned_windows": "是否保护 owned 子窗口。",
+    "capture_verbose": "输出防截图应用过程日志。",
+    "file_patch_enable": "启用补丁目录文件覆盖。",
+    "file_patch_log": "输出文件补丁命中日志。",
+    "file_patch_debug": "输出更详细的文件补丁排查信息。",
+    "file_custom_pak_enable": "启用 cpk/xp3/lpk 自定义封包读取。",
+    "file_vfs_mode": "CustomPak 文件读取模式，默认 1 通常即可。",
+    "file_spoof_enable": "让指定文件/目录在存在性检查中表现为存在。",
+    "file_spoof_log": "输出欺骗命中日志。",
+    "dir_redirect_enable": "把访问某个目录的请求转到另一个目录。",
+    "dir_redirect_log": "输出目录重定向命中日志。",
+    "registry_enable": "启用进程内虚拟注册表，不写真实注册表。",
+    "registry_log": "输出虚拟注册表命中日志。",
+    "registry_bootstrap_enable": "启动时写入真实注册表，适合必须读系统注册表的游戏。",
+    "registry_bootstrap_cleanup": "退出时尝试清理引导写入的注册表项。",
+    "registry_bootstrap_log": "输出真实注册表引导日志。",
+    "codepage_enable": "重定向 MultiByte/WideChar 转换 API 的代码页。",
+    "codepage_from": "需要被替换的源代码页。",
+    "codepage_to": "替换后的目标代码页。",
+    "codepage_hook_mbtowc": "Hook MultiByteToWideChar。",
+    "codepage_hook_wctomb": "Hook WideCharToMultiByte。",
+    "locale_enable": "启用 LE/LEP 转区辅助和语言环境 API Hook。",
+    "locale_acp": "常见日文游戏为 932。",
+    "locale_oem": "通常与 AnsiCodePage 保持一致。",
+    "locale_id": "日文常用 0x411。",
+    "locale_charset": "日文常用 128。",
+    "locale_hook_ui": "是否 Hook UI 语言相关 API。",
+    "locale_timezone": "Windows 时区名，例如 Tokyo Standard Time。",
+    "startup_msg_enable": "启动时显示声明/确认弹窗。",
+    "startup_msg_style": "控制声明弹窗样式。",
+    "startup_msg_title": "声明窗口标题。",
+    "startup_msg_author": "补丁作者展示文本。",
+    "startup_msg_text": "声明正文，多行内容会写入 ini。",
+    "splash_enable": "启动时显示图片或 WebM 动画。",
+    "splash_file": "支持补丁目录、CustomPak 和游戏根目录查找。",
+    "splash_width": "启动图窗口宽度。",
+    "splash_height": "启动图窗口高度。",
+    "splash_entry_effect": "入场动画编号。",
+    "splash_exit_effect": "退场动画编号。",
+    "splash_entry_ms": "入场动画时长，单位毫秒。",
+    "splash_hold_ms": "中间停留时长，单位毫秒。",
+    "splash_exit_ms": "退场动画时长，单位毫秒。",
+    "splash_duration_ms": "总时长；0 表示按入场/停留/退场计算。",
+    "splash_position": "启动图显示位置编号。",
+    "splash_interaction": "启动图交互模式。",
+    "siglus_enable": "启用 SiglusEngine 密钥提取 Hook。",
+    "siglus_gameexe": "Gameexe.dat 路径。",
+    "siglus_output": "提取到的 key 输出路径。",
+    "siglus_message": "提取完成后显示弹窗。",
+    "siglus_debug": "输出 Siglus 调试日志。",
+    "alice_enable": "启用 Alice System3.x 松散文件覆盖。",
+    "alice_log": "输出 Alice 资源命中日志。",
+    "alice_exists": "Hook 文件存在性检查。",
+    "alice_max_size": "允许覆盖读取的最大文件大小。",
+    "rio_enable": "启用 RioShiina 资源覆盖或 WARC 解包支持。",
+    "rio_mode": "0 关闭，1 资源覆盖，2 解包指定 WARC。",
+    "rio_extract_dir": "Mode=2 时的输出目录。",
+    "rio_skip_invalid": "跳过非法文件名，避免解包中断。",
+    "rio_log": "输出 RioShiina 处理日志。",
+    "rio_process_reg": "处理封包中的注册表资源。",
+    "rio_process_dvd": "处理 DVD 资源。",
+    "rio_spec_dvd_size": "手动指定 DVD 文件大小，0 表示自动。",
+    "engine_cache_med": "清理/绕过 MED 字体缓存。",
+    "engine_cache_majiro": "清理/绕过 MAJIRO 字体缓存。",
+    "waffle_patch_enable": "启用 Waffle 文本相关兼容补丁。",
+    "krkr_patch_enable": "启用 KRKR 补丁链处理。",
+    "krkr_patch_verbose": "输出 KRKR 文件流详细日志。",
+    "krkr_bootstrap_bypass": "尝试绕过 krkrz Bootstrap 完整性检查。",
+    "krkr_cxdec_bridge": "让 cxdec 场景命中补丁目录/xp3/CustomPak。",
+    "binary_enable": "启用 .1337 二进制补丁。",
+    "binary_log": "输出二进制补丁日志。",
+    "binary_verify_old": "写入前校验旧字节，降低误补风险。",
+    "binary_fail_missing": "模块缺失时视为失败。",
+    "binary_fail_write": "写入失败时视为失败。",
+    "binary_prefer_pak": "同名本地文件和 CustomPak 条目都存在时优先 CustomPak。",
+    "binary_hwbp_enable": "启用硬件断点触发补丁。",
+    "binary_hwbp_module": "硬件断点目标模块名。",
+    "binary_hwbp_rva": "硬件断点目标 RVA。",
+    "launcher_target": "启动器要拉起的游戏 EXE。",
+    "launcher_debug": "启用启动器调试输出。",
+}
+
+TABLE_HELP: dict[str, str] = {
+    "font_skip_fonts": "命中这些原始字体名时不做字体 Hook。",
+    "font_redirect_rules": "按原始字体名定向替换到指定字体。",
+    "text_rules": "按文本或通配符替换。",
+    "title_rules": "按窗口标题或通配符替换。",
+    "file_patch_folders": "编号越后优先级越高。",
+    "file_custom_paks": "支持 cpk/xp3/lpk，编号越后优先级越高。",
+    "file_spoof_files": "让指定文件表现为存在。",
+    "file_spoof_dirs": "让指定目录表现为存在。",
+    "dir_redirect_rules": "把左侧原目录访问重定向到右侧目标目录。",
+    "registry_files": "加载 .reg 作为进程内虚拟注册表。",
+    "registry_bootstrap_rules": "启动时写真实注册表。",
+    "alice_patch_folders": "Alice 资源覆盖目录。",
+    "rio_patch_names": "RioShiina 资源覆盖补丁名。",
+    "rio_archives": "Mode=2 时待解包 WARC，多个值会用 | 写入 ini。",
+    "krkr_patch_names": "补丁名可对应目录或同名 xp3，后配置优先。",
+    "binary_patch_files": ".1337 补丁文件路径，支持补丁目录和 CustomPak。",
+    "launcher_target_dlls": "启动器注入的 DLL 名称列表。",
+}
+
+SECTION_HELP: dict[str, str] = {
+    "字体 API": "这些开关控制字体创建、枚举、度量、资源加载、DWrite 和 GDI+ 相关 API 是否安装 Hook。排查兼容问题时可以逐项关闭。",
+    "文本 API": "这些开关控制文本绘制、测量、窗口控件、菜单、对话框和 UI 文本相关 API 是否安装 Hook。排查兼容问题时可以逐项关闭。",
+}
+
+
+def help_for_field(field: Field) -> str:
+    if field.key in FIELD_HELP:
+        return FIELD_HELP[field.key]
+    if field.key.startswith("font_hook"):
+        return ""
+    if field.key.startswith("text_hook"):
+        return ""
+    return f"默认值: {field.default}。"
+
+
+def help_for_table(table: TableSpec) -> str:
+    return TABLE_HELP.get(table.key, f"")
+
+
 def make_default_state() -> dict[str, Any]:
     return {
         "profile": "Default",
@@ -478,6 +687,7 @@ def make_default_state() -> dict[str, Any]:
         "configuration": "Release",
         "target": "all",
         "theme": THEME_SYSTEM,
+        "show_help": True,
         "features": {feature.key: True for feature in FEATURES},
         "detail": {field.key: field.default for field in FIELDS},
         "tables": {table.key: [list(row) for row in table.default] for table in TABLES},
@@ -643,6 +853,8 @@ def load_state() -> dict[str, Any]:
             for key in ["profile", "source", "ini_override", "platform", "configuration", "target", "theme"]:
                 if parser.has_option("构建", key):
                     state[key] = decode_value(parser.get("构建", key))
+            if parser.has_option("构建", "show_help"):
+                state["show_help"] = parser.getboolean("构建", "show_help")
         if parser.has_section("功能"):
             for feature in FEATURES:
                 if parser.has_option("功能", feature.key):
@@ -676,6 +888,7 @@ def save_state_ini(state: dict[str, Any]) -> None:
         "configuration": encode_value(state["configuration"]),
         "target": encode_value(state["target"]),
         "theme": encode_value(state["theme"]),
+        "show_help": "true" if bool(state.get("show_help", True)) else "false",
     }
     parser["功能"] = {key: "true" if value else "false" for key, value in state["features"].items()}
     parser["细节"] = {key: encode_value(value) for key, value in state["detail"].items()}
@@ -1623,6 +1836,7 @@ class BuildGui(QMainWindow):
         super().__init__()
         self.state = load_state()
         self.process: QProcess | None = None
+        self.current_process_kind = ""
         self.pending_build_platforms: list[str] = []
         self.current_build_platform = ""
         self.updating_feature_dependencies = False
@@ -1630,10 +1844,12 @@ class BuildGui(QMainWindow):
         self.checkboxes: dict[str, QCheckBox] = {}
         self.detail_widgets: dict[str, object] = {}
         self.table_widgets: dict[str, TableEditor] = {}
+        self.help_labels: list[QLabel] = []
 
         self.setWindowTitle("CialloHook 编译配置器")
         self.resize(1280, 860)
         self.setMinimumSize(1080, 720)
+        self.setAcceptDrops(True)
 
         root = QWidget()
         self.setCentralWidget(root)
@@ -1676,6 +1892,9 @@ class BuildGui(QMainWindow):
         self.theme = WheelPassthroughComboBox()
         self.theme.addItems([THEME_SYSTEM, THEME_LIGHT, THEME_DARK])
         self.theme.setCurrentText(normalize_theme(str(self.state.get("theme", THEME_SYSTEM))))
+        self.show_help = QCheckBox("显示")
+        self.show_help.setChecked(bool(self.state.get("show_help", True)))
+        self.show_help.setToolTip("显示或隐藏详细设置里的灰色说明文本；字段悬停提示仍保留。")
 
         build_grid = QGridLayout()
         build_grid.setHorizontalSpacing(10)
@@ -1687,6 +1906,7 @@ class BuildGui(QMainWindow):
         self.add_row(build_grid, 4, "配置", self.configuration)
         self.add_row(build_grid, 5, "目标", self.target)
         self.add_row(build_grid, 6, "界面主题", self.theme)
+        self.add_row(build_grid, 7, "帮助文本", self.show_help)
         left_layout.addLayout(build_grid)
 
         preset_group = QGroupBox("预设")
@@ -1714,6 +1934,7 @@ class BuildGui(QMainWindow):
         body.addWidget(self.tabs, 1)
         self.make_feature_tab()
         self.make_detail_tab()
+        self.make_pack_tool_tab()
         self.make_log_tab()
         for cb in self.checkboxes.values():
             cb.toggled.connect(self.handle_feature_toggle)
@@ -1728,8 +1949,10 @@ class BuildGui(QMainWindow):
         self.save_btn.clicked.connect(self.save_all)
         self.build_btn.clicked.connect(self.save_and_build)
         self.theme.currentTextChanged.connect(self.apply_style)
+        self.show_help.toggled.connect(self.set_help_visible)
 
         self.apply_style()
+        self.set_help_visible(self.show_help.isChecked())
 
     def make_feature_tab(self) -> None:
         page, layout = self.scroll_page()
@@ -1822,6 +2045,426 @@ class BuildGui(QMainWindow):
         self.refresh_detail_visibility()
         self.tabs.addTab(page, "详细设置")
 
+    def make_pack_tool_tab(self) -> None:
+        page, layout = self.scroll_page()
+        frame, tool_layout = card("自定义解封包")
+        hint = QLabel("CPK 复用 CialloPAK_tool.py；LPK 优先使用已编译 LitePAK_tool.exe，找不到时回退 Python 脚本；XP3 使用普通无加密 XP3 工具。")
+        hint.setObjectName("hint")
+        hint.setWordWrap(True)
+        tool_layout.addWidget(hint)
+
+        self.pak_format = WheelPassthroughComboBox()
+        self.pak_format.addItems(["cpk", "lpk", "xp3"])
+        self.pak_operation = WheelPassthroughComboBox()
+        self.pak_operation.addItems(["封包", "解包"])
+
+        self.pak_input_dir = DragDropLineEdit("input_dir")
+        self.pak_input_dir.setPlaceholderText("封包时使用：选择要打包的目录")
+        self.pak_input_dir_btn = QPushButton("选择")
+        self.pak_file = DragDropLineEdit("pak_file")
+        self.pak_file.setPlaceholderText("封包输出或解包输入，例如 patch.cpk / patch.lpk")
+        self.pak_file_btn = QPushButton("选择")
+        self.pak_manifest = DragDropLineEdit("manifest")
+        self.pak_manifest.setPlaceholderText("可留空；封包时自动生成，解包时留空则按 hash 导出")
+        self.pak_manifest_btn = QPushButton("选择")
+        self.pak_output_dir = DragDropLineEdit("output_dir")
+        self.pak_output_dir.setPlaceholderText("解包时使用：选择输出目录")
+        self.pak_output_dir_btn = QPushButton("选择")
+
+        self.pak_compression = WheelPassthroughComboBox()
+        self.pak_compression.addItems(list(PACK_COMPRESSION_OPTIONS["cpk"]))
+        self.pak_workers = WheelPassthroughSpinBox()
+        self.pak_workers.setRange(0, 64)
+        self.pak_workers.setValue(0)
+        self.pak_parallel = WheelPassthroughComboBox()
+        self.pak_parallel.addItems(["thread", "process"])
+        self.pak_dedup = QCheckBox("启用")
+        self.pak_dedup.setChecked(True)
+
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(12)
+        grid.setVerticalSpacing(10)
+        self.add_row(grid, 0, "格式", self.pak_format)
+        self.add_row(grid, 1, "操作", self.pak_operation)
+        self.add_row(grid, 2, "输入目录", self.path_picker(self.pak_input_dir, self.pak_input_dir_btn))
+        self.add_row(grid, 3, "封包文件", self.path_picker(self.pak_file, self.pak_file_btn))
+        self.add_row(grid, 4, "Manifest", self.path_picker(self.pak_manifest, self.pak_manifest_btn))
+        self.add_row(grid, 5, "输出目录", self.path_picker(self.pak_output_dir, self.pak_output_dir_btn))
+        self.add_row(grid, 6, "压缩方式", self.pak_compression)
+        self.add_row(grid, 7, "Workers", self.pak_workers)
+        self.add_row(grid, 8, "并行模式", self.pak_parallel)
+        self.add_row(grid, 9, "去重复", self.pak_dedup)
+        tool_layout.addLayout(grid)
+
+        action_row = QHBoxLayout()
+        self.pack_tool_start_btn = QPushButton("开始执行")
+        self.pack_tool_start_btn.setObjectName("primary")
+        action_row.addWidget(self.pack_tool_start_btn)
+        action_row.addStretch(1)
+        tool_layout.addLayout(action_row)
+
+        layout.addWidget(frame)
+        layout.addStretch(1)
+        self.tabs.addTab(page, "自定义解封包")
+
+        self.pak_input_dir_btn.clicked.connect(self.browse_pack_input_dir)
+        self.pak_file_btn.clicked.connect(self.browse_pack_file)
+        self.pak_manifest_btn.clicked.connect(self.browse_pack_manifest)
+        self.pak_output_dir_btn.clicked.connect(self.browse_pack_output_dir)
+        for line in [self.pak_input_dir, self.pak_file, self.pak_manifest, self.pak_output_dir]:
+            line.pathsDropped.connect(self.handle_pack_tool_drop)
+        self.pack_tool_start_btn.clicked.connect(self.start_pack_tool_process)
+        self.pak_format.currentTextChanged.connect(self.update_pack_tool_state)
+        self.pak_format.currentTextChanged.connect(self.refresh_pack_autofill_for_format)
+        self.pak_operation.currentTextChanged.connect(self.update_pack_tool_state)
+        self.update_pack_tool_state()
+
+    def path_picker(self, line: QLineEdit, button: QPushButton) -> QWidget:
+        widget = QWidget()
+        widget.setObjectName("inlinePicker")
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+        layout.addWidget(line, 1)
+        layout.addWidget(button)
+        return widget
+
+    def update_pack_tool_state(self, *_args: Any) -> None:
+        if not hasattr(self, "pak_operation"):
+            return
+        self.update_pack_compression_options()
+        is_pack = self.pak_operation.currentText() == "封包"
+        is_xp3 = self.pak_format.currentText() == "xp3"
+        self.pak_input_dir.setEnabled(is_pack)
+        self.pak_input_dir_btn.setEnabled(is_pack)
+        self.pak_output_dir.setEnabled(not is_pack)
+        self.pak_output_dir_btn.setEnabled(not is_pack)
+        self.pak_manifest.setEnabled(not is_xp3)
+        self.pak_manifest_btn.setEnabled(not is_xp3)
+        self.pak_compression.setEnabled(is_pack)
+        self.pak_workers.setEnabled(not is_xp3)
+        self.pak_parallel.setEnabled(not is_xp3)
+        self.pak_dedup.setEnabled(is_pack and not is_xp3)
+
+    def update_pack_compression_options(self) -> None:
+        fmt = self.pak_format.currentText() if hasattr(self, "pak_format") else "cpk"
+        options = PACK_COMPRESSION_OPTIONS.get(fmt, PACK_COMPRESSION_OPTIONS["cpk"])
+        current = self.pak_compression.currentText()
+        existing = [self.pak_compression.itemText(index) for index in range(self.pak_compression.count())]
+        if existing == list(options):
+            return
+        self.pak_compression.blockSignals(True)
+        try:
+            self.pak_compression.clear()
+            self.pak_compression.addItems(list(options))
+            self.pak_compression.setCurrentText(current if current in options else options[0])
+        finally:
+            self.pak_compression.blockSignals(False)
+
+    def dragEnterEvent(self, event) -> None:  # type: ignore[override]
+        if hasattr(self, "pak_format") and event.mimeData().hasUrls():
+            event.acceptProposedAction()
+            return
+        super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event) -> None:  # type: ignore[override]
+        if hasattr(self, "pak_format") and event.mimeData().hasUrls():
+            event.acceptProposedAction()
+            return
+        super().dragMoveEvent(event)
+
+    def dropEvent(self, event) -> None:  # type: ignore[override]
+        paths = [url.toLocalFile() for url in event.mimeData().urls() if url.isLocalFile()]
+        paths = [path for path in paths if path]
+        if paths:
+            self.handle_pack_tool_drop(paths, "")
+            event.acceptProposedAction()
+            return
+        super().dropEvent(event)
+
+    def archive_format_for_path(self, path: Path) -> str:
+        suffix = path.suffix.lower().lstrip(".")
+        return suffix if suffix in PACK_ARCHIVE_FORMATS else ""
+
+    def set_pack_format_safely(self, fmt: str) -> None:
+        if fmt in PACK_ARCHIVE_FORMATS:
+            self.pak_format.setCurrentText(fmt)
+
+    def pack_format_for_output(self) -> str:
+        fmt = self.pak_format.currentText()
+        return fmt if fmt in PACK_ARCHIVE_FORMATS else "cpk"
+
+    def manifest_candidates_for_pak(self, pak_path: Path) -> list[Path]:
+        return [
+            pak_path.with_name(f"{pak_path.stem}_manifest.txt"),
+            pak_path.with_suffix(".manifest"),
+            Path(str(pak_path) + ".manifest"),
+            Path(str(pak_path) + ".txt"),
+            pak_path.with_suffix(".txt"),
+        ]
+
+    def find_existing_manifest_for_pak(self, pak_path: Path) -> Path | None:
+        for candidate in self.manifest_candidates_for_pak(pak_path):
+            if candidate.is_file():
+                return candidate
+        return None
+
+    def autofill_from_input_dir(self, input_dir: Path) -> None:
+        fmt = self.pack_format_for_output()
+        self.set_pack_format_safely(fmt)
+        self.pak_operation.setCurrentText("封包")
+        self.pak_input_dir.setText(str(input_dir))
+        pak_path = input_dir.parent / f"{input_dir.name}.{fmt}"
+        self.pak_file.setText(str(pak_path))
+        if fmt == "xp3":
+            self.pak_manifest.clear()
+        else:
+            self.pak_manifest.setText(str(pak_path.with_name(f"{pak_path.stem}_manifest.txt")))
+        self.update_pack_tool_state()
+        self.log(f"已根据目录自动填写封包输出: {pak_path}")
+
+    def autofill_from_pak_file(self, pak_path: Path, manifest_path: Path | None = None) -> None:
+        fmt = self.archive_format_for_path(pak_path)
+        if fmt:
+            self.set_pack_format_safely(fmt)
+        self.pak_operation.setCurrentText("解包")
+        self.pak_file.setText(str(pak_path))
+        self.pak_output_dir.setText(str(pak_path.with_name(f"{pak_path.stem}_unpacked")))
+        manifest = manifest_path or self.find_existing_manifest_for_pak(pak_path)
+        self.pak_manifest.setText(str(manifest) if manifest else "")
+        self.update_pack_tool_state()
+        self.log(f"已根据封包自动填写解包输出: {self.pak_output_dir.text()}")
+
+    def refresh_pack_autofill_for_format(self) -> None:
+        if not hasattr(self, "pak_operation") or self.pak_operation.currentText() != "封包":
+            return
+        input_text = self.pak_input_dir.text().strip()
+        if not input_text:
+            return
+        input_dir = Path(input_text)
+        if input_dir.is_dir() and self.pak_format.currentText() in PACK_ARCHIVE_FORMATS:
+            pak_path = input_dir.parent / f"{input_dir.name}.{self.pak_format.currentText()}"
+            self.pak_file.setText(str(pak_path))
+            if self.pak_format.currentText() == "xp3":
+                self.pak_manifest.clear()
+            else:
+                self.pak_manifest.setText(str(pak_path.with_name(f"{pak_path.stem}_manifest.txt")))
+
+    def handle_pack_tool_drop(self, paths: list[str], role: str) -> None:
+        path_objects = [Path(path) for path in paths if path]
+        if not path_objects:
+            return
+        manifest_path = next((path for path in path_objects if path.is_file() and path.suffix.lower() in {".txt", ".manifest"}), None)
+        archive_path = next((path for path in path_objects if path.is_file() and self.archive_format_for_path(path)), None)
+        directory_path = next((path for path in path_objects if path.is_dir()), None)
+
+        if role == "manifest" and manifest_path:
+            self.pak_manifest.setText(str(manifest_path))
+            return
+        if role == "output_dir" and directory_path:
+            self.pak_output_dir.setText(str(directory_path))
+            return
+        if role == "input_dir" and directory_path:
+            self.autofill_from_input_dir(directory_path)
+            return
+        if role == "pak_file" and archive_path:
+            self.autofill_from_pak_file(archive_path, manifest_path)
+            return
+
+        if archive_path:
+            self.autofill_from_pak_file(archive_path, manifest_path)
+            return
+        if directory_path:
+            self.autofill_from_input_dir(directory_path)
+            return
+        if manifest_path:
+            self.pak_manifest.setText(str(manifest_path))
+
+    def browse_pack_input_dir(self) -> None:
+        path = QFileDialog.getExistingDirectory(self, "选择输入目录", self.pak_input_dir.text() or str(ROOT))
+        if path:
+            self.autofill_from_input_dir(Path(path))
+
+    def browse_pack_file(self) -> None:
+        fmt = self.pak_format.currentText()
+        suffix = f".{fmt}"
+        filters = f"{fmt.upper()} 文件 (*{suffix});;所有文件 (*)"
+        current = self.pak_file.text() or str(ROOT / f"patch{suffix}")
+        if self.pak_operation.currentText() == "封包":
+            path, _ = QFileDialog.getSaveFileName(self, "选择封包输出文件", current, filters)
+        else:
+            path, _ = QFileDialog.getOpenFileName(self, "选择封包文件", current, filters)
+        if path:
+            self.pak_file.setText(path)
+            pak_path = Path(path)
+            if self.pak_operation.currentText() == "解包":
+                self.autofill_from_pak_file(pak_path)
+            elif self.pak_operation.currentText() == "封包" and not self.pak_manifest.text().strip():
+                self.pak_manifest.setText(str(pak_path.with_name(f"{pak_path.stem}_manifest.txt")))
+
+    def browse_pack_manifest(self) -> None:
+        current = self.pak_manifest.text() or str(self.default_manifest_for_pak())
+        filters = "Manifest / 文本文件 (*.txt *.manifest);;所有文件 (*)"
+        if self.pak_operation.currentText() == "封包":
+            path, _ = QFileDialog.getSaveFileName(self, "选择 Manifest 输出文件", current, filters)
+        else:
+            path, _ = QFileDialog.getOpenFileName(self, "选择 Manifest 文件", current, filters)
+        if path:
+            self.pak_manifest.setText(path)
+
+    def browse_pack_output_dir(self) -> None:
+        path = QFileDialog.getExistingDirectory(self, "选择解包输出目录", self.pak_output_dir.text() or str(ROOT))
+        if path:
+            self.pak_output_dir.setText(path)
+
+    def default_manifest_for_pak(self) -> Path:
+        pak_text = self.pak_file.text().strip() if hasattr(self, "pak_file") else ""
+        if pak_text:
+            pak_path = Path(pak_text)
+            return pak_path.with_name(f"{pak_path.stem}_manifest.txt")
+        return ROOT / "patch_manifest.txt"
+
+    def find_litepak_exe(self) -> Path | None:
+        configuration = self.configuration.currentText()
+        selected_platform = self.platform.currentText()
+        platforms = ["x64", "x86"] if selected_platform in {PLATFORM_ALL, LEGACY_PLATFORM_ALL} else [selected_platform]
+        candidates: list[Path] = []
+        for platform in platforms:
+            candidates.append(ROOT / "out" / "bin" / platform / configuration / "LitePAK_tool.exe")
+        for platform in ["x64", "x86"]:
+            for config in [configuration, "Release", "Debug"]:
+                candidate = ROOT / "out" / "bin" / platform / config / "LitePAK_tool.exe"
+                if candidate not in candidates:
+                    candidates.append(candidate)
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+        return None
+
+    def validate_pack_tool_inputs(self) -> tuple[bool, str]:
+        fmt = self.pak_format.currentText()
+        is_pack = self.pak_operation.currentText() == "封包"
+        pak_text = self.pak_file.text().strip()
+        if not pak_text:
+            return False, "请先填写封包文件路径。"
+        pak_path = Path(pak_text)
+        if pak_path.suffix.lower() != f".{fmt}":
+            self.log(f"提示: 当前格式是 {fmt}，但封包扩展名是 {pak_path.suffix or '(无扩展名)'}。")
+        if is_pack:
+            input_text = self.pak_input_dir.text().strip()
+            input_dir = Path(input_text)
+            if not input_text or not input_dir.is_dir():
+                return False, "封包前需要选择存在的输入目录。"
+            if fmt != "xp3" and not self.pak_manifest.text().strip():
+                self.pak_manifest.setText(str(self.default_manifest_for_pak()))
+        else:
+            if not pak_path.is_file():
+                return False, "解包前需要选择存在的封包文件。"
+            if not self.pak_output_dir.text().strip():
+                return False, "解包前需要填写输出目录。"
+            manifest_text = self.pak_manifest.text().strip()
+            if fmt != "xp3" and manifest_text and not Path(manifest_text).is_file():
+                return False, "Manifest 已填写，但文件不存在。"
+        return True, ""
+
+    def build_pack_tool_command(self) -> tuple[str, list[str], str]:
+        fmt = self.pak_format.currentText()
+        is_pack = self.pak_operation.currentText() == "封包"
+        pak_path = Path(self.pak_file.text().strip())
+        manifest_text = self.pak_manifest.text().strip()
+        workers = str(self.pak_workers.value())
+        compression = self.pak_compression.currentText()
+        parallel = self.pak_parallel.currentText()
+
+        if fmt == "xp3":
+            args = [str(XP3_TOOL_PATH), "pack" if is_pack else "unpack"]
+            if is_pack:
+                args.extend(["--input", self.pak_input_dir.text().strip(), "--pak", str(pak_path), "--compression", compression])
+            else:
+                args.extend(["--pak", str(pak_path), "--output", self.pak_output_dir.text().strip()])
+            return sys.executable or "python", args, "XP3_tool.py"
+
+        if fmt == "cpk":
+            args = [str(CIALLOPAK_TOOL_PATH), "pack" if is_pack else "unpack"]
+            if is_pack:
+                args.extend(["--input", self.pak_input_dir.text().strip(), "--pak", str(pak_path), "--manifest", manifest_text])
+                if self.pak_dedup.isChecked():
+                    args.append("--dedup")
+                args.extend(["--compression", compression, "--workers", workers, "--parallel", parallel])
+            else:
+                args.extend(["--pak", str(pak_path), "--output", self.pak_output_dir.text().strip(), "--workers", workers, "--parallel", parallel])
+                if manifest_text:
+                    args.extend(["--manifest", manifest_text])
+            return sys.executable or "python", args, "CialloPAK_tool.py"
+
+        litepak_exe = self.find_litepak_exe()
+        if litepak_exe is not None:
+            args = ["pack" if is_pack else "unpack"]
+            if is_pack:
+                args.extend(["--input", self.pak_input_dir.text().strip(), "--pak", str(pak_path), "--manifest", manifest_text])
+                if self.pak_dedup.isChecked():
+                    args.append("--dedup")
+                args.extend(["--compression", compression, "--workers", workers])
+            else:
+                args.extend(["--pak", str(pak_path), "--output", self.pak_output_dir.text().strip(), "--workers", workers])
+                if manifest_text:
+                    args.extend(["--manifest", manifest_text])
+            return str(litepak_exe), args, f"LitePAK_tool.exe ({litepak_exe})"
+
+        args = [str(LITEPAK_TOOL_PATH), "pack" if is_pack else "unpack"]
+        if is_pack:
+            args.extend(["--input", self.pak_input_dir.text().strip(), "--pak", str(pak_path), "--manifest", manifest_text])
+            if self.pak_dedup.isChecked():
+                args.append("--dedup")
+            args.extend(["--compression", compression, "--workers", workers, "--parallel", parallel])
+        else:
+            args.extend(["--pak", str(pak_path), "--output", self.pak_output_dir.text().strip(), "--workers", workers, "--parallel", parallel])
+            if manifest_text:
+                args.extend(["--manifest", manifest_text])
+        return sys.executable or "python", args, "LitePAK_tool.py"
+
+    def format_command_for_log(self, program: str, args: list[str]) -> str:
+        parts = [program, *args]
+        return " ".join(f'"{part}"' if any(ch.isspace() for ch in part) else part for part in parts)
+
+    def start_pack_tool_process(self) -> None:
+        if self.process is not None:
+            QMessageBox.information(self, "正在执行", "当前已有编译或解封包任务在运行。")
+            return
+        ok, error = self.validate_pack_tool_inputs()
+        if not ok:
+            QMessageBox.warning(self, "参数不完整", error)
+            return
+        program, args, tool_desc = self.build_pack_tool_command()
+        self.process = QProcess(self)
+        self.current_process_kind = "pak_tool"
+        self.process.setWorkingDirectory(str(ROOT))
+        self.process.setProgram(program)
+        self.process.setArguments(args)
+        env = QProcessEnvironment.systemEnvironment()
+        env.insert("PYTHONIOENCODING", "utf-8")
+        env.insert("PYTHONUTF8", "1")
+        self.process.setProcessEnvironment(env)
+        self.process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+        self.process.readyReadStandardOutput.connect(self.read_output)
+        self.process.finished.connect(self.pack_tool_finished)
+        self.set_busy(True)
+        self.tabs.setCurrentIndex(self.tabs.count() - 1)
+        self.log(f"开始执行自定义解封包: {tool_desc}")
+        self.log(self.format_command_for_log(program, args))
+        self.process.start()
+        if not self.process.waitForStarted(5000):
+            self.set_busy(False)
+            self.process = None
+            self.current_process_kind = ""
+            QMessageBox.critical(self, "启动失败", f"无法启动工具: {program}")
+
+    def pack_tool_finished(self, exit_code: int, _exit_status: object = None) -> None:
+        self.log(f"自定义解封包结束，退出码 {exit_code}。")
+        self.process = None
+        self.current_process_kind = ""
+        self.set_busy(False)
+
     def refresh_detail_visibility(self) -> None:
         if not hasattr(self, "detail_pages"):
             return
@@ -1841,6 +2484,13 @@ class BuildGui(QMainWindow):
     def add_form_section(self, parent: QVBoxLayout, title: str, field_keys: list[str], table_keys: list[str]) -> None:
         if field_keys:
             form_frame, form_layout = card(title)
+            section_help = SECTION_HELP.get(title, "")
+            if section_help:
+                section_help_label = QLabel(section_help)
+                section_help_label.setObjectName("fieldHelp")
+                section_help_label.setWordWrap(True)
+                self.register_help_label(section_help_label)
+                form_layout.addWidget(section_help_label)
             grid = QGridLayout()
             grid.setHorizontalSpacing(12)
             grid.setVerticalSpacing(10)
@@ -1850,17 +2500,55 @@ class BuildGui(QMainWindow):
                 widget = self.create_field_widget(field, self.state["detail"].get(key, field.default))
                 self.detail_widgets[key] = widget
                 self.connect_warning_widget(key, widget)
-                self.add_row(grid, row, field.label, widget)
+                help_text = help_for_field(field)
+                if help_text:
+                    widget.setToolTip(help_text)
+                    row_widget = self.with_help(widget, help_text)
+                else:
+                    widget.setToolTip(section_help)
+                    row_widget = widget
+                self.add_row(grid, row, field.label, row_widget)
                 row += 1
             form_layout.addLayout(grid)
             parent.addWidget(form_frame)
         for key in table_keys:
             table = TABLE_BY_KEY[key]
             table_frame, table_layout = card(table.label)
+            table_help_text = help_for_table(table)
+            if table_help_text:
+                table_help = QLabel(table_help_text)
+                table_help.setObjectName("fieldHelp")
+                table_help.setWordWrap(True)
+                self.register_help_label(table_help)
+                table_layout.addWidget(table_help)
             editor = TableEditor(table, self.state["tables"].get(key, []))
             self.table_widgets[key] = editor
             table_layout.addWidget(editor)
             parent.addWidget(table_frame)
+
+    def with_help(self, widget: QWidget, help_text: str) -> QWidget:
+        container = QWidget()
+        container.setObjectName("fieldWithHelp")
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+        layout.addWidget(widget)
+        help_label = QLabel(help_text)
+        help_label.setObjectName("fieldHelp")
+        help_label.setWordWrap(True)
+        help_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.register_help_label(help_label)
+        layout.addWidget(help_label)
+        return container
+
+    def register_help_label(self, label: QLabel) -> None:
+        self.help_labels.append(label)
+        if hasattr(self, "show_help"):
+            label.setVisible(self.show_help.isChecked())
+
+    def set_help_visible(self, visible: bool) -> None:
+        for label in getattr(self, "help_labels", []):
+            label.setVisible(visible)
 
     def make_log_tab(self) -> None:
         page = QWidget()
@@ -1922,7 +2610,7 @@ class BuildGui(QMainWindow):
         grid.addWidget(lab, row, 0)
         grid.addWidget(widget, row, 1)
         widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        if isinstance(widget, QPlainTextEdit):
+        if isinstance(widget, QPlainTextEdit) or widget.objectName() == "fieldWithHelp":
             widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
 
     def connect_warning_widget(self, key: str, widget: QWidget) -> None:
@@ -2072,6 +2760,7 @@ class BuildGui(QMainWindow):
             "configuration": self.configuration.currentText(),
             "target": self.target.currentText(),
             "theme": normalize_theme(self.theme.currentText()),
+            "show_help": self.show_help.isChecked(),
             "features": features,
             "detail": {},
             "tables": {},
@@ -2105,6 +2794,7 @@ class BuildGui(QMainWindow):
     def save_and_build(self) -> None:
         self.save_all()
         if self.process is not None:
+            QMessageBox.information(self, "正在执行", "当前已有编译或解封包任务在运行。")
             return
         selected_platform = self.platform.currentText()
         if self.target.currentText() == "CialloWebM" and selected_platform in {PLATFORM_ALL, LEGACY_PLATFORM_ALL}:
@@ -2123,6 +2813,7 @@ class BuildGui(QMainWindow):
             return
         platform = self.pending_build_platforms.pop(0)
         self.current_build_platform = platform
+        self.current_process_kind = "build"
         target = self.target.currentText()
         script = WEBM_BUILD_SCRIPT if target == "CialloWebM" else BUILD_SCRIPT
         script_platform = platform if platform != "all" else "both"
@@ -2154,6 +2845,7 @@ class BuildGui(QMainWindow):
             self.process = None
             self.pending_build_platforms = []
             self.current_build_platform = ""
+            self.current_process_kind = ""
             QMessageBox.critical(self, "编译失败", "无法启动 powershell.exe")
 
     def read_output(self) -> None:
@@ -2182,10 +2874,13 @@ class BuildGui(QMainWindow):
             self.pending_build_platforms = []
         self.set_busy(False)
         self.current_build_platform = ""
+        self.current_process_kind = ""
 
     def set_busy(self, busy: bool) -> None:
         for button in [self.save_btn, self.build_btn, self.enable_all_btn, self.minimal_btn, self.reduce_risk_btn, self.restore_default_btn]:
             button.setEnabled(not busy)
+        if hasattr(self, "pack_tool_start_btn"):
+            self.pack_tool_start_btn.setEnabled(not busy)
 
     def log(self, text: str) -> None:
         if hasattr(self, "output"):
@@ -2209,6 +2904,7 @@ class BuildGui(QMainWindow):
         self.configuration.setCurrentText(defaults["configuration"])
         self.target.setCurrentText(defaults["target"])
         self.theme.setCurrentText(defaults["theme"])
+        self.show_help.setChecked(bool(defaults["show_help"]))
         for feature in FEATURES:
             self.checkboxes[feature.key].setChecked(bool(defaults["features"][feature.key]))
         for field in FIELDS:
@@ -2274,8 +2970,15 @@ class BuildGui(QMainWindow):
                 color: {colors['title']};
                 background: transparent;
             }}
-            QLabel#subtitle, QLabel#hint {{
+            QLabel#subtitle, QLabel#hint, QLabel#fieldHelp {{
                 color: {colors['muted']};
+                background: transparent;
+            }}
+            QLabel#fieldHelp {{
+                font-size: 9pt;
+                line-height: 1.25;
+            }}
+            QWidget#fieldWithHelp, QWidget#inlinePicker {{
                 background: transparent;
             }}
             QWidget#featureItem {{
@@ -2431,3 +3134,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
