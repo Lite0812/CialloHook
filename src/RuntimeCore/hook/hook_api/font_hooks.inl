@@ -54,6 +54,7 @@
 		static int sg_iMetricsOffsetTop = 0;
 		static int sg_iMetricsOffsetBottom = 0;
 		static thread_local int sg_fontCreateNesting = 0;
+		static thread_local int sg_wideFontCreateHookNesting = 0;
 		static thread_local int sg_hdcFontReplacementNesting = 0;
 		static thread_local int sg_dwriteHookNesting = 0;
 		struct FontCreateNestingScope
@@ -64,7 +65,24 @@
 			}
 			~FontCreateNestingScope()
 			{
-				--sg_fontCreateNesting;
+				if (sg_fontCreateNesting > 0)
+				{
+					--sg_fontCreateNesting;
+				}
+			}
+		};
+		struct WideFontCreateHookNestingScope
+		{
+			WideFontCreateHookNestingScope()
+			{
+				++sg_wideFontCreateHookNesting;
+			}
+			~WideFontCreateHookNestingScope()
+			{
+				if (sg_wideFontCreateHookNesting > 0)
+				{
+					--sg_wideFontCreateHookNesting;
+				}
 			}
 		};
 		struct HdcFontReplacementScope
@@ -903,9 +921,26 @@
 		}
 		HFONT WINAPI newCreateFontW(INT cHeight, INT cWidth, INT cEscapement, INT cOrientation, INT cWeight, DWORD bItalic, DWORD bUnderline, DWORD bStrikeOut, DWORD iCharSet, DWORD iOutPrecision, DWORD iClipPrecision, DWORD iQuality, DWORD iPitchAndFamily, LPCWSTR pszFaceName)
 		{
+			if (sg_wideFontCreateHookNesting > 0)
+			{
+				return rawCreateFontW(cHeight, cWidth, cEscapement, cOrientation, cWeight, bItalic, bUnderline, bStrikeOut, iCharSet, iOutPrecision, iClipPrecision, iQuality, iPitchAndFamily, pszFaceName);
+			}
+			++sg_wideFontCreateHookNesting;
 			LogFontHookHit(L"CreateFontW");
-			__try { return newCreateFontW_SehImpl(cHeight, cWidth, cEscapement, cOrientation, cWeight, bItalic, bUnderline, bStrikeOut, iCharSet, iOutPrecision, iClipPrecision, iQuality, iPitchAndFamily, pszFaceName); }
-			__except(EXCEPTION_EXECUTE_HANDLER) { return rawCreateFontW(cHeight, cWidth, cEscapement, cOrientation, cWeight, bItalic, bUnderline, bStrikeOut, iCharSet, iOutPrecision, iClipPrecision, iQuality, iPitchAndFamily, pszFaceName); }
+			HFONT hFont = nullptr;
+			__try
+			{
+				hFont = newCreateFontW_SehImpl(cHeight, cWidth, cEscapement, cOrientation, cWeight, bItalic, bUnderline, bStrikeOut, iCharSet, iOutPrecision, iClipPrecision, iQuality, iPitchAndFamily, pszFaceName);
+			}
+			__except(EXCEPTION_EXECUTE_HANDLER)
+			{
+				hFont = rawCreateFontW(cHeight, cWidth, cEscapement, cOrientation, cWeight, bItalic, bUnderline, bStrikeOut, iCharSet, iOutPrecision, iClipPrecision, iQuality, iPitchAndFamily, pszFaceName);
+			}
+			if (sg_wideFontCreateHookNesting > 0)
+			{
+				--sg_wideFontCreateHookNesting;
+			}
+			return hFont;
 		}
 
 
@@ -967,9 +1002,26 @@
 		}
 		HFONT WINAPI newCreateFontIndirectW(LOGFONTW* lplf)
 		{
+			if (sg_wideFontCreateHookNesting > 0)
+			{
+				return rawCreateFontIndirectW(lplf);
+			}
+			++sg_wideFontCreateHookNesting;
 			LogFontHookHit(L"CreateFontIndirectW");
-			__try { return newCreateFontIndirectW_SehImpl(lplf); }
-			__except(EXCEPTION_EXECUTE_HANDLER) { return rawCreateFontIndirectW(lplf); }
+			HFONT hFont = nullptr;
+			__try
+			{
+				hFont = newCreateFontIndirectW_SehImpl(lplf);
+			}
+			__except(EXCEPTION_EXECUTE_HANDLER)
+			{
+				hFont = rawCreateFontIndirectW(lplf);
+			}
+			if (sg_wideFontCreateHookNesting > 0)
+			{
+				--sg_wideFontCreateHookNesting;
+			}
+			return hFont;
 		}
 
 

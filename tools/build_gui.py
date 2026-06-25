@@ -2043,7 +2043,7 @@ class BuildGui(QMainWindow):
         self.configuration.addItems(["Release", "Debug"])
         self.configuration.setCurrentText(self.state["configuration"])
         self.target = WheelPassthroughComboBox()
-        self.target.addItems(["all", "ciallohook", "ciallolauncher", "runtime", "LitePAK_tool", "CialloWebM"])
+        self.target.addItems(["all", "ciallohook", "ciallolauncher", "runtime", "LitePAK_tool", "CialloPAK_tool", "CialloWebM"])
         self.target.setCurrentText(self.state["target"])
         self.theme = WheelPassthroughComboBox()
         self.theme.addItems([THEME_SYSTEM, THEME_LIGHT, THEME_DARK])
@@ -2236,7 +2236,7 @@ class BuildGui(QMainWindow):
     def make_pack_tool_tab(self) -> None:
         page, layout = self.scroll_page()
         frame, tool_layout = card("自定义解封包")
-        hint = QLabel("CPK 复用 CialloPAK_tool.py；LPK 优先使用已编译 LitePAK_tool.exe，找不到时回退 Python 脚本；XP3 使用普通无加密 XP3 工具。")
+        hint = QLabel("CPK/LPK 优先使用已编译工具，找不到时回退 Python 脚本；XP3 使用普通无加密 XP3 工具。")
         hint.setObjectName("hint")
         hint.setWordWrap(True)
         tool_layout.addWidget(hint)
@@ -2513,15 +2513,21 @@ class BuildGui(QMainWindow):
         return ROOT / "patch_manifest.txt"
 
     def find_litepak_exe(self) -> Path | None:
+        return self.find_built_tool_exe("LitePAK_tool.exe")
+
+    def find_ciallopak_exe(self) -> Path | None:
+        return self.find_built_tool_exe("CialloPAK_tool.exe")
+
+    def find_built_tool_exe(self, exe_name: str) -> Path | None:
         configuration = self.configuration.currentText()
         selected_platform = self.platform.currentText()
         platforms = ["x64", "x86"] if selected_platform in {PLATFORM_ALL, LEGACY_PLATFORM_ALL} else [selected_platform]
         candidates: list[Path] = []
         for platform in platforms:
-            candidates.append(ROOT / "out" / "bin" / platform / configuration / "LitePAK_tool.exe")
+            candidates.append(ROOT / "out" / "bin" / platform / configuration / exe_name)
         for platform in ["x64", "x86"]:
             for config in [configuration, "Release", "Debug"]:
-                candidate = ROOT / "out" / "bin" / platform / config / "LitePAK_tool.exe"
+                candidate = ROOT / "out" / "bin" / platform / config / exe_name
                 if candidate not in candidates:
                     candidates.append(candidate)
         for candidate in candidates:
@@ -2573,7 +2579,8 @@ class BuildGui(QMainWindow):
             return sys.executable or "python", args, "XP3_tool.py"
 
         if fmt == "cpk":
-            args = [str(CIALLOPAK_TOOL_PATH), "pack" if is_pack else "unpack"]
+            ciallopak_exe = self.find_ciallopak_exe()
+            args = ["pack" if is_pack else "unpack"] if ciallopak_exe is not None else [str(CIALLOPAK_TOOL_PATH), "pack" if is_pack else "unpack"]
             if is_pack:
                 args.extend(["--input", self.pak_input_dir.text().strip(), "--pak", str(pak_path), "--manifest", manifest_text])
                 if self.pak_dedup.isChecked():
@@ -2583,6 +2590,8 @@ class BuildGui(QMainWindow):
                 args.extend(["--pak", str(pak_path), "--output", self.pak_output_dir.text().strip(), "--workers", workers, "--parallel", parallel])
                 if manifest_text:
                     args.extend(["--manifest", manifest_text])
+            if ciallopak_exe is not None:
+                return str(ciallopak_exe), args, f"CialloPAK_tool.exe ({ciallopak_exe})"
             return sys.executable or "python", args, "CialloPAK_tool.py"
 
         litepak_exe = self.find_litepak_exe()

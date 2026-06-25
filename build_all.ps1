@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("all","ciallohook","ciallolauncher","runtime","LitePAK_tool","CialloWebM")]
+    [ValidateSet("all","ciallohook","ciallolauncher","runtime","LitePAK_tool","CialloPAK_tool","CialloWebM")]
     [string]$Target = "all",
     [ValidateSet("Debug","Release")]
     [string]$Configuration = "Release",
@@ -221,6 +221,7 @@ if ($Target -eq "ciallohook") { $project = "src\CialloHook\CialloHook.vcxproj" }
 if ($Target -eq "ciallolauncher") { $project = "src\CialloLauncher\CialloLauncher.vcxproj" }
 if ($Target -eq "runtime") { $project = "src\RuntimeCore\RuntimeCore.vcxproj" }
 if ($Target -eq "LitePAK_tool") { $project = "src\LitePAK_tool\projects\LitePAK_tool.vcxproj" }
+if ($Target -eq "CialloPAK_tool") { $project = "src\CialloPAK_tool\projects\CialloPAK_tool.vcxproj" }
 if ($Target -eq "CialloWebM") { $project = "src\CialloWebM\projects\CialloWebM.vcxproj" }
 
 function Invoke-Build {

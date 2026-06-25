@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|Win32"><Configuration>Debug</Configuration><Platform>Win32</Platform></ProjectConfiguration>
+    <ProjectConfiguration Include="Release|Win32"><Configuration>Release</Configuration><Platform>Win32</Platform></ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|x64"><Configuration>Debug</Configuration><Platform>x64</Platform></ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64"><Configuration>Release</Configuration><Platform>x64</Platform></ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>16.0</VCProjectVersion>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectGuid>{6F4A1B2C-9D87-4F0B-A3E2-81C5D7B92A10}</ProjectGuid>
+    <RootNamespace>CialloPAK_tool</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Label="Configuration" Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'"><ConfigurationType>Application</ConfigurationType><UseDebugLibraries>true</UseDebugLibraries><PlatformToolset>v143</PlatformToolset><CharacterSet>Unicode</CharacterSet></PropertyGroup>
+  <PropertyGroup Label="Configuration" Condition="'$(Configuration)|$(Platform)'=='Release|Win32'"><ConfigurationType>Application</ConfigurationType><UseDebugLibraries>false</UseDebugLibraries><PlatformToolset>v143</PlatformToolset><WholeProgramOptimization>true</WholeProgramOptimization><CharacterSet>Unicode</CharacterSet></PropertyGroup>
+  <PropertyGroup Label="Configuration" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'"><ConfigurationType>Application</ConfigurationType><UseDebugLibraries>true</UseDebugLibraries><PlatformToolset>v143</PlatformToolset><CharacterSet>Unicode</CharacterSet></PropertyGroup>
+  <PropertyGroup Label="Configuration" Condition="'$(Configuration)|$(Platform)'=='Release|x64'"><ConfigurationType>Application</ConfigurationType><UseDebugLibraries>false</UseDebugLibraries><PlatformToolset>v143</PlatformToolset><WholeProgramOptimization>true</WholeProgramOptimization><CharacterSet>Unicode</CharacterSet></PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings" />
+  <ImportGroup Label="Shared" />
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'"><Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" /></ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|Win32'"><Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" /></ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'"><Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" /></ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'"><Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" /></ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup>
+    <PlatformFolder Condition="'$(Platform)'=='Win32'">x86</PlatformFolder>
+    <PlatformFolder Condition="'$(Platform)'!='Win32'">$(Platform)</PlatformFolder>
+    <OutDir>..\..\..\out\bin\$(PlatformFolder)\$(Configuration)\</OutDir>
+    <IntDir>..\..\..\out\obj\$(ProjectName)\$(PlatformFolder)\$(Configuration)\</IntDir>
+    <TargetName>CialloPAK_tool</TargetName>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <FunctionLevelLinking Condition="'$(Configuration)'=='Release'">true</FunctionLevelLinking>
+      <IntrinsicFunctions Condition="'$(Configuration)'=='Release'">true</IntrinsicFunctions>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions Condition="'$(Configuration)'=='Debug'">WIN32;_DEBUG;_CONSOLE;_CRT_SECURE_NO_WARNINGS;Z7_ST;ZSTD_DISABLE_ASM;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions Condition="'$(Configuration)'=='Release'">WIN32;NDEBUG;_CONSOLE;_CRT_SECURE_NO_WARNINGS;Z7_ST;ZSTD_DISABLE_ASM;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard_C>stdc11</LanguageStandard_C>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalIncludeDirectories>..\..\..\third\miniz;..\..\..\third\lzma;..\..\..\third\zstd;..\..\..\third\zstd\common;..\..\..\third\zstd\compress;..\..\..\third\zstd\decompress;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <EnableCOMDATFolding Condition="'$(Configuration)'=='Release'">true</EnableCOMDATFolding>
+      <OptimizeReferences Condition="'$(Configuration)'=='Release'">true</OptimizeReferences>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="..\cli\ciallopak_tool.c" />
+    <ClCompile Include="..\..\..\third\miniz\miniz.c" />
+    <ClCompile Include="..\..\..\third\lzma\CpuArch.c" />
+    <ClCompile Include="..\..\..\third\lzma\LzFind.c" />
+    <ClCompile Include="..\..\..\third\lzma\LzmaDec.c" />
+    <ClCompile Include="..\..\..\third\lzma\LzmaEnc.c" />
+    <ClCompile Include="..\..\..\third\zstd\common\debug.c" />
+    <ClCompile Include="..\..\..\third\zstd\common\entropy_common.c" />
+    <ClCompile Include="..\..\..\third\zstd\common\error_private.c" />
+    <ClCompile Include="..\..\..\third\zstd\common\fse_decompress.c" />
+    <ClCompile Include="..\..\..\third\zstd\common\pool.c" />
+    <ClCompile Include="..\..\..\third\zstd\common\threading.c" />
+    <ClCompile Include="..\..\..\third\zstd\common\xxhash.c" />
+    <ClCompile Include="..\..\..\third\zstd\common\zstd_common.c" />
+    <ClCompile Include="..\..\..\third\zstd\compress\fse_compress.c" />
+    <ClCompile Include="..\..\..\third\zstd\compress\hist.c" />
+    <ClCompile Include="..\..\..\third\zstd\compress\huf_compress.c" />
+    <ClCompile Include="..\..\..\third\zstd\compress\zstd_compress.c" />
+    <ClCompile Include="..\..\..\third\zstd\compress\zstd_compress_literals.c" />
+    <ClCompile Include="..\..\..\third\zstd\compress\zstd_compress_sequences.c" />
+    <ClCompile Include="..\..\..\third\zstd\compress\zstd_compress_superblock.c" />
+    <ClCompile Include="..\..\..\third\zstd\compress\zstd_double_fast.c" />
+    <ClCompile Include="..\..\..\third\zstd\compress\zstd_fast.c" />
+    <ClCompile Include="..\..\..\third\zstd\compress\zstd_lazy.c" />
+    <ClCompile Include="..\..\..\third\zstd\compress\zstd_ldm.c" />
+    <ClCompile Include="..\..\..\third\zstd\compress\zstd_opt.c" />
+    <ClCompile Include="..\..\..\third\zstd\compress\zstdmt_compress.c" />
+    <ClCompile Include="..\..\..\third\zstd\decompress\huf_decompress.c" />
+    <ClCompile Include="..\..\..\third\zstd\decompress\zstd_ddict.c" />
+    <ClCompile Include="..\..\..\third\zstd\decompress\zstd_decompress.c" />
+    <ClCompile Include="..\..\..\third\zstd\decompress\zstd_decompress_block.c" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\..\..\third\miniz\miniz.h" />
+    <ClInclude Include="..\..\..\third\lzma\LzmaDec.h" />
+    <ClInclude Include="..\..\..\third\lzma\LzmaEnc.h" />
+    <ClInclude Include="..\..\..\third\zstd\zstd.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="CialloPAK_tool.rc" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets" />
+</Project>
