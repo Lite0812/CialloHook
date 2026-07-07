@@ -1,8 +1,8 @@
 #include <windows.h>
 
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION 1,0,0,0
- PRODUCTVERSION 1,0,0,0
+ FILEVERSION 1,5,0,0
+ PRODUCTVERSION 1,5,0,0
  FILEFLAGSMASK 0x3fL
 #ifdef _DEBUG
  FILEFLAGS 0x1L
@@ -17,15 +17,15 @@ BEGIN
     BEGIN
         BLOCK "040904B0"
         BEGIN
-            VALUE "CompanyName", "CialloHook Project"
-            VALUE "FileDescription", "CialloHook runtime hook module"
-            VALUE "FileVersion", "1.0.0.0"
-            VALUE "InternalName", "CialloHook"
-            VALUE "LegalCopyright", "Copyright (C) CialloHook contributors"
+            VALUE "CompanyName", "Ciallo Project"
+            VALUE "FileDescription", "CialloHook Runtime Library"
+            VALUE "FileVersion", "1.5.0.0"
+            VALUE "InternalName", "CialloHookRuntime"
+            VALUE "LegalCopyright", "Copyright (C) Ciallo contributors"
             VALUE "OriginalFilename", "CialloHook.dll"
-            VALUE "ProductName", "CialloHook"
-            VALUE "ProductVersion", "1.0.0.0"
-            VALUE "Comments", "Runtime compatibility and localization hook module for Windows games."
+            VALUE "ProductName", "Ciallo Runtime Library"
+            VALUE "ProductVersion", "1.5.0.0"
+            VALUE "Comments", "Runtime compatibility and localization component for Windows games."
         END
     END
     BLOCK "VarFileInfo"

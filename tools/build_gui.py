@@ -206,12 +206,17 @@ FEATURES: list[Feature] = [
 ]
 
 
+HIDDEN_FORCED_FEATURES: dict[str, bool] = {
+    "CIALLOHOOK_FEATURE_RUNTIME_INIT": True,
+}
+
 SOURCE_ITEM_PROPS = {
     "CIALLOHOOK_FEATURE_BINARY_PATCH": "CialloHookFeatureBinaryPatch",
     "CIALLOHOOK_FEATURE_ALICE_SYSTEM3X": "CialloHookFeatureAliceSystem3x",
     "CIALLOHOOK_FEATURE_RIO_SHIINA": "CialloHookFeatureRioShiina",
     "CIALLOHOOK_FEATURE_CUSTOM_PAK": "CialloHookFeatureCustomPak",
     "CIALLOHOOK_FEATURE_CODECRYPT_PATCH": "CialloHookFeatureCodeCryptPatch",
+    "CIALLOHOOK_FEATURE_RUNTIME_INIT": "CialloHookFeatureRuntimeInit",
     "CIALLOHOOK_FEATURE_ENGINE_CACHE": "CialloHookFeatureEngineCache",
     "CIALLOHOOK_FEATURE_KRKR_PATCH": "CialloHookFeatureKrkrPatch",
     "CIALLOHOOK_FEATURE_PROXY_EXPORTS": "CialloHookFeatureProxyExports",
@@ -397,7 +402,7 @@ FIELDS: list[Field] = [
     Field("debug_enable", "启用调试日志", "bool", True, "debug.enable"),
     Field("debug_file", "写入日志文件", "bool", True, "debug.logToFile"),
     Field("debug_console", "打开控制台日志", "bool", True, "debug.logToConsole"),
-    Field("startup_attach_mode", "附加时机", "choice", "immediate", "startupTiming.attachMode", options=("immediate", "delay", "entrypoint")),
+    Field("startup_attach_mode", "附加时机", "choice", "immediate", "startupTiming.attachMode", options=("immediate", "delay")),
     Field("startup_delay_ms", "延迟毫秒", "int", 0, "startupTiming.delayMs", 0, 30000),
     Field("startup_wait_gui", "等待 GUI 就绪", "bool", False, "startupTiming.waitForGuiReady"),
     Field("startup_window_gate", "启用启动窗口门控", "bool", False, "startupTiming.enableStartupWindowGate"),
@@ -407,6 +412,7 @@ FIELDS: list[Field] = [
     Field("font_charset_spoof", "启用字符集伪装", "bool", True, "font.enableCharsetSpoof"),
     Field("font_spoof_from", "SpoofFromCharset", "hexint", "0x80", "font.spoofFromCharset"),
     Field("font_spoof_to", "SpoofToCharset", "hexint", "0x01", "font.spoofToCharset"),
+    Field("font_ui_enable", "启用 UI 字体 Hook", "bool", True, "font.enableUIFontHook"),
     Field("font_unlock", "解锁字体枚举", "bool", False, "font.unlockFontSelection"),
     Field("font_verbose", "字体 Hook 详细日志", "bool", False, "font.fontHookVerboseLog"),
     Field("font_cnjp_enable", "启用日繁/异体字映射", "bool", False, "font.enableCnJpMap"),
@@ -505,8 +511,8 @@ FIELDS: list[Field] = [
     Field("engine_cache_majiro", "清理 MAJIRO 缓存", "bool", False, "engineCache.majiro"),
     Field("krkr_patch_enable", "启用 KrkrPatch", "bool", False, "enginePatches.enableKrkrPatch"),
     Field("krkr_patch_verbose", "KrkrPatch 详细日志", "bool", False, "enginePatches.krkrPatchVerboseLog"),
-    Field("krkr_bootstrap_bypass", "绕过 Krkr Bootstrap", "bool", False, "enginePatches.krkrBootstrapBypass"),
-    Field("krkr_cxdec_bridge", "启用 Krkr Cxdec Bridge", "bool", False, "enginePatches.enableKrkrCxdecBridge"),
+    Field("krkr_bootstrap_bypass", "启用 KRKR Bootstrap/Cxdec 校验绕过", "bool", False, "enginePatches.krkrBootstrapBypass"),
+    Field("krkr_cxdec_patch_bridge", "启用 KRKR/Cxdec StorageMedia 补丁桥接", "bool", False, "enginePatches.enableKrkrCxdecPatchBridge"),
     Field("waffle_patch_enable", "启用 Waffle Patch", "bool", False, "enginePatches.enableWafflePatch"),
     Field("binary_enable", "启用二进制补丁", "bool", False, "binaryPatch.enable"),
     Field("binary_log", "二进制补丁日志", "bool", False, "binaryPatch.enableLog"),
@@ -558,7 +564,7 @@ FIELD_HELP: dict[str, str] = {
     "debug_enable": "开启后会输出 CialloHook 调试日志。",
     "debug_file": "写入日志文件，便于事后排查。",
     "debug_console": "启动控制台实时显示日志，部分游戏可能影响前台体验。",
-    "startup_attach_mode": "immediate 立即安装 Hook；delay 延迟；entrypoint 尽量等入口点附近再安装。",
+    "startup_attach_mode": "immediate 立即安装 Hook；delay 延迟安装。旧配置中的 entrypoint 会在运行时回退为 immediate。",
     "startup_delay_ms": "AttachMode=delay 时使用，单位毫秒。",
     "startup_wait_gui": "等待主窗口出现后再继续部分初始化。",
     "startup_window_gate": "需要窗口相关 Hook 配合，用于等待/识别启动窗口。",
@@ -568,6 +574,7 @@ FIELD_HELP: dict[str, str] = {
     "font_charset_spoof": "只在原始字符集命中 SpoofFromCharset 时替换。",
     "font_spoof_from": "被替换的原始字符集。",
     "font_spoof_to": "替换后的目标字符集。",
+    "font_ui_enable": "控制 UI/现代字体链路 Hook：DWrite、D2D、GDI+、ChooseFont 以及 late-load 补钩；关闭后保留普通 GDI 字体创建/度量 Hook。",
     "font_unlock": "字体枚举时不过滤字体/字符集，可看到更多字体。",
     "font_verbose": "记录每次字体 API 命中，日志量较大。",
     "font_cnjp_enable": "读取映射文件，在字形查询/宽度/绘制阶段做字形映射。",
@@ -667,8 +674,8 @@ FIELD_HELP: dict[str, str] = {
     "waffle_patch_enable": "启用 Waffle 文本相关兼容补丁。",
     "krkr_patch_enable": "启用 KRKR 补丁链处理。",
     "krkr_patch_verbose": "输出 KRKR 文件流详细日志。",
-    "krkr_bootstrap_bypass": "尝试绕过 krkrz Bootstrap 完整性检查。",
-    "krkr_cxdec_bridge": "让 cxdec 场景命中补丁目录/xp3/CustomPak。",
+    "krkr_bootstrap_bypass": "krkrz / cxdec 校验绕过；开启后 hook LoadLibraryExW，并在加载 appdata\\local\\temp 下的临时 DLL 前应用 Fuck_Cxdec_Check 风格 x86 文件补丁。",
+    "krkr_cxdec_patch_bridge": "启用 KRKR/Cxdec StorageMedia 补丁桥接，让 cxdec 场景也能命中补丁目录 / xp3 / CustomPak；.sig 等验证敏感资源直接交给原始 cxdec media，避免补丁层影响校验。",
     "binary_enable": "启用 .1337 二进制补丁。",
     "binary_log": "输出二进制补丁日志。",
     "binary_verify_old": "写入前校验旧字节，降低误补风险。",
@@ -1083,6 +1090,8 @@ def write_options(state: dict[str, Any], feature_values: dict[str, bool]) -> Non
     ]
     for feature in FEATURES:
         lines.append(f"#define {feature.key} {1 if feature_values.get(feature.key, True) else 0}")
+    for feature_key, enabled in HIDDEN_FORCED_FEATURES.items():
+        lines.append(f"#define {feature_key} {1 if enabled else 0}")
     OPTIONS_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -1313,6 +1322,7 @@ def build_ciallohook_ini_text(detail: dict[str, Any], tables: dict[str, list[lis
             ("CnJpMapVerboseLog", "font_cnjp_verbose"),
             ("CnJpMapJson", "font_cnjp_json"),
             ("CnJpMapReadEncoding", "font_cnjp_read_encoding"),
+            ("EnableUIFontHook", "font_ui_enable"),
             ("UnlockFontSelection", "font_unlock"),
             ("FontHookVerboseLog", "font_verbose"),
             ("FontHeight", "font_height"),
@@ -1503,7 +1513,7 @@ def build_ciallohook_ini_text(detail: dict[str, Any], tables: dict[str, list[lis
             ("EnableKrkrPatch", "krkr_patch_enable"),
             ("KrkrPatchVerboseLog", "krkr_patch_verbose"),
             ("KrkrBootstrapBypass", "krkr_bootstrap_bypass"),
-            ("EnableKrkrCxdecBridge", "krkr_cxdec_bridge"),
+            ("EnableKrkrCxdecPatchBridge", "krkr_cxdec_patch_bridge"),
         ]:
             append_kv(lines, ini_key, ini_value_for_field(detail, detail_key))
         append_list(lines, rows_for(tables, "krkr_patch_names"), "KrkrPatchCount", "KrkrPatchName_")
@@ -2150,7 +2160,7 @@ class BuildGui(QMainWindow):
     def make_detail_tab(self) -> None:
         self.detail_groups: list[tuple[str, list[str], list[str], tuple[str, ...]]] = [
             ("基础", ["load_mode", "debug_enable", "debug_file", "debug_console", "startup_attach_mode", "startup_delay_ms", "startup_wait_gui", "startup_window_gate"], [], ()),
-            ("字体", ["font_charset", "font_name", "font_name_override", "font_charset_spoof", "font_spoof_from", "font_spoof_to", "font_unlock", "font_verbose", "font_cnjp_enable", "font_cnjp_verbose", "font_cnjp_json", "font_cnjp_read_encoding", "font_height", "font_width", "font_weight", "font_scale", "font_spacing_scale", "font_glyph_aspect", "font_glyph_offset_x", "font_glyph_offset_y", "font_metrics_left", "font_metrics_right", "font_metrics_top", "font_metrics_bottom"], ["font_skip_fonts", "font_redirect_rules"], ("CIALLOHOOK_FEATURE_FONT",)),
+            ("字体", ["font_charset", "font_name", "font_name_override", "font_charset_spoof", "font_spoof_from", "font_spoof_to", "font_ui_enable", "font_unlock", "font_verbose", "font_cnjp_enable", "font_cnjp_verbose", "font_cnjp_json", "font_cnjp_read_encoding", "font_height", "font_width", "font_weight", "font_scale", "font_spacing_scale", "font_glyph_aspect", "font_glyph_offset_x", "font_glyph_offset_y", "font_metrics_left", "font_metrics_right", "font_metrics_top", "font_metrics_bottom"], ["font_skip_fonts", "font_redirect_rules"], ("CIALLOHOOK_FEATURE_FONT",)),
             ("字体 API", [f"font_{name}" for name in FONT_HOOKS], [], ("CIALLOHOOK_FEATURE_FONT",)),
             ("文本", ["text_encoding", "text_read_encoding", "text_write_encoding", "text_verbose"], ["text_rules"], ("CIALLOHOOK_FEATURE_TEXT",)),
             ("文本 API", [f"text_{name}" for name in TEXT_HOOKS], [], ("CIALLOHOOK_FEATURE_TEXT",)),
@@ -2169,7 +2179,7 @@ class BuildGui(QMainWindow):
             ("Alice System3.x 补丁", ["alice_enable", "alice_log", "alice_exists", "alice_max_size"], ["alice_patch_folders"], ("CIALLOHOOK_FEATURE_ALICE_SYSTEM3X",)),
             ("RioShiina 补丁", ["rio_enable", "rio_mode", "rio_extract_dir", "rio_skip_invalid", "rio_log", "rio_process_reg", "rio_process_dvd", "rio_spec_dvd_size"], ["rio_patch_names", "rio_archives"], ("CIALLOHOOK_FEATURE_RIO_SHIINA",)),
             ("引擎缓存/Waffle", ["engine_cache_med", "engine_cache_majiro", "waffle_patch_enable"], [], ("CIALLOHOOK_FEATURE_ENGINE_CACHE",)),
-            ("Krkr 补丁", ["krkr_patch_enable", "krkr_patch_verbose", "krkr_bootstrap_bypass", "krkr_cxdec_bridge"], ["krkr_patch_names"], ("CIALLOHOOK_FEATURE_KRKR_PATCH",)),
+            ("Krkr 补丁", ["krkr_patch_enable", "krkr_patch_verbose", "krkr_bootstrap_bypass", "krkr_cxdec_patch_bridge"], ["krkr_patch_names"], ("CIALLOHOOK_FEATURE_KRKR_PATCH",)),
             ("二进制补丁", ["binary_enable", "binary_log", "binary_verify_old", "binary_fail_missing", "binary_fail_write", "binary_prefer_pak", "binary_hwbp_enable", "binary_hwbp_module", "binary_hwbp_rva"], ["binary_patch_files"], ("CIALLOHOOK_FEATURE_BINARY_PATCH",)),
             ("启动器", ["launcher_target", "launcher_debug"], ["launcher_target_dlls"], ()),
         ]

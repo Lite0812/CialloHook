@@ -21,11 +21,12 @@ namespace CialloHook
 		settings.startupTiming.waitForGuiReady = false;
 		settings.startupTiming.enableStartupWindowGate = false;
 		settings.font.charset = 0;
-		settings.font.font = L"SimHei";
+		settings.font.font = L"";
 		settings.font.fontNameOverride = L"";
 		settings.font.enableCharsetSpoof = true;
 		settings.font.spoofFromCharset = 128;
 		settings.font.spoofToCharset = 1;
+		settings.font.enableUIFontHook = true;
 		settings.font.unlockFontSelection = false;
 		settings.font.fontHookVerboseLog = false;
 		settings.font.enableCnJpMap = false;
@@ -122,10 +123,10 @@ namespace CialloHook
 		settings.rioShiina.specDvdFileSize = 0ULL;
 		settings.engineCache.med = false;
 		settings.engineCache.majiro = false;
-		settings.enginePatches.enableKrkrPatch = false;
+		settings.enginePatches.enableKrkrPatch = true;
 		settings.enginePatches.krkrPatchVerboseLog = false;
-		settings.enginePatches.krkrBootstrapBypass = false;
-		settings.enginePatches.enableKrkrCxdecBridge = false;
+		settings.enginePatches.krkrBootstrapBypass = true;
+		settings.enginePatches.enableKrkrCxdecPatchBridge = true;
 		settings.enginePatches.enableWafflePatch = false;
 		settings.binaryPatch.enable = false;
 		settings.binaryPatch.enableLog = false;
@@ -254,7 +255,7 @@ namespace CialloHook
 		settings.textReplace.rules = {};
 		settings.windowTitle.rules = {};
 		settings.filePatch.patchFolders = { L"patch" };
-		settings.filePatch.customPakFiles = { L"patch.cpk" };
+		settings.filePatch.customPakFiles = { L"patch.lpk" };
 		settings.fileSpoof.spoofFiles = {};
 		settings.fileSpoof.spoofDirectories = {};
 		settings.directoryRedirect.rules = {};
@@ -263,7 +264,7 @@ namespace CialloHook
 		settings.aliceSystem3x.patchFolders = { L"patch" };
 		settings.rioShiina.patchNames = { L"unencrypted" };
 		settings.rioShiina.archivesToExtract = {};
-		settings.enginePatches.krkrPatchNames = { L"unencrypted" };
+		settings.enginePatches.krkrPatchNames = { L"magalumina_cn" };
 		settings.binaryPatch.patchFiles = {};
 	}
 
@@ -278,7 +279,7 @@ namespace CialloHook
 		config.filePatchEnable = true;
 		config.patchFolders = { L"patch" };
 		config.customPakEnable = true;
-		config.customPakFiles = { L"patch.cpk" };
+		config.customPakFiles = { L"patch.lpk" };
 		config.startupMessage.enable = false;
 		config.startupMessage.title = L"CialloHook";
 		config.startupMessage.body = L"";

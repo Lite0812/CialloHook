@@ -203,7 +203,7 @@ void litepak_path_hash_bytes(const char* text, uint8_t out[LITEPAK_PATH_HASH_SIZ
     char normalized[4096];
     litepak_normalize_relpath(text, normalized, sizeof(normalized));
     blake2b_full(normalized, strlen(normalized), out, LITEPAK_PATH_HASH_SIZE,
-                 NULL, 0, (const uint8_t*)"LitePathV3", 10);
+                 NULL, 0, (const uint8_t*)"LitePathV6", 10);
 }
 
 void litepak_chunk_hash_bytes(const uint8_t* data, size_t len, uint8_t out[LITEPAK_CHUNK_HASH_SIZE]) {

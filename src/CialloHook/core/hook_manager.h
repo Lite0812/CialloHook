@@ -16,6 +16,5 @@ namespace CialloHook
 		static void TryApplyBinaryPatchesBeforeEntry(HMODULE dllModule);
 		static void TryRequestBinaryPatchOnFirstPatchHit(HMODULE dllModule);
 		static void Initialize(HMODULE dllModule);
-		static void ShowSplashFromEntryPoint(HMODULE dllModule);
 	};
 }

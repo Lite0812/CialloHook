@@ -1095,7 +1095,7 @@ namespace CialloHook
 			default: DrawFade(gfx, t * (2.f - t)); break;
 			}
 		}
-		else if (elapsed <= holdEnd)
+		else if (elapsed <= holdEnd || g_sp.exitMs == 0)
 		{
 			gfx.DrawImage(g_sp.scaled, 0, 0, g_sp.W, g_sp.H);
 		}
@@ -1794,130 +1794,222 @@ namespace CialloHook
 		return (br == sz);
 	}
 
-	void HookManager::ShowSplashFromEntryPoint(HMODULE dllModule)
+	static void ShowStartupSplash(const ModuleSettingsContext& context, const AppSettings& settings)
 	{
 #if !CIALLOHOOK_FEATURE_SPLASH_IMAGE
-		(void)dllModule;
+		(void)context;
+		(void)settings;
+		LogMessage(LogLevel::Info, L"SplashImage: feature disabled at build time");
 		return;
 #else
-		const ModuleSettingsContext context = BuildModuleSettingsContext(dllModule);
-		if (context.iniPath.empty()) return;
+		if (!settings.splashImage.enable)
+		{
+			CIALLOHOOK_VERBOSE_INFO_LOG(L"SplashImage: disabled by config");
+			return;
+		}
 
-		wchar_t val[16] = {};
-		GetPrivateProfileStringW(L"SplashImage", L"Enable", L"false", val, 16, context.iniPath.c_str());
-		bool enabled = (lstrcmpiW(val, L"true") == 0 || lstrcmpiW(val, L"1") == 0 || lstrcmpiW(val, L"yes") == 0);
-		if (!enabled) return;
-
-		SplashImageSettings ss;
-		ss.enable = true;
-		wchar_t buf[256] = {};
-		GetPrivateProfileStringW(L"SplashImage", L"ImageFile", L"splash.png", buf, 256, context.iniPath.c_str());
-		ss.imageFile = buf;
-		ss.width = GetPrivateProfileIntW(L"SplashImage", L"Width", 800, context.iniPath.c_str());
-		ss.height = GetPrivateProfileIntW(L"SplashImage", L"Height", 600, context.iniPath.c_str());
-		ss.entryEffect = GetPrivateProfileIntW(L"SplashImage", L"EntryEffect", 1, context.iniPath.c_str());
-		ss.exitEffect = GetPrivateProfileIntW(L"SplashImage", L"ExitEffect", 1, context.iniPath.c_str());
-		ss.entryMs = GetPrivateProfileIntW(L"SplashImage", L"EntryMs", 1200, context.iniPath.c_str());
-		ss.holdMs = GetPrivateProfileIntW(L"SplashImage", L"HoldMs", 1800, context.iniPath.c_str());
-		ss.exitMs = GetPrivateProfileIntW(L"SplashImage", L"ExitMs", 1500, context.iniPath.c_str());
-		ss.durationMs = GetPrivateProfileIntW(L"SplashImage", L"DurationMs", 0, context.iniPath.c_str());
-		ss.position = GetPrivateProfileIntW(L"SplashImage", L"Position", 1, context.iniPath.c_str());
-		ss.interactionMode = GetPrivateProfileIntW(L"SplashImage", L"InteractionMode", 0, context.iniPath.c_str());
-
-		wchar_t ep[MAX_PATH] = {};
-		GetModuleFileNameW(nullptr, ep, MAX_PATH);
-		std::wstring gameDir(ep);
-		auto sep = gameDir.find_last_of(L"/\\");
-		if (sep != std::wstring::npos) gameDir = gameDir.substr(0, sep + 1);
+		SplashImageSettings ss = settings.splashImage;
+		if (ss.imageFile.empty())
+		{
+			LogMessage(LogLevel::Warn, L"SplashImage: ImageFile is empty");
+			return;
+		}
 
 		auto isAbsPath = [](const std::wstring& path) -> bool
 		{
-			return (path.size() >= 2 && path[1] == L':') || (path.size() >= 2 && path[0] == 0x5c && path[1] == 0x5c);
+			return (path.size() >= 2 && path[1] == L':') ||
+				(path.size() >= 2 && path[0] == L'\\' && path[1] == L'\\');
 		};
-		auto joinGame = [&](const std::wstring& path) -> std::wstring
+		auto appendUniquePath = [](std::vector<std::wstring>& paths, const std::wstring& path)
 		{
-			return isAbsPath(path) ? path : (gameDir + path);
+			if (path.empty())
+			{
+				return;
+			}
+			for (const std::wstring& existing : paths)
+			{
+				if (_wcsicmp(existing.c_str(), path.c_str()) == 0)
+				{
+					return;
+				}
+			}
+			paths.push_back(path);
+		};
+		auto resolvePath = [&](const std::wstring& baseDir, const std::wstring& path) -> std::wstring
+		{
+			return isAbsPath(path) ? path : JoinPath(baseDir, path);
+		};
+		auto joinResolvedPath = [&](const std::wstring& baseDir, const std::wstring& left, const std::wstring& right) -> std::wstring
+		{
+			return JoinPath(resolvePath(baseDir, left), right);
+		};
+		auto formatList = [](const std::vector<std::wstring>& values) -> std::wstring
+		{
+			std::wstring result;
+			for (const std::wstring& value : values)
+			{
+				if (!result.empty())
+				{
+					result += L" | ";
+				}
+				result += value;
+			}
+			return result.empty() ? std::wstring(L"(none)") : result;
 		};
 
-		std::vector<std::wstring> patchFolders;
-		int patchFolderCount = GetPrivateProfileIntW(L"FilePatch", L"PatchFolderCount", -1, context.iniPath.c_str());
-		if (patchFolderCount >= 0)
+		std::vector<std::wstring> baseDirs;
+		appendUniquePath(baseDirs, PathRemoveFileName(context.iniPath));
+		appendUniquePath(baseDirs, PathRemoveFileName(context.modulePath));
+		appendUniquePath(baseDirs, GetCurrentDirW());
+		wchar_t exePath[MAX_PATH] = {};
+		if (GetModuleFileNameW(nullptr, exePath, MAX_PATH))
 		{
-			for (int i = 0; i < patchFolderCount; ++i)
+			appendUniquePath(baseDirs, PathRemoveFileName(exePath));
+		}
+
+		const std::vector<std::wstring>& patchFolders = settings.filePatch.patchFolders;
+		std::vector<std::wstring> cpkFiles;
+		bool useCpk = settings.filePatch.customPakEnable;
+		bool enableCpkLog = settings.filePatch.enableLog;
+		if (useCpk)
+		{
+			cpkFiles = settings.filePatch.customPakFiles;
+		}
+
+		std::vector<std::wstring> resolvedPakPaths;
+		if (useCpk && !cpkFiles.empty())
+		{
+			for (const std::wstring& pakFile : cpkFiles)
 			{
-				wchar_t key[64] = {};
-				_snwprintf_s(key, _countof(key), _TRUNCATE, L"PatchFolderName_%d", i);
-				wchar_t value[MAX_PATH] = {};
-				GetPrivateProfileStringW(L"FilePatch", key, L"", value, MAX_PATH, context.iniPath.c_str());
-				if (value[0] != L'\0') patchFolders.push_back(value);
+				if (pakFile.empty())
+				{
+					continue;
+				}
+				if (isAbsPath(pakFile))
+				{
+					appendUniquePath(resolvedPakPaths, pakFile);
+					continue;
+				}
+				for (const std::wstring& baseDir : baseDirs)
+				{
+					appendUniquePath(resolvedPakPaths, JoinPath(baseDir, pakFile));
+				}
+			}
+			std::vector<const wchar_t*> pakPaths;
+			pakPaths.reserve(resolvedPakPaths.size());
+			for (const std::wstring& pakFile : resolvedPakPaths)
+			{
+				pakPaths.push_back(pakFile.c_str());
+			}
+			if (!pakPaths.empty())
+			{
+				ConfigureCustomPakVFS(true, pakPaths.data(), pakPaths.size(), enableCpkLog);
+			}
+		}
+
+		std::vector<uint8_t> imgData;
+		std::wstring foundSource;
+		bool found = false;
+
+		if (isAbsPath(ss.imageFile))
+		{
+			found = ReadFileToVector(ss.imageFile, imgData);
+			if (found)
+			{
+				foundSource = ss.imageFile;
 			}
 		}
 		else
 		{
-			wchar_t value[MAX_PATH] = {};
-			GetPrivateProfileStringW(L"FilePatch", L"PatchFolderName_0", L"patch", value, MAX_PATH, context.iniPath.c_str());
-			if (value[0] != L'\0') patchFolders.push_back(value);
-		}
-
-		std::vector<std::wstring> cpkFiles;
-		wchar_t cpkEnabled[16] = {};
-		GetPrivateProfileStringW(L"FilePatch", L"CustomPakEnable", L"false", cpkEnabled, 16, context.iniPath.c_str());
-		bool useCpk = (lstrcmpiW(cpkEnabled, L"true") == 0 || lstrcmpiW(cpkEnabled, L"1") == 0 || lstrcmpiW(cpkEnabled, L"yes") == 0);
-		wchar_t cpkLogEnabled[16] = {};
-		GetPrivateProfileStringW(L"FilePatch", L"EnableLog", L"false", cpkLogEnabled, 16, context.iniPath.c_str());
-		bool enableCpkLog = (lstrcmpiW(cpkLogEnabled, L"true") == 0 || lstrcmpiW(cpkLogEnabled, L"1") == 0 || lstrcmpiW(cpkLogEnabled, L"yes") == 0);
-		if (useCpk)
-		{
-			int cpkCount = GetPrivateProfileIntW(L"FilePatch", L"CustomPakCount", -1, context.iniPath.c_str());
-			if (cpkCount >= 0)
+			/* 1. PatchFolder（编号越高优先级越高） */
+			for (size_t i = patchFolders.size(); !found && i > 0; --i)
 			{
-				for (int i = 0; i < cpkCount; ++i)
+				const std::wstring& patchFolder = patchFolders[i - 1];
+				if (patchFolder.empty())
 				{
-					wchar_t key[64] = {};
-					_snwprintf_s(key, _countof(key), _TRUNCATE, L"CustomPakName_%d", i);
-					wchar_t value[MAX_PATH] = {};
-					GetPrivateProfileStringW(L"FilePatch", key, L"", value, MAX_PATH, context.iniPath.c_str());
-					if (value[0] != L'\0') cpkFiles.push_back(value);
+					continue;
+				}
+				if (isAbsPath(patchFolder))
+				{
+					std::wstring candidate = JoinPath(patchFolder, ss.imageFile);
+					found = ReadFileToVector(candidate, imgData);
+					if (found) foundSource = candidate;
+					continue;
+				}
+				for (const std::wstring& baseDir : baseDirs)
+				{
+					std::wstring candidate = joinResolvedPath(baseDir, patchFolder, ss.imageFile);
+					found = ReadFileToVector(candidate, imgData);
+					if (found)
+					{
+						foundSource = candidate;
+						break;
+					}
 				}
 			}
-			else
+
+			/* 2. CustomPAK（编号越高优先级越高） */
+			for (size_t i = cpkFiles.size(); !found && i > 0; --i)
 			{
-				wchar_t value[MAX_PATH] = {};
-				GetPrivateProfileStringW(L"FilePatch", L"CustomPakName_0", L"patch.cpk", value, MAX_PATH, context.iniPath.c_str());
-				if (value[0] != L'\0') cpkFiles.push_back(value);
+				const std::wstring& cpkFile = cpkFiles[i - 1];
+				if (cpkFile.empty())
+				{
+					continue;
+				}
+				auto tryArchive = [&](const std::wstring& archivePath) -> bool
+				{
+					std::shared_ptr<const std::vector<uint8_t>> cpkData;
+					if (ResolveCustomPakArchiveData(archivePath.c_str(), ss.imageFile.c_str(), cpkData) && cpkData && !cpkData->empty())
+					{
+						imgData.assign(cpkData->begin(), cpkData->end());
+						foundSource = archivePath + L"::" + ss.imageFile;
+						return true;
+					}
+					return false;
+				};
+				if (isAbsPath(cpkFile))
+				{
+					found = tryArchive(cpkFile);
+					continue;
+				}
+				for (const std::wstring& baseDir : baseDirs)
+				{
+					found = tryArchive(JoinPath(baseDir, cpkFile));
+					if (found)
+					{
+						break;
+					}
+				}
+			}
+
+			/* 3. BaseDir 直接文件 */
+			for (const std::wstring& baseDir : baseDirs)
+			{
+				if (found)
+				{
+					break;
+				}
+				std::wstring candidate = JoinPath(baseDir, ss.imageFile);
+				found = ReadFileToVector(candidate, imgData);
+				if (found)
+				{
+					foundSource = candidate;
+				}
 			}
 		}
 
-		if (useCpk && !cpkFiles.empty())
+		if (!found || imgData.empty())
 		{
-			std::vector<const wchar_t*> pakPaths;
-			pakPaths.reserve(cpkFiles.size());
-			for (const std::wstring& pakFile : cpkFiles)
-			{
-				pakPaths.push_back(pakFile.c_str());
-			}
-			ConfigureCustomPakVFS(true, pakPaths.data(), pakPaths.size(), enableCpkLog);
+			LogMessage(LogLevel::Warn, L"SplashImage: image not found, ImageFile=%s Config=%s Module=%s BaseDirs=%s PatchCount=%u CustomPakCount=%u",
+				ss.imageFile.c_str(),
+				context.iniPath.empty() ? L"(none)" : context.iniPath.c_str(),
+				context.modulePath.empty() ? L"(none)" : context.modulePath.c_str(),
+				formatList(baseDirs).c_str(),
+				(uint32_t)patchFolders.size(),
+				(uint32_t)cpkFiles.size());
+			return;
 		}
-
-		std::vector<uint8_t> imgData;
-		bool found = false;
-
-		for (size_t i = patchFolders.size(); !found && i > 0; --i)
-		{
-			found = ReadFileToVector(joinGame(patchFolders[i - 1]) + L"\\" + ss.imageFile, imgData);
-		}
-		for (size_t i = cpkFiles.size(); !found && i > 0; --i)
-		{
-			std::shared_ptr<const std::vector<uint8_t>> cpkData;
-			if (ResolveCustomPakArchiveData(joinGame(cpkFiles[i - 1]).c_str(), ss.imageFile.c_str(), cpkData) && cpkData && !cpkData->empty())
-			{
-				imgData.assign(cpkData->begin(), cpkData->end());
-				found = true;
-			}
-		}
-		if (!found) { found = ReadFileToVector(joinGame(ss.imageFile), imgData); }
-
-		if (!found || imgData.empty()) return;
+		LogMessage(LogLevel::Info, L"SplashImage: loaded %u bytes from %s", (uint32_t)imgData.size(), foundSource.c_str());
 
 		/* 检测 EBML/WebM 魔术头: 0x1A 0x45 0xDF 0xA3 */
 		bool isWebM = false;
@@ -1929,64 +2021,139 @@ namespace CialloHook
 
 		if (isWebM)
 		{
-			/* 搜索 ciallo_webm.dll: PatchFolder → CustomPAK → 游戏根目录 → 默认搜索路径 */
+			/* 搜索 ciallo_webm.dll: PatchFolder → CustomPAK → BaseDir → 默认搜索路径 */
 			HMODULE hWebMDll = nullptr;
 			wchar_t tempDllPath[MAX_PATH] = {};
 			const wchar_t* dllName = L"ciallo_webm.dll";
+			std::wstring webmDllSource;
 
 			/* 1. PatchFolder（编号越高优先级越高） */
 			for (size_t i = patchFolders.size(); !hWebMDll && i > 0; --i)
 			{
-				std::wstring dllPath = joinGame(patchFolders[i - 1]) + L"\\" + dllName;
-				hWebMDll = LoadLibraryW(dllPath.c_str());
+				const std::wstring& patchFolder = patchFolders[i - 1];
+				if (patchFolder.empty())
+				{
+					continue;
+				}
+				if (isAbsPath(patchFolder))
+				{
+					std::wstring dllPath = JoinPath(patchFolder, dllName);
+					hWebMDll = LoadLibraryW(dllPath.c_str());
+					if (hWebMDll) webmDllSource = dllPath;
+					continue;
+				}
+				for (const std::wstring& baseDir : baseDirs)
+				{
+					std::wstring dllPath = joinResolvedPath(baseDir, patchFolder, dllName);
+					hWebMDll = LoadLibraryW(dllPath.c_str());
+					if (hWebMDll)
+					{
+						webmDllSource = dllPath;
+						break;
+					}
+				}
 			}
 
 			/* 2. CustomPAK — 提取到临时文件后加载 */
 			for (size_t i = cpkFiles.size(); !hWebMDll && i > 0; --i)
 			{
-				std::shared_ptr<const std::vector<uint8_t>> dllData;
-				if (ResolveCustomPakArchiveData(joinGame(cpkFiles[i - 1]).c_str(), dllName, dllData)
-					&& dllData && !dllData->empty())
+				const std::wstring& cpkFile = cpkFiles[i - 1];
+				if (cpkFile.empty())
 				{
-					wchar_t td[MAX_PATH] = {};
-					if (GetTempPathW(MAX_PATH, td))
+					continue;
+				}
+				auto tryLoadDllFromArchive = [&](const std::wstring& archivePath) -> bool
+				{
+					std::shared_ptr<const std::vector<uint8_t>> dllData;
+					if (!ResolveCustomPakArchiveData(archivePath.c_str(), dllName, dllData) || !dllData || dllData->empty())
 					{
-						wchar_t tb[MAX_PATH] = {};
-						if (GetTempFileNameW(td, L"cwd", 0, tb))
-						{
-							DeleteFileW(tb);
-							_snwprintf_s(tempDllPath, _countof(tempDllPath), _TRUNCATE, L"%s.dll", tb);
-							HANDLE hf = CreateFileW(tempDllPath, GENERIC_WRITE, 0, nullptr,
-								CREATE_ALWAYS, FILE_ATTRIBUTE_TEMPORARY, nullptr);
-							if (hf != INVALID_HANDLE_VALUE)
-							{
-								DWORD bw = 0;
-								WriteFile(hf, dllData->data(), (DWORD)dllData->size(), &bw, nullptr);
-								CloseHandle(hf);
-								hWebMDll = LoadLibraryW(tempDllPath);
-								if (!hWebMDll) { DeleteFileW(tempDllPath); tempDllPath[0] = L'\0'; }
-							}
-						}
+						return false;
+					}
+					wchar_t td[MAX_PATH] = {};
+					if (!GetTempPathW(MAX_PATH, td))
+					{
+						return false;
+					}
+					wchar_t tb[MAX_PATH] = {};
+					if (!GetTempFileNameW(td, L"cwd", 0, tb))
+					{
+						return false;
+					}
+					DeleteFileW(tb);
+					_snwprintf_s(tempDllPath, _countof(tempDllPath), _TRUNCATE, L"%s.dll", tb);
+					HANDLE hf = CreateFileW(tempDllPath, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_TEMPORARY, nullptr);
+					if (hf == INVALID_HANDLE_VALUE)
+					{
+						tempDllPath[0] = L'\0';
+						return false;
+					}
+					DWORD bw = 0;
+					WriteFile(hf, dllData->data(), (DWORD)dllData->size(), &bw, nullptr);
+					CloseHandle(hf);
+					if (bw != dllData->size())
+					{
+						DeleteFileW(tempDllPath);
+						tempDllPath[0] = L'\0';
+						return false;
+					}
+					hWebMDll = LoadLibraryW(tempDllPath);
+					if (!hWebMDll)
+					{
+						DeleteFileW(tempDllPath);
+						tempDllPath[0] = L'\0';
+						return false;
+					}
+					webmDllSource = archivePath + L"::" + dllName;
+					return true;
+				};
+				if (isAbsPath(cpkFile))
+				{
+					tryLoadDllFromArchive(cpkFile);
+					continue;
+				}
+				for (const std::wstring& baseDir : baseDirs)
+				{
+					if (tryLoadDllFromArchive(JoinPath(baseDir, cpkFile)))
+					{
+						break;
 					}
 				}
 			}
 
-			/* 3. 游戏根目录 */
-			if (!hWebMDll)
+			/* 3. BaseDir 直接文件 */
+			for (const std::wstring& baseDir : baseDirs)
 			{
-				hWebMDll = LoadLibraryW((gameDir + dllName).c_str());
+				if (hWebMDll)
+				{
+					break;
+				}
+				std::wstring dllPath = JoinPath(baseDir, dllName);
+				hWebMDll = LoadLibraryW(dllPath.c_str());
+				if (hWebMDll)
+				{
+					webmDllSource = dllPath;
+				}
 			}
 
 			/* 4. 系统默认搜索路径 */
 			if (!hWebMDll)
 			{
 				hWebMDll = LoadLibraryW(dllName);
+				if (hWebMDll)
+				{
+					webmDllSource = dllName;
+				}
 			}
 
 			if (hWebMDll)
 			{
+				LogMessage(LogLevel::Info, L"SplashImage: loaded WebM runtime from %s", webmDllSource.c_str());
 				RunWebMSplashAnimationSafe(hWebMDll, imgData.data(), imgData.size(), &ss);
 				FreeLibrary(hWebMDll);
+			}
+			else
+			{
+				LogMessage(LogLevel::Warn, L"SplashImage: WebM runtime ciallo_webm.dll not found, BaseDirs=%s", formatList(baseDirs).c_str());
 			}
 
 			/* 清理从 CustomPAK 提取的临时 DLL 文件 */
@@ -2001,6 +2168,7 @@ namespace CialloHook
 		}
 #endif
 	}
+
 
 	static void FillTimeZone(const std::wstring& timezone, RTL_TIME_ZONE_INFORMATION& tzi)
 	{
@@ -2557,7 +2725,10 @@ namespace CialloHook
 				LogMessage(LogLevel::Info, L"StartupMessage: prior consent already granted, skip in-process dialog");
 			}
 #endif
-			HookModules::ApplyPostStartupHooks(settings);
+
+			HookModules::ApplyPostStartupHooks(settings, false);
+			ShowStartupSplash(context, settings);
+			ReleaseStartupWindowGate();
 			LogMessage(LogLevel::Info, L"All hook modules applied");
 		}
 		catch (const std::exception& err)

@@ -1,5 +1,20 @@
 #include <Windows.h>
 #include "Proxy.h"
+#include "../config/build_options.h"
+
+#ifndef CIALLOHOOK_PROTECT_VERSION_PROXY
+#define CIALLOHOOK_PROTECT_VERSION_PROXY 1
+#endif
+
+#if defined(_MSC_VER) && defined(_WIN32) && CIALLOHOOK_FEATURE_CODECRYPT_PATCH && CIALLOHOOK_PROTECT_VERSION_PROXY
+#define CIALLOHOOK_PROXY_PROTECTED_BEGIN __pragma(code_seg(push, ".lpksc$m"))
+#define CIALLOHOOK_PROXY_PROTECTED_END __pragma(code_seg(pop))
+#else
+#define CIALLOHOOK_PROXY_PROTECTED_BEGIN
+#define CIALLOHOOK_PROXY_PROTECTED_END
+#endif
+
+CIALLOHOOK_PROXY_PROTECTED_BEGIN
 
 static void ProxyOutput(const wchar_t* text)
 {
@@ -12,7 +27,7 @@ static void ProxyOutput(const wchar_t* text)
 static void FailProxyInit(const wchar_t* message)
 {
 	ProxyOutput(message);
-	MessageBoxW(nullptr, message, L"CialloHook", MB_ICONERROR);
+	MessageBoxW(nullptr, message, L"Ciallo Runtime", MB_ICONERROR);
 	ExitProcess(0);
 }
 
@@ -67,7 +82,7 @@ void Proxy::Init()
 	wchar_t realDllPath[MAX_PATH];
 	GetSystemDirectoryW(realDllPath, MAX_PATH);
 	wcscat_s(realDllPath, L"\\version.dll");
-	ProxyOutput(L"[CialloHook] Proxy::Init loading version.dll\r\n");
+	ProxyOutput(L"[Ciallo Runtime] component init begin\r\n");
 	HMODULE hDll = LoadLibraryW(realDllPath);
 	if (hDll == nullptr)
 	{
@@ -131,7 +146,7 @@ void Proxy::Init()
 		FailProxyInit(L"初始化 version.dll 导出转发失败");
 	}
 
-	ProxyOutput(L"[CialloHook] Proxy::Init finished\r\n");
+	ProxyOutput(L"[Ciallo Runtime] component init success\r\n");
 }
 
 extern "C" BOOL WINAPI FakeGetFileVersionInfoA(LPCSTR lptstrFilename, DWORD dwHandle, DWORD dwLen, LPVOID lpData)

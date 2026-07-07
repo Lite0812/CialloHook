@@ -610,17 +610,17 @@ EnableStartupWindowGate = false
 krkirikiri 引擎的额外兼容补丁：
 
 ```ini
-[GLOBAL]
+[Krkr]
 EnableKrkrPatch = true
 KrkrBootstrapBypass = true
-EnableKrkrCxdecBridge = true
-KrkrPatchName = unencrypted
+EnableKrkrCxdecPatchBridge = true
+KrkrPatchName_0 = unencrypted
 ```
 
 说明：
 
-- `KrkrBootstrapBypass`：应用 FuckBootStrap 风格的 x86 字节特征补丁，绕过启动校验
-- `EnableKrkrCxdecBridge`：让 cxdec 场景也能命中现有的补丁目录 / xp3 / custom pak 路径
+- `KrkrBootstrapBypass`：hook `LoadLibraryExW`，在加载 `appdata\\local\\temp` 下的临时 DLL 前应用 Fuck_Cxdec_Check 风格 x86 文件补丁，绕过 cxdec/启动校验
+- `EnableKrkrCxdecPatchBridge`：让 cxdec 场景也能命中现有的补丁目录 / xp3 / custom pak 路径；`.sig` 等验证敏感资源会直接回落原始 cxdec media，避免补丁层影响校验
 - 支持链式归档名如 `patch.cpk>inner.xp3`，用于读取 cpk 内嵌 xp3
 
 ### 19. Siglus 密钥提取

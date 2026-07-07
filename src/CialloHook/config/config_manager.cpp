@@ -561,6 +561,7 @@ namespace CialloHook
 			settings.font.fontNameOverride = GetStringOrDefault(context, fontSection, L"FontName", L"");
 			settings.font.skipFonts = GetIndexedList(context, fontSection, L"SkipFontCount", L"SkipFontName_");
 			settings.font.redirectRules = GetIndexedFontRedirectRules(context, fontSection, L"RedirectFontCount");
+			settings.font.enableUIFontHook = GetBoolOrDefault(context, fontSection, L"EnableUIFontHook", true);
 			const bool hookGroupCreate = GetBoolOrDefault(context, fontSection, L"HookGroupCreate", true);
 			const bool hookGroupEnumerate = GetBoolOrDefault(context, fontSection, L"HookGroupEnumerate", true);
 			const bool hookGroupMetrics = GetBoolOrDefault(context, fontSection, L"HookGroupMetrics", true);
@@ -936,14 +937,18 @@ namespace CialloHook
 				AppendWarning(context, L"LoadMode.Mode 为空，已回退为 proxy");
 			}
 
-			if (settings.startupTiming.attachMode != L"immediate"
-					&& settings.startupTiming.attachMode != L"delay"
-					&& settings.startupTiming.attachMode != L"entrypoint")
-				{
-					std::wstring invalidMode = settings.startupTiming.attachMode;
-					settings.startupTiming.attachMode = L"immediate";
-					AppendWarning(context, L"StartupTiming.AttachMode = \"" + invalidMode + L"\" 无效，已回退为 immediate");
-				}
+			if (settings.startupTiming.attachMode == L"entrypoint")
+			{
+				settings.startupTiming.attachMode = L"immediate";
+				AppendWarning(context, L"StartupTiming.AttachMode = \"entrypoint\" 已不再支持，已回退为 immediate");
+			}
+			else if (settings.startupTiming.attachMode != L"immediate"
+					&& settings.startupTiming.attachMode != L"delay")
+			{
+				std::wstring invalidMode = settings.startupTiming.attachMode;
+				settings.startupTiming.attachMode = L"immediate";
+				AppendWarning(context, L"StartupTiming.AttachMode = \"" + invalidMode + L"\" 无效，已回退为 immediate");
+			}
 
 				settings.localeEmulator.enable = GetBoolOrDefault(context, L"LocaleEmulator", L"Enable", false);
 			settings.localeEmulator.ansiCodePage = GetUIntOrDefault(context, L"LocaleEmulator", L"AnsiCodePage", 932);
@@ -1025,7 +1030,7 @@ namespace CialloHook
 			settings.engineCache.majiro = GetBoolOrDefault(context, L"GLOBAL", L"MAJIRO", false);
 			settings.enginePatches.enableKrkrPatch = GetBoolOrDefault(context, L"Krkr", L"EnableKrkrPatch", false);
 			settings.enginePatches.krkrPatchVerboseLog = GetBoolOrDefault(context, L"Krkr", L"KrkrPatchVerboseLog", false);
-			settings.enginePatches.enableKrkrCxdecBridge = GetBoolOrDefault(context, L"Krkr", L"EnableKrkrCxdecBridge", false);
+			settings.enginePatches.enableKrkrCxdecPatchBridge = GetBoolOrDefault(context, L"Krkr", L"EnableKrkrCxdecPatchBridge", false);
 			settings.enginePatches.krkrBootstrapBypass = GetBoolOrDefault(context, L"Krkr", L"KrkrBootstrapBypass", false);
 			settings.enginePatches.krkrPatchNames = GetIndexedList(context, L"Krkr", L"KrkrPatchCount", L"KrkrPatchName_");
 			settings.enginePatches.enableWafflePatch = GetBoolOrDefault(context, L"GLOBAL", L"EnableWafflePatch", false);

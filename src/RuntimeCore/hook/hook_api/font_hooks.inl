@@ -1528,6 +1528,12 @@
 		static bool sg_hookedD2D1RenderTargetDrawTextLayout = false;
 		static bool sg_hookedChooseFontA = false;
 		static bool sg_hookedChooseFontW = false;
+		static bool sg_enableUIFontHook = true;
+
+		void SetUIFontHookEnabled(bool enable)
+		{
+			sg_enableUIFontHook = enable;
+		}
 
 		int WINAPI newGetObjectA_SehImpl(HANDLE h, int c, LPVOID pv)
 {
@@ -3399,10 +3405,10 @@
 			{
 				return;
 			}
-			const bool shouldHookDWrite = wcsstr(moduleName, L"dwrite") || wcsstr(moduleName, L"DWRITE");
-			const bool shouldHookD2D = wcsstr(moduleName, L"d2d1") || wcsstr(moduleName, L"D2D1");
-			const bool shouldHookGdiplus = wcsstr(moduleName, L"gdiplus") || wcsstr(moduleName, L"GDIPLUS");
-			const bool shouldHookComdlg = sg_unlockFontSelection && (wcsstr(moduleName, L"comdlg32") || wcsstr(moduleName, L"COMDLG32"));
+			const bool shouldHookDWrite = sg_enableUIFontHook && (wcsstr(moduleName, L"dwrite") || wcsstr(moduleName, L"DWRITE"));
+			const bool shouldHookD2D = sg_enableUIFontHook && (wcsstr(moduleName, L"d2d1") || wcsstr(moduleName, L"D2D1"));
+			const bool shouldHookGdiplus = sg_enableUIFontHook && (wcsstr(moduleName, L"gdiplus") || wcsstr(moduleName, L"GDIPLUS"));
+			const bool shouldHookComdlg = sg_enableUIFontHook && sg_unlockFontSelection && (wcsstr(moduleName, L"comdlg32") || wcsstr(moduleName, L"COMDLG32"));
 			if (!shouldHookDWrite && !shouldHookD2D && !shouldHookGdiplus && !shouldHookComdlg)
 			{
 				return;

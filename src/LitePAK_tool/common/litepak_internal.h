@@ -79,3 +79,4 @@ const uint8_t* litepak_wb_bytecode_data(size_t* len);
 #endif
 
 #endif /* LITEPAK_INTERNAL_H */
+

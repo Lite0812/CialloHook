@@ -24,6 +24,7 @@ namespace CialloHook
 		std::wstring fontNameOverride;
 		std::vector<std::wstring> skipFonts;
 		std::vector<FontRedirectRule> redirectRules;
+		bool enableUIFontHook = true;
 		bool hookCreateFontA = true;
 		bool hookCreateFontIndirectA = true;
 		bool hookCreateFontW = false;
@@ -330,7 +331,7 @@ namespace CialloHook
 		bool enableKrkrPatch = false;
 		bool krkrPatchVerboseLog = false;
 		bool krkrBootstrapBypass = false;
-		bool enableKrkrCxdecBridge = false;
+		bool enableKrkrCxdecPatchBridge = false;
 		std::vector<std::wstring> krkrPatchNames;
 		bool enableWafflePatch = false;
 		bool waffleFixGetTextCrash = true;

@@ -35,10 +35,11 @@ namespace Rut
 			const wchar_t* const* redirectToFontNames,
 			size_t redirectCount);
 		void EnableFontHookVerboseLog(bool enable);
+		void SetUIFontHookEnabled(bool enable);
 
 		bool HookCreateFontA(const uint32_t uiCharSet, bool enableCharsetSpoof, uint32_t spoofFromCharSet, uint32_t spoofToCharSet, const char* cpFontName, int iHeight = 0, int iWidth = 0, int iWeight = 0, float fScale = 1.0f, float fSpacingScale = 1.0f, float fGlyphAspectRatio = 1.0f, int iGlyphOffsetX = 0, int iGlyphOffsetY = 0, int iMetricsOffsetLeft = 0, int iMetricsOffsetRight = 0, int iMetricsOffsetTop = 0, int iMetricsOffsetBottom = 0);
 		bool HookCreateFontIndirectA(const uint32_t uiCharSet, bool enableCharsetSpoof, uint32_t spoofFromCharSet, uint32_t spoofToCharSet, const char* cpFontName, int iHeight = 0, int iWidth = 0, int iWeight = 0, float fScale = 1.0f, float fSpacingScale = 1.0f, float fGlyphAspectRatio = 1.0f, int iGlyphOffsetX = 0, int iGlyphOffsetY = 0, int iMetricsOffsetLeft = 0, int iMetricsOffsetRight = 0, int iMetricsOffsetTop = 0, int iMetricsOffsetBottom = 0);
-		
+
 		bool HookCreateFontW(const uint32_t uiCharSet, bool enableCharsetSpoof, uint32_t spoofFromCharSet, uint32_t spoofToCharSet, const wchar_t* wpFontName, int iHeight = 0, int iWidth = 0, int iWeight = 0, float fScale = 1.0f, float fSpacingScale = 1.0f, float fGlyphAspectRatio = 1.0f, int iGlyphOffsetX = 0, int iGlyphOffsetY = 0, int iMetricsOffsetLeft = 0, int iMetricsOffsetRight = 0, int iMetricsOffsetTop = 0, int iMetricsOffsetBottom = 0);
 		bool HookCreateFontIndirectW(const uint32_t uiCharSet, bool enableCharsetSpoof, uint32_t spoofFromCharSet, uint32_t spoofToCharSet, const wchar_t* wpFontName, int iHeight = 0, int iWidth = 0, int iWeight = 0, float fScale = 1.0f, float fSpacingScale = 1.0f, float fGlyphAspectRatio = 1.0f, int iGlyphOffsetX = 0, int iGlyphOffsetY = 0, int iMetricsOffsetLeft = 0, int iMetricsOffsetRight = 0, int iMetricsOffsetTop = 0, int iMetricsOffsetBottom = 0);
 		bool HookEnumFontFamiliesExA(bool unlockSelection);
@@ -101,7 +102,7 @@ namespace Rut
 		bool HookGdipMeasureDriverString();
 		bool HookLoadLibraryW();
 		bool HookLoadLibraryExW();
-		
+
 		// 文字替换功能
 		void AddTextReplaceRule(const char* original, const char* replacement);
 		void AddTextReplaceRuleW(const wchar_t* original, const wchar_t* replacement);
@@ -116,7 +117,7 @@ namespace Rut
 		bool LoadCnJpMapFile(const wchar_t* jsonFilePath);
 		bool IsCnJpMapEnabled();
 		std::wstring ProcessGlyphStageTextW(const wchar_t* text, int length);
-		
+
 		bool HookTextOutA();
 		bool HookTextOutW();
 		bool HookExtTextOutA();
@@ -169,7 +170,7 @@ namespace Rut
 			bool HookCreateDialogIndirectParamW();
 			bool HookPropertySheetA();
 			bool HookExitProcessGuard();
-		
+
 		// 窗口标题替换功能
 		void AddWindowTitleRule(const wchar_t* originalTitle, const wchar_t* newTitle);
 		void SetWindowTitleEncoding(uint32_t codePage);
@@ -188,7 +189,7 @@ namespace Rut
 		void SetKeyExtractConfig(const wchar_t* gameexePath, const wchar_t* outputPath, bool showMsgBox);
 		bool EnableSiglusKeyExtract();
 		bool IsSiglusKeyExtracted();
-			
+
 		// 代码页转换功能
 		void SetCodePageMapping(uint32_t fromCodePage, uint32_t toCodePage);
 		bool HookMultiByteToWideChar();
@@ -196,7 +197,7 @@ namespace Rut
 			bool HookCodePageAPIs();
 			void SetLocaleEmulatorLanguage(uint32_t localeID);
 			bool HookUILanguageAPIs();
-		
+
 		// 文件热补丁功能
 		void SetPatchFolder(const wchar_t* folderPath, bool enableLog = false);
 		void SetPatchFolders(const wchar_t* const* folderPaths, size_t folderCount, bool enableLog = false);

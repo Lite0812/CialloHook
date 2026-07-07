@@ -55,7 +55,8 @@
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <Import Project="config\build_options.props" Condition="exists('config\build_options.props')" />
   <PropertyGroup>
-    <CialloHookFeatureCodeCryptPatch Condition="'$(CialloHookFeatureCodeCryptPatch)'==''">true</CialloHookFeatureCodeCryptPatch>
+    <CialloHookFeatureCodeCryptPatch Condition="'$(CialloHookFeatureCodeCryptPatch)'==''">1</CialloHookFeatureCodeCryptPatch>
+    <CialloHookFeatureRuntimeInit Condition="'$(CialloHookFeatureRuntimeInit)'==''">1</CialloHookFeatureRuntimeInit>
     <CialloHookFeatureKrkrPatch Condition="'$(CialloHookFeatureKrkrPatch)'==''">true</CialloHookFeatureKrkrPatch>
     <CialloHookFeatureProxyExports Condition="'$(CialloHookFeatureProxyExports)'==''">true</CialloHookFeatureProxyExports>
   </PropertyGroup>
@@ -164,7 +165,7 @@
       <RuntimeTypeInfo>false</RuntimeTypeInfo>
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>NDEBUG;_CONSOLE;CIALLOHOOK_FEATURE_RUNTIME_INIT=$(CialloHookFeatureRuntimeInit);%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp17</LanguageStandard>
       <AdditionalOptions>/utf-8 /Gw %(AdditionalOptions)</AdditionalOptions>
@@ -250,6 +251,17 @@
   <Target Name="CialloHookCodeCryptPatch" AfterTargets="Build" Condition="'$(Configuration)'=='Release' and '$(CialloHookFeatureCodeCryptPatch)'!='false'">
     <Exec Command="python &quot;$(ProjectDir)..\LitePAK_tool\tools\litepak_codecrypt_patch.py&quot; &quot;$(TargetPath)&quot;" />
   </Target>
+  <Target Name="CialloHookAuthenticodeSign" AfterTargets="CialloHookCodeCryptPatch" Condition="'$(Configuration)'=='Release' and '$(CialloHookSignEnabled)'=='true'">
+    <PropertyGroup>
+      <CialloHookSignToolResolved Condition="'$(CialloHookSignTool)'==''">signtool</CialloHookSignToolResolved>
+      <CialloHookSignToolResolved Condition="'$(CialloHookSignTool)'!=''">$(CialloHookSignTool)</CialloHookSignToolResolved>
+      <CialloHookSignPasswordArg Condition="'$(CialloHookSignPassword)'!=''"> /p &quot;$(CialloHookSignPassword)&quot;</CialloHookSignPasswordArg>
+      <CialloHookSignTimestampArg Condition="'$(CialloHookSignTimestampUrl)'!=''"> /tr &quot;$(CialloHookSignTimestampUrl)&quot; /td SHA256</CialloHookSignTimestampArg>
+    </PropertyGroup>
+    <Exec Command="&quot;$(CialloHookSignToolResolved)&quot; sign /fd SHA256 /f &quot;$(CialloHookSignCertFile)&quot;$(CialloHookSignPasswordArg)$(CialloHookSignTimestampArg) &quot;$(TargetPath)&quot;" Condition="'$(CialloHookSignCertFile)'!=''" />
+    <Exec Command="&quot;$(CialloHookSignToolResolved)&quot; sign /fd SHA256 /sha1 &quot;$(CialloHookSignThumbprint)&quot;$(CialloHookSignTimestampArg) &quot;$(TargetPath)&quot;" Condition="'$(CialloHookSignThumbprint)'!=''" />
+  </Target>
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
 </Project>
+

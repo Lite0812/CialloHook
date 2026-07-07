@@ -12,7 +12,7 @@ namespace CialloHook
 		void ApplyWindowTitleHooks(const WindowTitleSettings& settings);
 		void ApplyScreenCaptureProtectionHooks(const ScreenCaptureProtectionSettings& settings);
 		void ApplyEarlyStartupHooks(const AppSettings& settings, uint32_t bypassThreadId);
-			void ApplyPostStartupHooks(const AppSettings& settings);
+			void ApplyPostStartupHooks(const AppSettings& settings, bool releaseStartupWindowGate = true);
 			void TryApplyBinaryPatchesBeforeEntry(const BinaryPatchSettings& settings);
 			bool IsBinaryPatchPreEntryApplied();
 			void TryRequestBinaryPatchOnFirstPatchHit(const BinaryPatchSettings& settings);

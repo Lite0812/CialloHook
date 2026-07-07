@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <exception>
+#include <fstream>
 #include <memory>
 #include <string>
 #include <utility>
@@ -45,7 +46,7 @@ namespace CialloHook
 			bool sg_enableKrkrPatch = false;
 			bool sg_enableKrkrPatchVerboseLog = false;
 			bool sg_enableKrkrBootstrapBypass = false;
-			bool sg_enableKrkrCxdecBridge = false;
+			bool sg_enableKrkrCxdecPatchBridge = false;
 			bool sg_krkrBootstrapBypassTried = false;
 
 			static std::wstring NormalizeSlashes(const std::wstring& path)
@@ -887,6 +888,7 @@ namespace CialloHook
 			using pLoadLibraryExA = HMODULE(WINAPI*)(LPCSTR lpLibFileName, HANDLE hFile, DWORD dwFlags);
 			using pLoadLibraryExW = HMODULE(WINAPI*)(LPCWSTR lpLibFileName, HANDLE hFile, DWORD dwFlags);
 			using pPatchSignVerifyMsvc = BOOL(__fastcall*)(HMODULE hModule);
+			using pPatchSignVerifyResultMsvc = bool(*)();
 			using pCreateStreamBorland = tTJSBinaryStream* (*)(const ttstr& name, tjs_uint32 flags);
 			using pCreateStreamMsvc = tTJSBinaryStream* (KRKR_MSVC_HOOK_CALL*)(const ttstr& name, tjs_uint32 flags);
 
@@ -897,6 +899,8 @@ namespace CialloHook
 			};
 
 			pPatchSignVerifyMsvc sg_rawSignVerifyMsvc = nullptr;
+			pPatchSignVerifyResultMsvc sg_rawSignVerifyResultMsvc = nullptr;
+			void** sg_signVerifyVTable = nullptr;
 			pCreateStreamBorland sg_rawCreateStreamBorland = nullptr;
 			pV2Link sg_rawV2Link = nullptr;
 			pLoadLibraryA sg_rawLoadLibraryA = nullptr;
@@ -923,6 +927,7 @@ namespace CialloHook
 			static void EnsureHooksInstalled();
 			static void InstallCreateStreamHook();
 			static BOOL __fastcall PatchSignVerifyMsvc(HMODULE /*hModule*/);
+			static bool PatchSignVerifyResultMsvc();
 			static HRESULT WINAPI HookV2Link(iTVPFunctionExporter* pExporter);
 				static bool TryBuildPatchMemoryStream(const std::wstring& patchName, tTJSBinaryStream*& outStream, std::wstring& outSource);
 				static bool WritePointer(void** target, void* value);
@@ -964,6 +969,22 @@ namespace CialloHook
 				if (sg_signVerifyHooked)
 				{
 					return true;
+				}
+
+				sg_signVerifyVTable = CompilerHelper::FindVTable(hModule, "KrkrSign::VerifierImpl");
+				if (sg_signVerifyVTable)
+				{
+					sg_rawSignVerifyResultMsvc = reinterpret_cast<pPatchSignVerifyResultMsvc>(sg_signVerifyVTable[4]);
+					sg_signVerifyHooked = WritePointer(sg_signVerifyVTable + 4, reinterpret_cast<void*>(PatchSignVerifyResultMsvc));
+					LogMessage(sg_signVerifyHooked ? LogLevel::Info : LogLevel::Warn, L"KrkrPluginBridge: sign verify vtable hook=%s", sg_signVerifyHooked ? L"ok" : L"failed");
+					if (sg_signVerifyHooked)
+					{
+						return true;
+					}
+				}
+				else if (sg_enableKrkrPatchVerboseLog)
+				{
+					LogMessage(LogLevel::Info, L"KrkrPluginBridge: sign verify vtable not found, try pattern hook");
 				}
 
 				static constexpr auto kPatternSignVerifyMsvc = "\x57\x8B\xF9\x8B\x8F\x80\x2A\x2A\x2A\x85\xC9\x75\x2A\x68\x2A\x2A\x2A\x2A\x8B\xCF\xE8\x2A\x2A\x2A\x2A\x5F\xC3";
@@ -1020,6 +1041,136 @@ namespace CialloHook
 				return sg_v2LinkHooked;
 			}
 
+			static bool IsCxdecTempDllPatchTarget(const std::wstring& path)
+			{
+				return path.find(L"appdata\\local\\temp") != std::wstring::npos;
+			}
+
+			static void TryPatchCxdecTempDllFile(const std::wstring& path)
+			{
+				std::fstream dllFile(path, std::ios::in | std::ios::out | std::ios::binary);
+				if (!dllFile.is_open())
+				{
+					if (sg_enableKrkrPatchVerboseLog)
+					{
+						LogMessage(LogLevel::Warn, L"KrkrPluginBridge: cxdec temp dll open failed %s", path.c_str());
+					}
+					return;
+				}
+
+				char zeroByte = 0x00;
+				dllFile.seekp(326, std::ios::beg);
+				dllFile.write(&zeroByte, 1);
+
+				dllFile.seekg(0, std::ios::end);
+				std::streamoff fileSize = dllFile.tellg();
+				if (fileSize <= 0)
+				{
+					return;
+				}
+				dllFile.seekg(0, std::ios::beg);
+
+				std::vector<char> buffer(static_cast<size_t>(fileSize));
+				dllFile.read(buffer.data(), fileSize);
+
+				char searchBytes[] =
+				{
+					0x55,
+					(char)0x8B, (char)0xEC,
+					(char)0x8B, 0x4D, 0x08,
+					(char)0x85, (char)0xC9,
+					0x74, 0x13,
+					(char)0xFF, 0x75, 0x10,
+					(char)0xFF, 0x75, 0x0C,
+					(char)0xE8, (char)0xFB, 0x08, 0x00, 0x00,
+					(char)0x84, (char)0xC0,
+					0x74, 0x04,
+					(char)0xB0, 0x01,
+					0x5D,
+					(char)0xC3,
+					0x32, (char)0xC0,
+					0x5D,
+					(char)0xC3
+				};
+				char mask[] =
+				{
+					1,
+					1, 1,
+					1, 1, 1,
+					1, 1,
+					1, 1,
+					1, 1, 1,
+					1, 1, 1,
+					1, 0, 0, 0, 0,
+					1, 1,
+					1, 1,
+					1, 1,
+					1,
+					1,
+					1, 1,
+					1,
+					1
+				};
+				char newBytes[] =
+				{
+					0x55,
+					(char)0x8B, (char)0xEC,
+					(char)0x8B, 0x4D, 0x08,
+					(char)0x85, (char)0xC9,
+					(char)0xEB, 0x13,
+					(char)0xFF, 0x75, 0x10,
+					(char)0xFF, 0x75, 0x0C,
+					(char)0xE8, 0x3B, 0x0F, 0x00, 0x00,
+					(char)0x84, (char)0xC0,
+					0x74, 0x04,
+					(char)0xB0, 0x01,
+					0x5D,
+					(char)0xC3,
+					(char)0xB0, 0x01,
+					0x5D,
+					(char)0xC3
+				};
+
+				const size_t searchSize = sizeof(searchBytes) / sizeof(char);
+				const size_t newSize = sizeof(newBytes) / sizeof(char);
+				if (buffer.size() < searchSize)
+				{
+					if (sg_enableKrkrPatchVerboseLog)
+					{
+						LogMessage(LogLevel::Info, L"KrkrPluginBridge: cxdec temp dll too small %s", path.c_str());
+					}
+					return;
+				}
+
+				for (size_t i = 0; i <= buffer.size() - searchSize; ++i)
+				{
+					bool match = true;
+					for (size_t j = 0; j < searchSize; ++j)
+					{
+						if (mask[j] == 1 && buffer[i + j] != searchBytes[j])
+						{
+							match = false;
+							break;
+						}
+					}
+					if (match)
+					{
+						dllFile.seekp(static_cast<std::streamoff>(i), std::ios::beg);
+						dllFile.write(newBytes, newSize);
+						if (sg_enableKrkrPatchVerboseLog)
+						{
+							LogMessage(LogLevel::Info, L"KrkrPluginBridge: cxdec temp dll patched offset=%u path=%s", (uint32_t)i, path.c_str());
+						}
+						return;
+					}
+				}
+
+				if (sg_enableKrkrPatchVerboseLog)
+				{
+					LogMessage(LogLevel::Warn, L"KrkrPluginBridge: cxdec temp dll pattern not found %s", path.c_str());
+				}
+			}
+
 			static HMODULE WINAPI HookLoadLibraryA(LPCSTR lpLibFileName)
 			{
 				HMODULE hModule = sg_rawLoadLibraryA ? sg_rawLoadLibraryA(lpLibFileName) : nullptr;
@@ -1043,6 +1194,14 @@ namespace CialloHook
 
 			static HMODULE WINAPI HookLoadLibraryExW(LPCWSTR lpLibFileName, HANDLE hFile, DWORD dwFlags)
 			{
+				if (sg_enableKrkrBootstrapBypass && lpLibFileName)
+				{
+					std::wstring libFileName(lpLibFileName);
+					if (IsCxdecTempDllPatchTarget(libFileName))
+					{
+						TryPatchCxdecTempDllFile(libFileName);
+					}
+				}
 				HMODULE hModule = sg_rawLoadLibraryExW ? sg_rawLoadLibraryExW(lpLibFileName, hFile, dwFlags) : nullptr;
 				TryHookKrkrModule(hModule);
 				return hModule;
@@ -1084,7 +1243,7 @@ namespace CialloHook
 
 			static void TryInstallCxdecStorageMediaHook()
 				{
-					if (!sg_enableKrkrCxdecBridge || sg_tvpRegisterStorageMediaHooked || !sg_tvpImportStubReady)
+					if (!sg_enableKrkrCxdecPatchBridge || sg_tvpRegisterStorageMediaHooked || !sg_tvpImportStubReady)
 					{
 						return;
 					}
@@ -1110,7 +1269,7 @@ namespace CialloHook
 					{
 						sg_rawTVPRegisterStorageMedia(media);
 					}
-					if (!sg_enableKrkrCxdecBridge || !media)
+					if (!sg_enableKrkrCxdecPatchBridge || !media)
 					{
 						return;
 					}
@@ -1152,9 +1311,19 @@ namespace CialloHook
 					LogMessage(LogLevel::Info, L"KrkrPluginBridge: cxdec storage media vtable patched");
 				}
 
+				static bool IsCxdecVerificationSensitiveStorage(const ttstr* name)
+				{
+					if (!name)
+					{
+						return false;
+					}
+					return EndsWithInsensitive(std::wstring(name->c_str()), L".sig");
+				}
+
 				static tTJSBinaryStream* __cdecl HookStorageMediaOpen(void* media, ttstr* name, tjs_uint32 flags)
 				{
-					if (media && name && flags == TJS_BS_READ && sg_enableKrkrPatch)
+					const bool skipPatchBridgeForVerify = sg_enableKrkrCxdecPatchBridge && IsCxdecVerificationSensitiveStorage(name);
+					if (media && name && flags == TJS_BS_READ && sg_enableKrkrPatch && !skipPatchBridgeForVerify)
 					{
 						std::wstring patchName = PatchName(*name);
 						if (!patchName.empty())
@@ -1167,6 +1336,10 @@ namespace CialloHook
 								return patchStream;
 							}
 						}
+					}
+					else if (skipPatchBridgeForVerify && sg_enableKrkrPatchVerboseLog)
+					{
+						LogMessage(LogLevel::Info, L"KrkrPluginBridge: cxdec conservative open passthrough %s", name ? name->c_str() : L"(null)");
 					}
 
 					void** vtable = media ? *reinterpret_cast<void***>(media) : nullptr;
@@ -1186,7 +1359,8 @@ namespace CialloHook
 
 				static bool __cdecl HookCheckExistentStorage(void* media, ttstr* name)
 				{
-					if (name && sg_enableKrkrPatch)
+					const bool skipPatchBridgeForVerify = sg_enableKrkrCxdecPatchBridge && IsCxdecVerificationSensitiveStorage(name);
+					if (name && sg_enableKrkrPatch && !skipPatchBridgeForVerify)
 					{
 						std::wstring patchUrl;
 						std::wstring patchArc;
@@ -1194,6 +1368,10 @@ namespace CialloHook
 						{
 							return true;
 						}
+					}
+					else if (skipPatchBridgeForVerify && sg_enableKrkrPatchVerboseLog)
+					{
+						LogMessage(LogLevel::Info, L"KrkrPluginBridge: cxdec conservative exists passthrough %s", name ? name->c_str() : L"(null)");
 					}
 
 					void** vtable = media ? *reinterpret_cast<void***>(media) : nullptr;
@@ -1242,6 +1420,11 @@ static HRESULT WINAPI HookV2Link(iTVPFunctionExporter* pExporter)
 			static BOOL __fastcall PatchSignVerifyMsvc(HMODULE /*hModule*/)
 			{
 				return TRUE;
+			}
+
+			static bool PatchSignVerifyResultMsvc()
+			{
+				return true;
 			}
 #else
 			using pPatchSignVerifyResultMsvc = bool(*)();
@@ -1754,7 +1937,6 @@ static HRESULT WINAPI HookV2Link(iTVPFunctionExporter* pExporter)
 
 			static void EnsureHooksInstalled()
 			{
-				TryApplyKrkrBootstrapBypass();
 				ScopedDetourErrorDialogSuppression suppressDetourErrorDialog;
 #if defined(_M_IX86)
 				if (sg_loadLibraryHooked)
@@ -1866,7 +2048,7 @@ static HRESULT WINAPI HookV2Link(iTVPFunctionExporter* pExporter)
 			bool enableKrkrPatch,
 			bool verboseLog,
 			bool bootstrapBypass,
-			bool enableCxdecBridge,
+			bool enableCxdecPatchBridge,
 			const std::wstring& gameDir,
 			const std::vector<std::wstring>& patchRoots,
 			const std::vector<std::wstring>& customPakFiles,
@@ -1877,7 +2059,7 @@ static HRESULT WINAPI HookV2Link(iTVPFunctionExporter* pExporter)
 			sg_enableKrkrPatch = enableKrkrPatch;
 			sg_enableKrkrPatchVerboseLog = verboseLog;
 			sg_enableKrkrBootstrapBypass = bootstrapBypass;
-				sg_enableKrkrCxdecBridge = enableCxdecBridge;
+			sg_enableKrkrCxdecPatchBridge = enableCxdecPatchBridge;
 			sg_krkrBootstrapBypassTried = false;
 			sg_gameDir = NormalizeSlashes(gameDir);
 			sg_gameDirLower = ToLowerCopy(sg_gameDir);
@@ -1892,7 +2074,7 @@ static HRESULT WINAPI HookV2Link(iTVPFunctionExporter* pExporter)
 				sg_cxdecOriginalOpenFuncs.clear();
 #endif
 
-			if (!enableKrkrPatch)
+			if (!enableKrkrPatch && !bootstrapBypass && !enableCxdecPatchBridge)
 			{
 				LogMessage(LogLevel::Info, L"KrkrPluginBridge: disabled");
 				return;
@@ -1943,7 +2125,7 @@ namespace CialloHook
 			bool enableKrkrPatch,
 			bool verboseLog,
 			bool bootstrapBypass,
-			bool enableCxdecBridge,
+			bool enableCxdecPatchBridge,
 			const std::wstring& gameDir,
 			const std::vector<std::wstring>& patchRoots,
 			const std::vector<std::wstring>& customPakFiles,
@@ -1954,7 +2136,7 @@ namespace CialloHook
 			(void)enableKrkrPatch;
 			(void)verboseLog;
 			(void)bootstrapBypass;
-			(void)enableCxdecBridge;
+			(void)enableCxdecPatchBridge;
 			(void)gameDir;
 			(void)patchRoots;
 			(void)customPakFiles;

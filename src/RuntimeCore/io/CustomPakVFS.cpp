@@ -411,16 +411,17 @@ namespace Rut
 				return std::wstring();
 			}
 
+			static std::wstring ToPosixPath(const std::wstring& path);
+
 			static bool LitePakHashRelPath(const std::wstring& relativePath, std::array<uint8_t, 16>& out)
 			{
-				std::string utf8 = WideToUtf8(relativePath);
+				std::wstring normalizedPath = ToPosixPath(relativePath);
+				std::string utf8 = WideToUtf8(normalizedPath);
 				if (utf8.empty() && !relativePath.empty())
 				{
 					return false;
 				}
-				char normalized[4096] = {};
-				litepak_normalize_relpath(utf8.c_str(), normalized, sizeof(normalized));
-				litepak_path_hash_bytes(normalized, out.data());
+				litepak_path_hash_bytes(utf8.c_str(), out.data());
 				return true;
 			}
 
@@ -1330,7 +1331,7 @@ namespace Rut
 					{
 						continue;
 					}
-					if (info.flags != ENTRY_FILE)
+					if (info.flags == ENTRY_KEY_PAYLOAD)
 					{
 						continue;
 					}
@@ -1944,27 +1945,80 @@ namespace Rut
 					}
 					return &itPath->second;
 				}
-				if (archive.format == PakArchiveFormat::LitePak)
-				{
-					std::array<uint8_t, 16> liteHash = {};
-					if (!LitePakHashRelPath(relativePath, liteHash))
-					{
-						return nullptr;
-					}
-					Hash16 liteKey = { liteHash };
-					auto itLite = archive.hashedEntries.find(liteKey);
-					if (itLite == archive.hashedEntries.end())
-					{
-						return nullptr;
-					}
-					return &itLite->second;
-				}
 				auto itHash = archive.hashedEntries.find(hashKey);
 				if (itHash == archive.hashedEntries.end())
 				{
 					return nullptr;
 				}
 				return &itHash->second;
+			}
+
+			static bool BuildArchiveEntryHash(const PakArchive& archive, const std::wstring& relativePath, Hash16& out)
+			{
+				std::array<uint8_t, 16> hash = {};
+				if (archive.format == PakArchiveFormat::LitePak)
+				{
+					if (!LitePakHashRelPath(relativePath, hash))
+					{
+						return false;
+					}
+				}
+				else
+				{
+					hash = HashRelPath(relativePath);
+				}
+				out.bytes = hash;
+				return true;
+			}
+
+			static bool ReadArchiveEntryRawByHash(PakArchive& archive, const std::wstring& relativePath, const Hash16& key, std::vector<uint8_t>& raw)
+			{
+				if (archive.format == PakArchiveFormat::LitePak)
+				{
+					if (!archive.litePakHandle)
+					{
+						return false;
+					}
+					uint64_t entrySize = 0;
+					if (litepak_vfs_query_file_by_hash(archive.litePakHandle.get(), key.bytes.data(), &entrySize) != 0)
+					{
+						return false;
+					}
+					PakEntry entry = {};
+					entry.hash = key;
+					entry.flags = ENTRY_FILE;
+					entry.origSize = entrySize;
+					entry.storedSize = entrySize;
+					return ReadEntryRaw(archive, entry, raw);
+				}
+
+				const PakEntry* entry = FindArchiveEntry(archive, relativePath, key);
+				return entry && ReadEntryRaw(archive, *entry, raw);
+			}
+
+			static bool ReadArchiveEntryRawFromMemoryByHash(const PakArchive& archive, const std::wstring& relativePath, const Hash16& key, const uint8_t* data, size_t size, std::vector<uint8_t>& raw)
+			{
+				if (archive.format == PakArchiveFormat::LitePak)
+				{
+					if (!archive.litePakHandle)
+					{
+						return false;
+					}
+					uint64_t entrySize = 0;
+					if (litepak_vfs_query_file_by_hash(archive.litePakHandle.get(), key.bytes.data(), &entrySize) != 0)
+					{
+						return false;
+					}
+					PakEntry entry = {};
+					entry.hash = key;
+					entry.flags = ENTRY_FILE;
+					entry.origSize = entrySize;
+					entry.storedSize = entrySize;
+					return ReadEntryRawFromMemory(archive, entry, data, size, raw);
+				}
+
+				const PakEntry* entry = FindArchiveEntry(archive, relativePath, key);
+				return entry && ReadEntryRawFromMemory(archive, *entry, data, size, raw);
 			}
 
 			static bool CollectArchiveDirectoryEntries(const PakArchive& archive, const std::wstring& relativeDirectory, std::unordered_map<std::wstring, CustomPakVFSDirectoryEntry>& outEntries)
@@ -2111,14 +2165,17 @@ namespace Rut
 					sg_memoryArchiveIndexCache.emplace(archiveTagLower, memoryArchive);
 				}
 
-				Hash16 key = { HashRelPath(relativePath) };
-				const PakEntry* entry = FindArchiveEntry(memoryArchive, relativePath, key);
-				if (!entry)
+				Hash16 key = {};
+				if (!BuildArchiveEntryHash(memoryArchive, relativePath, key))
+				{
+					return false;
+				}
+				if (!ReadArchiveEntryRawFromMemoryByHash(memoryArchive, relativePath, key, data, size, raw))
 				{
 					LogCustomPakInfo(L"Resolve memory archive miss archive=%s relative=%s", archiveTag.c_str(), relativePath.c_str());
 					return false;
 				}
-				return ReadEntryRawFromMemory(memoryArchive, *entry, data, size, raw);
+				return true;
 			}
 
 			static std::wstring BuildArchiveResolvedKey(const PakArchive& archive, const std::wstring& relativePath, const std::array<uint8_t, 16>& hash)
@@ -2219,9 +2276,7 @@ namespace Rut
 			{
 				return false;
 			}
-			std::array<uint8_t, 16> hash = HashRelPath(relativePath);
-			Hash16 key = { hash };
-			std::wstring hashText = HashHex(hash);
+			std::wstring lastHashText;
 			for (size_t idx = sg_archives.size(); idx > 0; --idx)
 			{
 				PakArchive& archive = sg_archives[idx - 1];
@@ -2229,12 +2284,14 @@ namespace Rut
 				{
 					continue;
 				}
-				const PakEntry* entry = FindArchiveEntry(archive, relativePath, key);
-				if (!entry)
+				Hash16 key = {};
+				if (!BuildArchiveEntryHash(archive, relativePath, key))
 				{
 					continue;
 				}
-				std::wstring extractedKey = BuildArchiveResolvedKey(archive, relativePath, hash);
+				std::wstring hashText = HashHex(key.bytes);
+				lastHashText = hashText;
+				std::wstring extractedKey = BuildArchiveResolvedKey(archive, relativePath, key.bytes);
 				auto itExtracted = sg_extractedDataCache.find(extractedKey);
 				if (itExtracted != sg_extractedDataCache.end() && itExtracted->second)
 				{
@@ -2249,7 +2306,7 @@ namespace Rut
 				}
 
 				std::vector<uint8_t> raw;
-				if (!ReadEntryRaw(archive, *entry, raw))
+				if (!ReadArchiveEntryRawByHash(archive, relativePath, key, raw))
 				{
 					LogCustomPakWarn(L"Read entry failed relative=%s hash=%s pak=%s", relativePath.c_str(), hashText.c_str(), archive.path.c_str());
 					continue;
@@ -2271,7 +2328,7 @@ namespace Rut
 				return true;
 			}
 			sg_missingSet.insert(relativePath);
-			LogCustomPakInfo(L"Resolve miss relative=%s hash=%s source=%s", relativePath.c_str(), hashText.c_str(), originalPath ? originalPath : L"");
+			LogCustomPakInfo(L"Resolve miss relative=%s hash=%s source=%s", relativePath.c_str(), lastHashText.c_str(), originalPath ? originalPath : L"");
 			return false;
 		}
 
@@ -2354,16 +2411,14 @@ namespace Rut
 				std::wstring relative = relativePath;
 				if (nestedArchives.empty())
 				{
-					Hash16 entryKey = { HashRelPath(relative) };
-					const PakEntry* entry = FindArchiveEntry(archive, relative, entryKey);
-					if (!entry)
+					Hash16 entryKey = {};
+					if (!BuildArchiveEntryHash(archive, relative, entryKey))
 					{
-						LogCustomPakInfo(L"Resolve archive direct miss entry archive=%s relative=%s", normalizedArchive.c_str(), relative.c_str());
 						break;
 					}
-					if (!ReadEntryRaw(archive, *entry, raw))
+					if (!ReadArchiveEntryRawByHash(archive, relative, entryKey, raw))
 					{
-						LogCustomPakWarn(L"Resolve archive direct read failed archive=%s relative=%s", normalizedArchive.c_str(), relative.c_str());
+						LogCustomPakInfo(L"Resolve archive direct miss entry archive=%s relative=%s", normalizedArchive.c_str(), relative.c_str());
 						break;
 					}
 				}
@@ -2386,17 +2441,15 @@ namespace Rut
 						std::vector<uint8_t> nextRaw;
 						if (i == 0)
 						{
-							Hash16 nestedKey = { HashRelPath(nestedArchives.front()) };
-							const PakEntry* entry = FindArchiveEntry(archive, nestedArchives.front(), nestedKey);
-							if (!entry)
+							Hash16 nestedKey = {};
+							if (!BuildArchiveEntryHash(archive, nestedArchives.front(), nestedKey))
 							{
-								LogCustomPakInfo(L"Resolve archive nested miss first archive=%s nested=%s", outerArchive.c_str(), nestedArchives.front().c_str());
 								raw.clear();
 								break;
 							}
-							if (!ReadEntryRaw(archive, *entry, nextRaw))
+							if (!ReadArchiveEntryRawByHash(archive, nestedArchives.front(), nestedKey, nextRaw))
 							{
-								LogCustomPakWarn(L"Resolve archive nested read first failed archive=%s nested=%s", outerArchive.c_str(), nestedArchives.front().c_str());
+								LogCustomPakInfo(L"Resolve archive nested miss first archive=%s nested=%s", outerArchive.c_str(), nestedArchives.front().c_str());
 								raw.clear();
 								break;
 							}
@@ -2480,13 +2533,30 @@ namespace Rut
 				return false;
 			}
 
-			std::array<uint8_t, 16> hash = HashRelPath(relativePath);
-			Hash16 key = { hash };
 			for (size_t idx = sg_archives.size(); idx > 0; --idx)
 			{
 				PakArchive& archive = sg_archives[idx - 1];
 				if (!EnsureArchiveIndexLoaded(archive))
 				{
+					continue;
+				}
+				Hash16 key = {};
+				if (!BuildArchiveEntryHash(archive, relativePath, key))
+				{
+					continue;
+				}
+				if (archive.format == PakArchiveFormat::LitePak)
+				{
+					if (!archive.litePakHandle)
+					{
+						continue;
+					}
+					uint64_t entrySize = 0;
+					if (litepak_vfs_query_file_by_hash(archive.litePakHandle.get(), key.bytes.data(), &entrySize) == 0)
+					{
+						outSize = entrySize;
+						return true;
+					}
 					continue;
 				}
 				const PakEntry* entry = FindArchiveEntry(archive, relativePath, key);

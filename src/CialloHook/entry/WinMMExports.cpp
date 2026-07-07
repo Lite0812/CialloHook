@@ -1,7 +1,18 @@
 #include <Windows.h>
 #include <mmsystem.h>
+#include "../config/build_options.h"
 
-extern "C" __declspec(dllexport) int HookFontWinMMExportAnchor = 1;
+#if defined(_MSC_VER) && defined(_WIN32) && CIALLOHOOK_FEATURE_CODECRYPT_PATCH
+#define CIALLOHOOK_WINMM_PROTECTED_BEGIN __pragma(code_seg(push, ".lpksc$m"))
+#define CIALLOHOOK_WINMM_PROTECTED_END __pragma(code_seg(pop))
+#else
+#define CIALLOHOOK_WINMM_PROTECTED_BEGIN
+#define CIALLOHOOK_WINMM_PROTECTED_END
+#endif
+
+extern "C" __declspec(dllexport) int CialloWinMMExportAnchor = 1;
+
+CIALLOHOOK_WINMM_PROTECTED_BEGIN
 
 #ifndef _WIN64
 using Fn_mciGetErrorStringA = decltype(&mciGetErrorStringA);
@@ -359,7 +370,7 @@ static FARPROC g_forward_ordinal2 = nullptr;
 static bool EnsureRealWinmm();
 
 #define DEFINE_FORWARD_STUB(fn) \
-	extern "C" __declspec(naked) void __cdecl HookFont_##fn() \
+	extern "C" __declspec(naked) void __cdecl CialloWinMM_##fn() \
 	{ \
 		__asm mov eax, dword ptr[g_forward_##fn] \
 		__asm test eax, eax \
@@ -376,7 +387,7 @@ static bool EnsureRealWinmm();
 		__asm jmp eax \
 	}
 FORWARDED_WINMM_EXPORTS(DEFINE_FORWARD_STUB)
-extern "C" __declspec(naked) void __cdecl HookFont_Ordinal2()
+extern "C" __declspec(naked) void __cdecl CialloWinMM_Ordinal2()
 {
 	__asm mov eax, dword ptr[g_forward_ordinal2]
 	__asm test eax, eax
@@ -528,632 +539,635 @@ extern "C" bool CialloHook_EnsureRealWinmm()
 	return EnsureRealWinmm();
 }
 
-extern "C" BOOL WINAPI HookFont_mciGetErrorStringA(MCIERROR mcierr, LPSTR pszText, UINT cchText)
+extern "C" BOOL WINAPI CialloWinMM_mciGetErrorStringA(MCIERROR mcierr, LPSTR pszText, UINT cchText)
 {
 	if (!EnsureRealWinmm()) return FALSE;
 	return g_mciGetErrorStringA(mcierr, pszText, cchText);
 }
 
-extern "C" MCIERROR WINAPI HookFont_mciSendCommandA(MCIDEVICEID mciId, UINT uMsg, DWORD_PTR dwParam1, DWORD_PTR dwParam2)
+extern "C" MCIERROR WINAPI CialloWinMM_mciSendCommandA(MCIDEVICEID mciId, UINT uMsg, DWORD_PTR dwParam1, DWORD_PTR dwParam2)
 {
 	if (!EnsureRealWinmm()) return MCIERR_UNSUPPORTED_FUNCTION;
 	return g_mciSendCommandA(mciId, uMsg, dwParam1, dwParam2);
 }
 
-extern "C" BOOL WINAPI HookFont_mciGetErrorStringW(MCIERROR mcierr, LPWSTR pszText, UINT cchText)
+extern "C" BOOL WINAPI CialloWinMM_mciGetErrorStringW(MCIERROR mcierr, LPWSTR pszText, UINT cchText)
 {
 	if (!EnsureRealWinmm()) return FALSE;
 	return g_mciGetErrorStringW(mcierr, pszText, cchText);
 }
 
-extern "C" MCIERROR WINAPI HookFont_mciSendCommandW(MCIDEVICEID mciId, UINT uMsg, DWORD_PTR dwParam1, DWORD_PTR dwParam2)
+extern "C" MCIERROR WINAPI CialloWinMM_mciSendCommandW(MCIDEVICEID mciId, UINT uMsg, DWORD_PTR dwParam1, DWORD_PTR dwParam2)
 {
 	if (!EnsureRealWinmm()) return MCIERR_UNSUPPORTED_FUNCTION;
 	return g_mciSendCommandW(mciId, uMsg, dwParam1, dwParam2);
 }
 
-extern "C" MCIERROR WINAPI HookFont_mciSendStringA(LPCSTR lpszCommand, LPSTR lpszReturnString, UINT cchReturn, HWND hwndCallback)
+extern "C" MCIERROR WINAPI CialloWinMM_mciSendStringA(LPCSTR lpszCommand, LPSTR lpszReturnString, UINT cchReturn, HWND hwndCallback)
 {
 	if (!EnsureRealWinmm()) return MCIERR_UNSUPPORTED_FUNCTION;
 	return g_mciSendStringA(lpszCommand, lpszReturnString, cchReturn, hwndCallback);
 }
 
-extern "C" MCIERROR WINAPI HookFont_mciSendStringW(LPCWSTR lpszCommand, LPWSTR lpszReturnString, UINT cchReturn, HWND hwndCallback)
+extern "C" MCIERROR WINAPI CialloWinMM_mciSendStringW(LPCWSTR lpszCommand, LPWSTR lpszReturnString, UINT cchReturn, HWND hwndCallback)
 {
 	if (!EnsureRealWinmm()) return MCIERR_UNSUPPORTED_FUNCTION;
 	return g_mciSendStringW(lpszCommand, lpszReturnString, cchReturn, hwndCallback);
 }
 
-extern "C" MMRESULT WINAPI HookFont_midiOutClose(HMIDIOUT hmo)
+extern "C" MMRESULT WINAPI CialloWinMM_midiOutClose(HMIDIOUT hmo)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_midiOutClose(hmo);
 }
 
-extern "C" MMRESULT WINAPI HookFont_midiOutLongMsg(HMIDIOUT hmo, LPMIDIHDR pmh, UINT cbmh)
+extern "C" MMRESULT WINAPI CialloWinMM_midiOutLongMsg(HMIDIOUT hmo, LPMIDIHDR pmh, UINT cbmh)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_midiOutLongMsg(hmo, pmh, cbmh);
 }
 
-extern "C" DWORD WINAPI HookFont_midiOutMessage(HMIDIOUT hmo, UINT uMsg, DWORD_PTR dw1, DWORD_PTR dw2)
+extern "C" DWORD WINAPI CialloWinMM_midiOutMessage(HMIDIOUT hmo, UINT uMsg, DWORD_PTR dw1, DWORD_PTR dw2)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_midiOutMessage(hmo, uMsg, dw1, dw2);
 }
 
-extern "C" MMRESULT WINAPI HookFont_midiOutOpen(LPHMIDIOUT phmo, UINT uDeviceID, DWORD_PTR dwCallback, DWORD_PTR dwInstance, DWORD fdwOpen)
+extern "C" MMRESULT WINAPI CialloWinMM_midiOutOpen(LPHMIDIOUT phmo, UINT uDeviceID, DWORD_PTR dwCallback, DWORD_PTR dwInstance, DWORD fdwOpen)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_midiOutOpen(phmo, uDeviceID, dwCallback, dwInstance, fdwOpen);
 }
 
-extern "C" MMRESULT WINAPI HookFont_midiOutPrepareHeader(HMIDIOUT hmo, LPMIDIHDR pmh, UINT cbmh)
+extern "C" MMRESULT WINAPI CialloWinMM_midiOutPrepareHeader(HMIDIOUT hmo, LPMIDIHDR pmh, UINT cbmh)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_midiOutPrepareHeader(hmo, pmh, cbmh);
 }
 
-extern "C" MMRESULT WINAPI HookFont_midiOutShortMsg(HMIDIOUT hmo, DWORD dwMsg)
+extern "C" MMRESULT WINAPI CialloWinMM_midiOutShortMsg(HMIDIOUT hmo, DWORD dwMsg)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_midiOutShortMsg(hmo, dwMsg);
 }
 
-extern "C" MMRESULT WINAPI HookFont_midiOutUnprepareHeader(HMIDIOUT hmo, LPMIDIHDR pmh, UINT cbmh)
+extern "C" MMRESULT WINAPI CialloWinMM_midiOutUnprepareHeader(HMIDIOUT hmo, LPMIDIHDR pmh, UINT cbmh)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_midiOutUnprepareHeader(hmo, pmh, cbmh);
 }
 
-extern "C" MMRESULT WINAPI HookFont_mixerClose(HMIXER hmx)
+extern "C" MMRESULT WINAPI CialloWinMM_mixerClose(HMIXER hmx)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_mixerClose(hmx);
 }
 
-extern "C" MMRESULT WINAPI HookFont_mixerGetControlDetailsA(HMIXEROBJ hmxobj, LPMIXERCONTROLDETAILS pmxcd, DWORD fdwDetails)
+extern "C" MMRESULT WINAPI CialloWinMM_mixerGetControlDetailsA(HMIXEROBJ hmxobj, LPMIXERCONTROLDETAILS pmxcd, DWORD fdwDetails)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_mixerGetControlDetailsA(hmxobj, pmxcd, fdwDetails);
 }
 
-extern "C" MMRESULT WINAPI HookFont_mixerGetControlDetailsW(HMIXEROBJ hmxobj, LPMIXERCONTROLDETAILS pmxcd, DWORD fdwDetails)
+extern "C" MMRESULT WINAPI CialloWinMM_mixerGetControlDetailsW(HMIXEROBJ hmxobj, LPMIXERCONTROLDETAILS pmxcd, DWORD fdwDetails)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_mixerGetControlDetailsW(hmxobj, pmxcd, fdwDetails);
 }
 
-extern "C" MMRESULT WINAPI HookFont_mixerGetDevCapsA(UINT_PTR uMxId, LPMIXERCAPSA pmxcaps, UINT cbmxcaps)
+extern "C" MMRESULT WINAPI CialloWinMM_mixerGetDevCapsA(UINT_PTR uMxId, LPMIXERCAPSA pmxcaps, UINT cbmxcaps)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_mixerGetDevCapsA(uMxId, pmxcaps, cbmxcaps);
 }
 
-extern "C" MMRESULT WINAPI HookFont_mixerGetDevCapsW(UINT_PTR uMxId, LPMIXERCAPSW pmxcaps, UINT cbmxcaps)
+extern "C" MMRESULT WINAPI CialloWinMM_mixerGetDevCapsW(UINT_PTR uMxId, LPMIXERCAPSW pmxcaps, UINT cbmxcaps)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_mixerGetDevCapsW(uMxId, pmxcaps, cbmxcaps);
 }
 
-extern "C" MMRESULT WINAPI HookFont_mixerGetLineControlsA(HMIXEROBJ hmxobj, LPMIXERLINECONTROLSA pmxlc, DWORD fdwControls)
+extern "C" MMRESULT WINAPI CialloWinMM_mixerGetLineControlsA(HMIXEROBJ hmxobj, LPMIXERLINECONTROLSA pmxlc, DWORD fdwControls)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_mixerGetLineControlsA(hmxobj, pmxlc, fdwControls);
 }
 
-extern "C" MMRESULT WINAPI HookFont_mixerGetLineControlsW(HMIXEROBJ hmxobj, LPMIXERLINECONTROLSW pmxlc, DWORD fdwControls)
+extern "C" MMRESULT WINAPI CialloWinMM_mixerGetLineControlsW(HMIXEROBJ hmxobj, LPMIXERLINECONTROLSW pmxlc, DWORD fdwControls)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_mixerGetLineControlsW(hmxobj, pmxlc, fdwControls);
 }
 
-extern "C" MMRESULT WINAPI HookFont_mixerGetLineInfoA(HMIXEROBJ hmxobj, LPMIXERLINEA pmxl, DWORD fdwInfo)
+extern "C" MMRESULT WINAPI CialloWinMM_mixerGetLineInfoA(HMIXEROBJ hmxobj, LPMIXERLINEA pmxl, DWORD fdwInfo)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_mixerGetLineInfoA(hmxobj, pmxl, fdwInfo);
 }
 
-extern "C" MMRESULT WINAPI HookFont_mixerGetLineInfoW(HMIXEROBJ hmxobj, LPMIXERLINEW pmxl, DWORD fdwInfo)
+extern "C" MMRESULT WINAPI CialloWinMM_mixerGetLineInfoW(HMIXEROBJ hmxobj, LPMIXERLINEW pmxl, DWORD fdwInfo)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_mixerGetLineInfoW(hmxobj, pmxl, fdwInfo);
 }
 
-extern "C" UINT WINAPI HookFont_mixerGetNumDevs(void)
+extern "C" UINT WINAPI CialloWinMM_mixerGetNumDevs(void)
 {
 	if (!EnsureRealWinmm()) return 0;
 	return g_mixerGetNumDevs();
 }
 
-extern "C" MMRESULT WINAPI HookFont_mixerOpen(LPHMIXER phmx, UINT uMxId, DWORD_PTR dwCallback, DWORD_PTR dwInstance, DWORD fdwOpen)
+extern "C" MMRESULT WINAPI CialloWinMM_mixerOpen(LPHMIXER phmx, UINT uMxId, DWORD_PTR dwCallback, DWORD_PTR dwInstance, DWORD fdwOpen)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_mixerOpen(phmx, uMxId, dwCallback, dwInstance, fdwOpen);
 }
 
-extern "C" DWORD WINAPI HookFont_mixerMessage(HMIXER hmx, UINT uMsg, DWORD_PTR dwParam1, DWORD_PTR dwParam2)
+extern "C" DWORD WINAPI CialloWinMM_mixerMessage(HMIXER hmx, UINT uMsg, DWORD_PTR dwParam1, DWORD_PTR dwParam2)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_mixerMessage(hmx, uMsg, dwParam1, dwParam2);
 }
 
-extern "C" MMRESULT WINAPI HookFont_mixerSetControlDetails(HMIXEROBJ hmxobj, LPMIXERCONTROLDETAILS pmxcd, DWORD fdwDetails)
+extern "C" MMRESULT WINAPI CialloWinMM_mixerSetControlDetails(HMIXEROBJ hmxobj, LPMIXERCONTROLDETAILS pmxcd, DWORD fdwDetails)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_mixerSetControlDetails(hmxobj, pmxcd, fdwDetails);
 }
 
-extern "C" MMRESULT WINAPI HookFont_timeBeginPeriod(UINT uPeriod)
+extern "C" MMRESULT WINAPI CialloWinMM_timeBeginPeriod(UINT uPeriod)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_timeBeginPeriod(uPeriod);
 }
 
-extern "C" MMRESULT WINAPI HookFont_timeEndPeriod(UINT uPeriod)
+extern "C" MMRESULT WINAPI CialloWinMM_timeEndPeriod(UINT uPeriod)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_timeEndPeriod(uPeriod);
 }
 
-extern "C" MMRESULT WINAPI HookFont_timeGetDevCaps(LPTIMECAPS ptc, UINT cbtc)
+extern "C" MMRESULT WINAPI CialloWinMM_timeGetDevCaps(LPTIMECAPS ptc, UINT cbtc)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_timeGetDevCaps(ptc, cbtc);
 }
 
-extern "C" MMRESULT WINAPI HookFont_timeGetSystemTime(LPMMTIME pmmt, UINT cbmmt)
+extern "C" MMRESULT WINAPI CialloWinMM_timeGetSystemTime(LPMMTIME pmmt, UINT cbmmt)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_timeGetSystemTime(pmmt, cbmmt);
 }
 
-extern "C" DWORD WINAPI HookFont_timeGetTime(void)
+extern "C" DWORD WINAPI CialloWinMM_timeGetTime(void)
 {
 	if (!EnsureRealWinmm()) return 0;
 	return g_timeGetTime();
 }
 
-extern "C" MMRESULT WINAPI HookFont_timeKillEvent(UINT uTimerID)
+extern "C" MMRESULT WINAPI CialloWinMM_timeKillEvent(UINT uTimerID)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_timeKillEvent(uTimerID);
 }
 
-extern "C" MMRESULT WINAPI HookFont_timeSetEvent(UINT uDelay, UINT uResolution, LPTIMECALLBACK lpTimeProc, DWORD_PTR dwUser, UINT fuEvent)
+extern "C" MMRESULT WINAPI CialloWinMM_timeSetEvent(UINT uDelay, UINT uResolution, LPTIMECALLBACK lpTimeProc, DWORD_PTR dwUser, UINT fuEvent)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_timeSetEvent(uDelay, uResolution, lpTimeProc, dwUser, fuEvent);
 }
 
-extern "C" UINT WINAPI HookFont_midiOutGetNumDevs(void)
+extern "C" UINT WINAPI CialloWinMM_midiOutGetNumDevs(void)
 {
 	if (!EnsureRealWinmm()) return 0;
 	return g_midiOutGetNumDevs();
 }
 
-extern "C" MMRESULT WINAPI HookFont_midiOutReset(HMIDIOUT hmo)
+extern "C" MMRESULT WINAPI CialloWinMM_midiOutReset(HMIDIOUT hmo)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_midiOutReset(hmo);
 }
 
-extern "C" MMRESULT WINAPI HookFont_midiOutSetVolume(HMIDIOUT hmo, DWORD dwVolume)
+extern "C" MMRESULT WINAPI CialloWinMM_midiOutSetVolume(HMIDIOUT hmo, DWORD dwVolume)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_midiOutSetVolume(hmo, dwVolume);
 }
 
-extern "C" MMRESULT WINAPI HookFont_midiInAddBuffer(HMIDIIN hmi, LPMIDIHDR pmh, UINT cbmh)
+extern "C" MMRESULT WINAPI CialloWinMM_midiInAddBuffer(HMIDIIN hmi, LPMIDIHDR pmh, UINT cbmh)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_midiInAddBuffer(hmi, pmh, cbmh);
 }
 
-extern "C" MMRESULT WINAPI HookFont_midiInClose(HMIDIIN hmi)
+extern "C" MMRESULT WINAPI CialloWinMM_midiInClose(HMIDIIN hmi)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_midiInClose(hmi);
 }
 
-extern "C" UINT WINAPI HookFont_midiInGetNumDevs(void)
+extern "C" UINT WINAPI CialloWinMM_midiInGetNumDevs(void)
 {
 	if (!EnsureRealWinmm()) return 0;
 	return g_midiInGetNumDevs();
 }
 
-extern "C" MMRESULT WINAPI HookFont_midiInMessage(HMIDIIN hmi, UINT uMsg, DWORD_PTR dwParam1, DWORD_PTR dwParam2)
+extern "C" MMRESULT WINAPI CialloWinMM_midiInMessage(HMIDIIN hmi, UINT uMsg, DWORD_PTR dwParam1, DWORD_PTR dwParam2)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_midiInMessage(hmi, uMsg, dwParam1, dwParam2);
 }
 
-extern "C" MMRESULT WINAPI HookFont_midiInOpen(LPHMIDIIN phmi, UINT uDeviceID, DWORD_PTR dwCallback, DWORD_PTR dwInstance, DWORD fdwOpen)
+extern "C" MMRESULT WINAPI CialloWinMM_midiInOpen(LPHMIDIIN phmi, UINT uDeviceID, DWORD_PTR dwCallback, DWORD_PTR dwInstance, DWORD fdwOpen)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_midiInOpen(phmi, uDeviceID, dwCallback, dwInstance, fdwOpen);
 }
 
-extern "C" MMRESULT WINAPI HookFont_midiInPrepareHeader(HMIDIIN hmi, LPMIDIHDR pmh, UINT cbmh)
+extern "C" MMRESULT WINAPI CialloWinMM_midiInPrepareHeader(HMIDIIN hmi, LPMIDIHDR pmh, UINT cbmh)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_midiInPrepareHeader(hmi, pmh, cbmh);
 }
 
-extern "C" MMRESULT WINAPI HookFont_midiInReset(HMIDIIN hmi)
+extern "C" MMRESULT WINAPI CialloWinMM_midiInReset(HMIDIIN hmi)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_midiInReset(hmi);
 }
 
-extern "C" MMRESULT WINAPI HookFont_midiInStart(HMIDIIN hmi)
+extern "C" MMRESULT WINAPI CialloWinMM_midiInStart(HMIDIIN hmi)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_midiInStart(hmi);
 }
 
-extern "C" MMRESULT WINAPI HookFont_midiInStop(HMIDIIN hmi)
+extern "C" MMRESULT WINAPI CialloWinMM_midiInStop(HMIDIIN hmi)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_midiInStop(hmi);
 }
 
-extern "C" MMRESULT WINAPI HookFont_midiInUnprepareHeader(HMIDIIN hmi, LPMIDIHDR pmh, UINT cbmh)
+extern "C" MMRESULT WINAPI CialloWinMM_midiInUnprepareHeader(HMIDIIN hmi, LPMIDIHDR pmh, UINT cbmh)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_midiInUnprepareHeader(hmi, pmh, cbmh);
 }
 
-extern "C" MMRESULT WINAPI HookFont_waveInAddBuffer(HWAVEIN hwi, LPWAVEHDR pwh, UINT cbwh)
+extern "C" MMRESULT WINAPI CialloWinMM_waveInAddBuffer(HWAVEIN hwi, LPWAVEHDR pwh, UINT cbwh)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_waveInAddBuffer(hwi, pwh, cbwh);
 }
 
-extern "C" MMRESULT WINAPI HookFont_waveInClose(HWAVEIN hwi)
+extern "C" MMRESULT WINAPI CialloWinMM_waveInClose(HWAVEIN hwi)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_waveInClose(hwi);
 }
 
-extern "C" UINT WINAPI HookFont_waveInGetNumDevs(void)
+extern "C" UINT WINAPI CialloWinMM_waveInGetNumDevs(void)
 {
 	if (!EnsureRealWinmm()) return 0;
 	return g_waveInGetNumDevs();
 }
 
-extern "C" MMRESULT WINAPI HookFont_waveInGetPosition(HWAVEIN hwi, LPMMTIME pmmt, UINT cbmmt)
+extern "C" MMRESULT WINAPI CialloWinMM_waveInGetPosition(HWAVEIN hwi, LPMMTIME pmmt, UINT cbmmt)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_waveInGetPosition(hwi, pmmt, cbmmt);
 }
 
-extern "C" MMRESULT WINAPI HookFont_waveInMessage(HWAVEIN hwi, UINT uMsg, DWORD_PTR dwParam1, DWORD_PTR dwParam2)
+extern "C" MMRESULT WINAPI CialloWinMM_waveInMessage(HWAVEIN hwi, UINT uMsg, DWORD_PTR dwParam1, DWORD_PTR dwParam2)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_waveInMessage(hwi, uMsg, dwParam1, dwParam2);
 }
 
-extern "C" MMRESULT WINAPI HookFont_waveInOpen(LPHWAVEIN phwi, UINT uDeviceID, LPCWAVEFORMATEX pwfx, DWORD_PTR dwCallback, DWORD_PTR dwInstance, DWORD fdwOpen)
+extern "C" MMRESULT WINAPI CialloWinMM_waveInOpen(LPHWAVEIN phwi, UINT uDeviceID, LPCWAVEFORMATEX pwfx, DWORD_PTR dwCallback, DWORD_PTR dwInstance, DWORD fdwOpen)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_waveInOpen(phwi, uDeviceID, pwfx, dwCallback, dwInstance, fdwOpen);
 }
 
-extern "C" MMRESULT WINAPI HookFont_waveInPrepareHeader(HWAVEIN hwi, LPWAVEHDR pwh, UINT cbwh)
+extern "C" MMRESULT WINAPI CialloWinMM_waveInPrepareHeader(HWAVEIN hwi, LPWAVEHDR pwh, UINT cbwh)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_waveInPrepareHeader(hwi, pwh, cbwh);
 }
 
-extern "C" MMRESULT WINAPI HookFont_waveInReset(HWAVEIN hwi)
+extern "C" MMRESULT WINAPI CialloWinMM_waveInReset(HWAVEIN hwi)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_waveInReset(hwi);
 }
 
-extern "C" MMRESULT WINAPI HookFont_waveInStart(HWAVEIN hwi)
+extern "C" MMRESULT WINAPI CialloWinMM_waveInStart(HWAVEIN hwi)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_waveInStart(hwi);
 }
 
-extern "C" MMRESULT WINAPI HookFont_waveInStop(HWAVEIN hwi)
+extern "C" MMRESULT WINAPI CialloWinMM_waveInStop(HWAVEIN hwi)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_waveInStop(hwi);
 }
 
-extern "C" MMRESULT WINAPI HookFont_waveInUnprepareHeader(HWAVEIN hwi, LPWAVEHDR pwh, UINT cbwh)
+extern "C" MMRESULT WINAPI CialloWinMM_waveInUnprepareHeader(HWAVEIN hwi, LPWAVEHDR pwh, UINT cbwh)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_waveInUnprepareHeader(hwi, pwh, cbwh);
 }
 
-extern "C" MMRESULT WINAPI HookFont_waveOutBreakLoop(HWAVEOUT hwo)
+extern "C" MMRESULT WINAPI CialloWinMM_waveOutBreakLoop(HWAVEOUT hwo)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_waveOutBreakLoop(hwo);
 }
 
-extern "C" MMRESULT WINAPI HookFont_waveOutClose(HWAVEOUT hwo)
+extern "C" MMRESULT WINAPI CialloWinMM_waveOutClose(HWAVEOUT hwo)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_waveOutClose(hwo);
 }
 
-extern "C" UINT WINAPI HookFont_waveOutGetNumDevs(void)
+extern "C" UINT WINAPI CialloWinMM_waveOutGetNumDevs(void)
 {
 	if (!EnsureRealWinmm()) return 0;
 	return g_waveOutGetNumDevs();
 }
 
-extern "C" MMRESULT WINAPI HookFont_waveOutGetPosition(HWAVEOUT hwo, LPMMTIME pmmt, UINT cbmmt)
+extern "C" MMRESULT WINAPI CialloWinMM_waveOutGetPosition(HWAVEOUT hwo, LPMMTIME pmmt, UINT cbmmt)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_waveOutGetPosition(hwo, pmmt, cbmmt);
 }
 
-extern "C" MMRESULT WINAPI HookFont_waveOutGetVolume(HWAVEOUT hwo, LPDWORD pdwVolume)
+extern "C" MMRESULT WINAPI CialloWinMM_waveOutGetVolume(HWAVEOUT hwo, LPDWORD pdwVolume)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_waveOutGetVolume(hwo, pdwVolume);
 }
 
-extern "C" MMRESULT WINAPI HookFont_waveOutMessage(HWAVEOUT hwo, UINT uMsg, DWORD_PTR dwParam1, DWORD_PTR dwParam2)
+extern "C" MMRESULT WINAPI CialloWinMM_waveOutMessage(HWAVEOUT hwo, UINT uMsg, DWORD_PTR dwParam1, DWORD_PTR dwParam2)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_waveOutMessage(hwo, uMsg, dwParam1, dwParam2);
 }
 
-extern "C" MMRESULT WINAPI HookFont_waveOutOpen(LPHWAVEOUT phwo, UINT uDeviceID, LPCWAVEFORMATEX pwfx, DWORD_PTR dwCallback, DWORD_PTR dwInstance, DWORD fdwOpen)
+extern "C" MMRESULT WINAPI CialloWinMM_waveOutOpen(LPHWAVEOUT phwo, UINT uDeviceID, LPCWAVEFORMATEX pwfx, DWORD_PTR dwCallback, DWORD_PTR dwInstance, DWORD fdwOpen)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_waveOutOpen(phwo, uDeviceID, pwfx, dwCallback, dwInstance, fdwOpen);
 }
 
-extern "C" MMRESULT WINAPI HookFont_waveOutPause(HWAVEOUT hwo)
+extern "C" MMRESULT WINAPI CialloWinMM_waveOutPause(HWAVEOUT hwo)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_waveOutPause(hwo);
 }
 
-extern "C" MMRESULT WINAPI HookFont_waveOutPrepareHeader(HWAVEOUT hwo, LPWAVEHDR pwh, UINT cbwh)
+extern "C" MMRESULT WINAPI CialloWinMM_waveOutPrepareHeader(HWAVEOUT hwo, LPWAVEHDR pwh, UINT cbwh)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_waveOutPrepareHeader(hwo, pwh, cbwh);
 }
 
-extern "C" MMRESULT WINAPI HookFont_waveOutReset(HWAVEOUT hwo)
+extern "C" MMRESULT WINAPI CialloWinMM_waveOutReset(HWAVEOUT hwo)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_waveOutReset(hwo);
 }
 
-extern "C" MMRESULT WINAPI HookFont_waveOutRestart(HWAVEOUT hwo)
+extern "C" MMRESULT WINAPI CialloWinMM_waveOutRestart(HWAVEOUT hwo)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_waveOutRestart(hwo);
 }
 
-extern "C" MMRESULT WINAPI HookFont_waveOutSetVolume(HWAVEOUT hwo, DWORD dwVolume)
+extern "C" MMRESULT WINAPI CialloWinMM_waveOutSetVolume(HWAVEOUT hwo, DWORD dwVolume)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_waveOutSetVolume(hwo, dwVolume);
 }
 
-extern "C" MMRESULT WINAPI HookFont_waveOutUnprepareHeader(HWAVEOUT hwo, LPWAVEHDR pwh, UINT cbwh)
+extern "C" MMRESULT WINAPI CialloWinMM_waveOutUnprepareHeader(HWAVEOUT hwo, LPWAVEHDR pwh, UINT cbwh)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_waveOutUnprepareHeader(hwo, pwh, cbwh);
 }
 
-extern "C" MMRESULT WINAPI HookFont_waveOutWrite(HWAVEOUT hwo, LPWAVEHDR pwh, UINT cbwh)
+extern "C" MMRESULT WINAPI CialloWinMM_waveOutWrite(HWAVEOUT hwo, LPWAVEHDR pwh, UINT cbwh)
 {
 	if (!EnsureRealWinmm()) return MMSYSERR_ERROR;
 	return g_waveOutWrite(hwo, pwh, cbwh);
 }
 #endif
 
+CIALLOHOOK_WINMM_PROTECTED_END
+
 #ifdef _WIN64
-#define EXPORT_FORWARD_WINMM(fn) __pragma(comment(linker, "/EXPORT:" #fn "=C:\\Windows\\System32\\winmm." #fn))
+#define EXPORT_FORWARD_WINMM(fn) __pragma(comment(linker, "/EXPORT:" #fn "=winmm." #fn))
 FORWARDED_WINMM_EXPORTS(EXPORT_FORWARD_WINMM)
 BASE_WINMM_EXPORTS(EXPORT_FORWARD_WINMM)
 #undef EXPORT_FORWARD_WINMM
 #endif
 
 #ifndef _WIN64
-#pragma comment(linker, "/EXPORT:Noname2=_HookFont_Ordinal2,@2,NONAME")
-#pragma comment(linker, "/EXPORT:mciExecute=_HookFont_mciExecute,@3")
-#pragma comment(linker, "/EXPORT:CloseDriver=_HookFont_CloseDriver,@4")
-#pragma comment(linker, "/EXPORT:DefDriverProc=_HookFont_DefDriverProc,@5")
-#pragma comment(linker, "/EXPORT:DriverCallback=_HookFont_DriverCallback,@6")
-#pragma comment(linker, "/EXPORT:DrvGetModuleHandle=_HookFont_DrvGetModuleHandle,@7")
-#pragma comment(linker, "/EXPORT:GetDriverModuleHandle=_HookFont_GetDriverModuleHandle,@8")
-#pragma comment(linker, "/EXPORT:NotifyCallbackData=_HookFont_NotifyCallbackData,@9")
-#pragma comment(linker, "/EXPORT:OpenDriver=_HookFont_OpenDriver,@10")
-#pragma comment(linker, "/EXPORT:PlaySound=_HookFont_PlaySound,@11")
-#pragma comment(linker, "/EXPORT:PlaySoundA=_HookFont_PlaySoundA,@12")
-#pragma comment(linker, "/EXPORT:PlaySoundW=_HookFont_PlaySoundW,@13")
-#pragma comment(linker, "/EXPORT:SendDriverMessage=_HookFont_SendDriverMessage,@14")
-#pragma comment(linker, "/EXPORT:WOW32DriverCallback=_HookFont_WOW32DriverCallback,@15")
-#pragma comment(linker, "/EXPORT:WOW32ResolveMultiMediaHandle=_HookFont_WOW32ResolveMultiMediaHandle,@16")
-#pragma comment(linker, "/EXPORT:WOWAppExit=_HookFont_WOWAppExit,@17")
-#pragma comment(linker, "/EXPORT:aux32Message=_HookFont_aux32Message,@18")
-#pragma comment(linker, "/EXPORT:auxGetDevCapsA=_HookFont_auxGetDevCapsA,@19")
-#pragma comment(linker, "/EXPORT:auxGetDevCapsW=_HookFont_auxGetDevCapsW,@20")
-#pragma comment(linker, "/EXPORT:auxGetNumDevs=_HookFont_auxGetNumDevs,@21")
-#pragma comment(linker, "/EXPORT:auxGetVolume=_HookFont_auxGetVolume,@22")
-#pragma comment(linker, "/EXPORT:auxOutMessage=_HookFont_auxOutMessage,@23")
-#pragma comment(linker, "/EXPORT:auxSetVolume=_HookFont_auxSetVolume,@24")
-#pragma comment(linker, "/EXPORT:joy32Message=_HookFont_joy32Message,@25")
-#pragma comment(linker, "/EXPORT:joyConfigChanged=_HookFont_joyConfigChanged,@26")
-#pragma comment(linker, "/EXPORT:joyGetDevCapsA=_HookFont_joyGetDevCapsA,@27")
-#pragma comment(linker, "/EXPORT:joyGetDevCapsW=_HookFont_joyGetDevCapsW,@28")
-#pragma comment(linker, "/EXPORT:joyGetNumDevs=_HookFont_joyGetNumDevs,@29")
-#pragma comment(linker, "/EXPORT:joyGetPos=_HookFont_joyGetPos,@30")
-#pragma comment(linker, "/EXPORT:joyGetPosEx=_HookFont_joyGetPosEx,@31")
-#pragma comment(linker, "/EXPORT:joyGetThreshold=_HookFont_joyGetThreshold,@32")
-#pragma comment(linker, "/EXPORT:joyReleaseCapture=_HookFont_joyReleaseCapture,@33")
-#pragma comment(linker, "/EXPORT:joySetCapture=_HookFont_joySetCapture,@34")
-#pragma comment(linker, "/EXPORT:joySetThreshold=_HookFont_joySetThreshold,@35")
-#pragma comment(linker, "/EXPORT:mci32Message=_HookFont_mci32Message,@36")
-#pragma comment(linker, "/EXPORT:mciDriverNotify=_HookFont_mciDriverNotify,@37")
-#pragma comment(linker, "/EXPORT:mciDriverYield=_HookFont_mciDriverYield,@38")
-#pragma comment(linker, "/EXPORT:mciFreeCommandResource=_HookFont_mciFreeCommandResource,@39")
-#pragma comment(linker, "/EXPORT:mciGetCreatorTask=_HookFont_mciGetCreatorTask,@40")
-#pragma comment(linker, "/EXPORT:mciGetDeviceIDA=_HookFont_mciGetDeviceIDA,@41")
-#pragma comment(linker, "/EXPORT:mciGetDeviceIDFromElementIDA=_HookFont_mciGetDeviceIDFromElementIDA,@42")
-#pragma comment(linker, "/EXPORT:mciGetDeviceIDFromElementIDW=_HookFont_mciGetDeviceIDFromElementIDW,@43")
-#pragma comment(linker, "/EXPORT:mciGetDeviceIDW=_HookFont_mciGetDeviceIDW,@44")
-#pragma comment(linker, "/EXPORT:mciGetDriverData=_HookFont_mciGetDriverData,@45")
-#pragma comment(linker, "/EXPORT:mciGetErrorStringA=_HookFont_mciGetErrorStringA@12,@46")
-#pragma comment(linker, "/EXPORT:mciGetErrorStringW=_HookFont_mciGetErrorStringW@12,@47")
-#pragma comment(linker, "/EXPORT:mciGetYieldProc=_HookFont_mciGetYieldProc,@48")
-#pragma comment(linker, "/EXPORT:mciLoadCommandResource=_HookFont_mciLoadCommandResource,@49")
-#pragma comment(linker, "/EXPORT:mciSendCommandA=_HookFont_mciSendCommandA@16,@50")
-#pragma comment(linker, "/EXPORT:mciSendCommandW=_HookFont_mciSendCommandW@16,@51")
-#pragma comment(linker, "/EXPORT:mciSendStringA=_HookFont_mciSendStringA@16,@52")
-#pragma comment(linker, "/EXPORT:mciSendStringW=_HookFont_mciSendStringW@16,@53")
-#pragma comment(linker, "/EXPORT:mciSetDriverData=_HookFont_mciSetDriverData,@54")
-#pragma comment(linker, "/EXPORT:mciSetYieldProc=_HookFont_mciSetYieldProc,@55")
-#pragma comment(linker, "/EXPORT:mid32Message=_HookFont_mid32Message,@56")
-#pragma comment(linker, "/EXPORT:midiConnect=_HookFont_midiConnect,@57")
-#pragma comment(linker, "/EXPORT:midiDisconnect=_HookFont_midiDisconnect,@58")
-#pragma comment(linker, "/EXPORT:midiInAddBuffer=_HookFont_midiInAddBuffer@12,@59")
-#pragma comment(linker, "/EXPORT:midiInClose=_HookFont_midiInClose@4,@60")
-#pragma comment(linker, "/EXPORT:midiInGetDevCapsA=_HookFont_midiInGetDevCapsA,@61")
-#pragma comment(linker, "/EXPORT:midiInGetDevCapsW=_HookFont_midiInGetDevCapsW,@62")
-#pragma comment(linker, "/EXPORT:midiInGetErrorTextA=_HookFont_midiInGetErrorTextA,@63")
-#pragma comment(linker, "/EXPORT:midiInGetErrorTextW=_HookFont_midiInGetErrorTextW,@64")
-#pragma comment(linker, "/EXPORT:midiInGetID=_HookFont_midiInGetID,@65")
-#pragma comment(linker, "/EXPORT:midiInGetNumDevs=_HookFont_midiInGetNumDevs@0,@66")
-#pragma comment(linker, "/EXPORT:midiInMessage=_HookFont_midiInMessage@16,@67")
-#pragma comment(linker, "/EXPORT:midiInOpen=_HookFont_midiInOpen@20,@68")
-#pragma comment(linker, "/EXPORT:midiInPrepareHeader=_HookFont_midiInPrepareHeader@12,@69")
-#pragma comment(linker, "/EXPORT:midiInReset=_HookFont_midiInReset@4,@70")
-#pragma comment(linker, "/EXPORT:midiInStart=_HookFont_midiInStart@4,@71")
-#pragma comment(linker, "/EXPORT:midiInStop=_HookFont_midiInStop@4,@72")
-#pragma comment(linker, "/EXPORT:midiInUnprepareHeader=_HookFont_midiInUnprepareHeader@12,@73")
-#pragma comment(linker, "/EXPORT:midiOutCacheDrumPatches=_HookFont_midiOutCacheDrumPatches,@74")
-#pragma comment(linker, "/EXPORT:midiOutCachePatches=_HookFont_midiOutCachePatches,@75")
-#pragma comment(linker, "/EXPORT:midiOutClose=_HookFont_midiOutClose@4,@76")
-#pragma comment(linker, "/EXPORT:midiOutGetDevCapsA=_HookFont_midiOutGetDevCapsA,@77")
-#pragma comment(linker, "/EXPORT:midiOutGetDevCapsW=_HookFont_midiOutGetDevCapsW,@78")
-#pragma comment(linker, "/EXPORT:midiOutGetErrorTextA=_HookFont_midiOutGetErrorTextA,@79")
-#pragma comment(linker, "/EXPORT:midiOutGetErrorTextW=_HookFont_midiOutGetErrorTextW,@80")
-#pragma comment(linker, "/EXPORT:midiOutGetID=_HookFont_midiOutGetID,@81")
-#pragma comment(linker, "/EXPORT:midiOutGetNumDevs=_HookFont_midiOutGetNumDevs@0,@82")
-#pragma comment(linker, "/EXPORT:midiOutGetVolume=_HookFont_midiOutGetVolume,@83")
-#pragma comment(linker, "/EXPORT:midiOutLongMsg=_HookFont_midiOutLongMsg@12,@84")
-#pragma comment(linker, "/EXPORT:midiOutMessage=_HookFont_midiOutMessage@16,@85")
-#pragma comment(linker, "/EXPORT:midiOutOpen=_HookFont_midiOutOpen@20,@86")
-#pragma comment(linker, "/EXPORT:midiOutPrepareHeader=_HookFont_midiOutPrepareHeader@12,@87")
-#pragma comment(linker, "/EXPORT:midiOutReset=_HookFont_midiOutReset@4,@88")
-#pragma comment(linker, "/EXPORT:midiOutSetVolume=_HookFont_midiOutSetVolume@8,@89")
-#pragma comment(linker, "/EXPORT:midiOutShortMsg=_HookFont_midiOutShortMsg@8,@90")
-#pragma comment(linker, "/EXPORT:midiOutUnprepareHeader=_HookFont_midiOutUnprepareHeader@12,@91")
-#pragma comment(linker, "/EXPORT:midiStreamClose=_HookFont_midiStreamClose,@92")
-#pragma comment(linker, "/EXPORT:midiStreamOpen=_HookFont_midiStreamOpen,@93")
-#pragma comment(linker, "/EXPORT:midiStreamOut=_HookFont_midiStreamOut,@94")
-#pragma comment(linker, "/EXPORT:midiStreamPause=_HookFont_midiStreamPause,@95")
-#pragma comment(linker, "/EXPORT:midiStreamPosition=_HookFont_midiStreamPosition,@96")
-#pragma comment(linker, "/EXPORT:midiStreamProperty=_HookFont_midiStreamProperty,@97")
-#pragma comment(linker, "/EXPORT:midiStreamRestart=_HookFont_midiStreamRestart,@98")
-#pragma comment(linker, "/EXPORT:midiStreamStop=_HookFont_midiStreamStop,@99")
-#pragma comment(linker, "/EXPORT:mixerClose=_HookFont_mixerClose@4,@100")
-#pragma comment(linker, "/EXPORT:mixerGetControlDetailsA=_HookFont_mixerGetControlDetailsA@12,@101")
-#pragma comment(linker, "/EXPORT:mixerGetControlDetailsW=_HookFont_mixerGetControlDetailsW@12,@102")
-#pragma comment(linker, "/EXPORT:mixerGetDevCapsA=_HookFont_mixerGetDevCapsA@12,@103")
-#pragma comment(linker, "/EXPORT:mixerGetDevCapsW=_HookFont_mixerGetDevCapsW@12,@104")
-#pragma comment(linker, "/EXPORT:mixerGetID=_HookFont_mixerGetID,@105")
-#pragma comment(linker, "/EXPORT:mixerGetLineControlsA=_HookFont_mixerGetLineControlsA@12,@106")
-#pragma comment(linker, "/EXPORT:mixerGetLineControlsW=_HookFont_mixerGetLineControlsW@12,@107")
-#pragma comment(linker, "/EXPORT:mixerGetLineInfoA=_HookFont_mixerGetLineInfoA@12,@108")
-#pragma comment(linker, "/EXPORT:mixerGetLineInfoW=_HookFont_mixerGetLineInfoW@12,@109")
-#pragma comment(linker, "/EXPORT:mixerGetNumDevs=_HookFont_mixerGetNumDevs@0,@110")
-#pragma comment(linker, "/EXPORT:mixerMessage=_HookFont_mixerMessage@16,@111")
-#pragma comment(linker, "/EXPORT:mixerOpen=_HookFont_mixerOpen@20,@112")
-#pragma comment(linker, "/EXPORT:mixerSetControlDetails=_HookFont_mixerSetControlDetails@12,@113")
-#pragma comment(linker, "/EXPORT:mmDrvInstall=_HookFont_mmDrvInstall,@114")
-#pragma comment(linker, "/EXPORT:mmGetCurrentTask=_HookFont_mmGetCurrentTask,@115")
-#pragma comment(linker, "/EXPORT:mmTaskBlock=_HookFont_mmTaskBlock,@116")
-#pragma comment(linker, "/EXPORT:mmTaskCreate=_HookFont_mmTaskCreate,@117")
-#pragma comment(linker, "/EXPORT:mmTaskSignal=_HookFont_mmTaskSignal,@118")
-#pragma comment(linker, "/EXPORT:mmTaskYield=_HookFont_mmTaskYield,@119")
-#pragma comment(linker, "/EXPORT:mmioAdvance=_HookFont_mmioAdvance,@120")
-#pragma comment(linker, "/EXPORT:mmioAscend=_HookFont_mmioAscend,@121")
-#pragma comment(linker, "/EXPORT:mmioClose=_HookFont_mmioClose,@122")
-#pragma comment(linker, "/EXPORT:mmioCreateChunk=_HookFont_mmioCreateChunk,@123")
-#pragma comment(linker, "/EXPORT:mmioDescend=_HookFont_mmioDescend,@124")
-#pragma comment(linker, "/EXPORT:mmioFlush=_HookFont_mmioFlush,@125")
-#pragma comment(linker, "/EXPORT:mmioGetInfo=_HookFont_mmioGetInfo,@126")
-#pragma comment(linker, "/EXPORT:mmioInstallIOProcA=_HookFont_mmioInstallIOProcA,@127")
-#pragma comment(linker, "/EXPORT:mmioInstallIOProcW=_HookFont_mmioInstallIOProcW,@128")
-#pragma comment(linker, "/EXPORT:mmioOpenA=_HookFont_mmioOpenA,@129")
-#pragma comment(linker, "/EXPORT:mmioOpenW=_HookFont_mmioOpenW,@130")
-#pragma comment(linker, "/EXPORT:mmioRead=_HookFont_mmioRead,@131")
-#pragma comment(linker, "/EXPORT:mmioRenameA=_HookFont_mmioRenameA,@132")
-#pragma comment(linker, "/EXPORT:mmioRenameW=_HookFont_mmioRenameW,@133")
-#pragma comment(linker, "/EXPORT:mmioSeek=_HookFont_mmioSeek,@134")
-#pragma comment(linker, "/EXPORT:mmioSendMessage=_HookFont_mmioSendMessage,@135")
-#pragma comment(linker, "/EXPORT:mmioSetBuffer=_HookFont_mmioSetBuffer,@136")
-#pragma comment(linker, "/EXPORT:mmioSetInfo=_HookFont_mmioSetInfo,@137")
-#pragma comment(linker, "/EXPORT:mmioStringToFOURCCA=_HookFont_mmioStringToFOURCCA,@138")
-#pragma comment(linker, "/EXPORT:mmioStringToFOURCCW=_HookFont_mmioStringToFOURCCW,@139")
-#pragma comment(linker, "/EXPORT:mmioWrite=_HookFont_mmioWrite,@140")
-#pragma comment(linker, "/EXPORT:mmsystemGetVersion=_HookFont_mmsystemGetVersion,@141")
-#pragma comment(linker, "/EXPORT:mod32Message=_HookFont_mod32Message,@142")
-#pragma comment(linker, "/EXPORT:mxd32Message=_HookFont_mxd32Message,@143")
-#pragma comment(linker, "/EXPORT:sndPlaySoundA=_HookFont_sndPlaySoundA,@144")
-#pragma comment(linker, "/EXPORT:sndPlaySoundW=_HookFont_sndPlaySoundW,@145")
-#pragma comment(linker, "/EXPORT:tid32Message=_HookFont_tid32Message,@146")
-#pragma comment(linker, "/EXPORT:timeBeginPeriod=_HookFont_timeBeginPeriod@4,@147")
-#pragma comment(linker, "/EXPORT:timeEndPeriod=_HookFont_timeEndPeriod@4,@148")
-#pragma comment(linker, "/EXPORT:timeGetDevCaps=_HookFont_timeGetDevCaps@8,@149")
-#pragma comment(linker, "/EXPORT:timeGetSystemTime=_HookFont_timeGetSystemTime@8,@150")
-#pragma comment(linker, "/EXPORT:timeGetTime=_HookFont_timeGetTime@0,@151")
-#pragma comment(linker, "/EXPORT:timeKillEvent=_HookFont_timeKillEvent@4,@152")
-#pragma comment(linker, "/EXPORT:timeSetEvent=_HookFont_timeSetEvent@20,@153")
-#pragma comment(linker, "/EXPORT:waveInAddBuffer=_HookFont_waveInAddBuffer@12,@154")
-#pragma comment(linker, "/EXPORT:waveInClose=_HookFont_waveInClose@4,@155")
-#pragma comment(linker, "/EXPORT:waveInGetDevCapsA=_HookFont_waveInGetDevCapsA,@156")
-#pragma comment(linker, "/EXPORT:waveInGetDevCapsW=_HookFont_waveInGetDevCapsW,@157")
-#pragma comment(linker, "/EXPORT:waveInGetErrorTextA=_HookFont_waveInGetErrorTextA,@158")
-#pragma comment(linker, "/EXPORT:waveInGetErrorTextW=_HookFont_waveInGetErrorTextW,@159")
-#pragma comment(linker, "/EXPORT:waveInGetID=_HookFont_waveInGetID,@160")
-#pragma comment(linker, "/EXPORT:waveInGetNumDevs=_HookFont_waveInGetNumDevs@0,@161")
-#pragma comment(linker, "/EXPORT:waveInGetPosition=_HookFont_waveInGetPosition@12,@162")
-#pragma comment(linker, "/EXPORT:waveInMessage=_HookFont_waveInMessage@16,@163")
-#pragma comment(linker, "/EXPORT:waveInOpen=_HookFont_waveInOpen@24,@164")
-#pragma comment(linker, "/EXPORT:waveInPrepareHeader=_HookFont_waveInPrepareHeader@12,@165")
-#pragma comment(linker, "/EXPORT:waveInReset=_HookFont_waveInReset@4,@166")
-#pragma comment(linker, "/EXPORT:waveInStart=_HookFont_waveInStart@4,@167")
-#pragma comment(linker, "/EXPORT:waveInStop=_HookFont_waveInStop@4,@168")
-#pragma comment(linker, "/EXPORT:waveInUnprepareHeader=_HookFont_waveInUnprepareHeader@12,@169")
-#pragma comment(linker, "/EXPORT:waveOutBreakLoop=_HookFont_waveOutBreakLoop@4,@170")
-#pragma comment(linker, "/EXPORT:waveOutClose=_HookFont_waveOutClose@4,@171")
-#pragma comment(linker, "/EXPORT:waveOutGetDevCapsA=_HookFont_waveOutGetDevCapsA,@172")
-#pragma comment(linker, "/EXPORT:waveOutGetDevCapsW=_HookFont_waveOutGetDevCapsW,@173")
-#pragma comment(linker, "/EXPORT:waveOutGetErrorTextA=_HookFont_waveOutGetErrorTextA,@174")
-#pragma comment(linker, "/EXPORT:waveOutGetErrorTextW=_HookFont_waveOutGetErrorTextW,@175")
-#pragma comment(linker, "/EXPORT:waveOutGetID=_HookFont_waveOutGetID,@176")
-#pragma comment(linker, "/EXPORT:waveOutGetNumDevs=_HookFont_waveOutGetNumDevs@0,@177")
-#pragma comment(linker, "/EXPORT:waveOutGetPitch=_HookFont_waveOutGetPitch,@178")
-#pragma comment(linker, "/EXPORT:waveOutGetPlaybackRate=_HookFont_waveOutGetPlaybackRate,@179")
-#pragma comment(linker, "/EXPORT:waveOutGetPosition=_HookFont_waveOutGetPosition@12,@180")
-#pragma comment(linker, "/EXPORT:waveOutGetVolume=_HookFont_waveOutGetVolume@8,@181")
-#pragma comment(linker, "/EXPORT:waveOutMessage=_HookFont_waveOutMessage@16,@182")
-#pragma comment(linker, "/EXPORT:waveOutOpen=_HookFont_waveOutOpen@24,@183")
-#pragma comment(linker, "/EXPORT:waveOutPause=_HookFont_waveOutPause@4,@184")
-#pragma comment(linker, "/EXPORT:waveOutPrepareHeader=_HookFont_waveOutPrepareHeader@12,@185")
-#pragma comment(linker, "/EXPORT:waveOutReset=_HookFont_waveOutReset@4,@186")
-#pragma comment(linker, "/EXPORT:waveOutRestart=_HookFont_waveOutRestart@4,@187")
-#pragma comment(linker, "/EXPORT:waveOutSetPitch=_HookFont_waveOutSetPitch,@188")
-#pragma comment(linker, "/EXPORT:waveOutSetPlaybackRate=_HookFont_waveOutSetPlaybackRate,@189")
-#pragma comment(linker, "/EXPORT:waveOutSetVolume=_HookFont_waveOutSetVolume@8,@190")
-#pragma comment(linker, "/EXPORT:waveOutUnprepareHeader=_HookFont_waveOutUnprepareHeader@12,@191")
-#pragma comment(linker, "/EXPORT:waveOutWrite=_HookFont_waveOutWrite@12,@192")
-#pragma comment(linker, "/EXPORT:wid32Message=_HookFont_wid32Message,@193")
-#pragma comment(linker, "/EXPORT:wod32Message=_HookFont_wod32Message,@194")
+#pragma comment(linker, "/EXPORT:Noname2=_CialloWinMM_Ordinal2,@2,NONAME")
+#pragma comment(linker, "/EXPORT:mciExecute=_CialloWinMM_mciExecute,@3")
+#pragma comment(linker, "/EXPORT:CloseDriver=_CialloWinMM_CloseDriver,@4")
+#pragma comment(linker, "/EXPORT:DefDriverProc=_CialloWinMM_DefDriverProc,@5")
+#pragma comment(linker, "/EXPORT:DriverCallback=_CialloWinMM_DriverCallback,@6")
+#pragma comment(linker, "/EXPORT:DrvGetModuleHandle=_CialloWinMM_DrvGetModuleHandle,@7")
+#pragma comment(linker, "/EXPORT:GetDriverModuleHandle=_CialloWinMM_GetDriverModuleHandle,@8")
+#pragma comment(linker, "/EXPORT:NotifyCallbackData=_CialloWinMM_NotifyCallbackData,@9")
+#pragma comment(linker, "/EXPORT:OpenDriver=_CialloWinMM_OpenDriver,@10")
+#pragma comment(linker, "/EXPORT:PlaySound=_CialloWinMM_PlaySound,@11")
+#pragma comment(linker, "/EXPORT:PlaySoundA=_CialloWinMM_PlaySoundA,@12")
+#pragma comment(linker, "/EXPORT:PlaySoundW=_CialloWinMM_PlaySoundW,@13")
+#pragma comment(linker, "/EXPORT:SendDriverMessage=_CialloWinMM_SendDriverMessage,@14")
+#pragma comment(linker, "/EXPORT:WOW32DriverCallback=_CialloWinMM_WOW32DriverCallback,@15")
+#pragma comment(linker, "/EXPORT:WOW32ResolveMultiMediaHandle=_CialloWinMM_WOW32ResolveMultiMediaHandle,@16")
+#pragma comment(linker, "/EXPORT:WOWAppExit=_CialloWinMM_WOWAppExit,@17")
+#pragma comment(linker, "/EXPORT:aux32Message=_CialloWinMM_aux32Message,@18")
+#pragma comment(linker, "/EXPORT:auxGetDevCapsA=_CialloWinMM_auxGetDevCapsA,@19")
+#pragma comment(linker, "/EXPORT:auxGetDevCapsW=_CialloWinMM_auxGetDevCapsW,@20")
+#pragma comment(linker, "/EXPORT:auxGetNumDevs=_CialloWinMM_auxGetNumDevs,@21")
+#pragma comment(linker, "/EXPORT:auxGetVolume=_CialloWinMM_auxGetVolume,@22")
+#pragma comment(linker, "/EXPORT:auxOutMessage=_CialloWinMM_auxOutMessage,@23")
+#pragma comment(linker, "/EXPORT:auxSetVolume=_CialloWinMM_auxSetVolume,@24")
+#pragma comment(linker, "/EXPORT:joy32Message=_CialloWinMM_joy32Message,@25")
+#pragma comment(linker, "/EXPORT:joyConfigChanged=_CialloWinMM_joyConfigChanged,@26")
+#pragma comment(linker, "/EXPORT:joyGetDevCapsA=_CialloWinMM_joyGetDevCapsA,@27")
+#pragma comment(linker, "/EXPORT:joyGetDevCapsW=_CialloWinMM_joyGetDevCapsW,@28")
+#pragma comment(linker, "/EXPORT:joyGetNumDevs=_CialloWinMM_joyGetNumDevs,@29")
+#pragma comment(linker, "/EXPORT:joyGetPos=_CialloWinMM_joyGetPos,@30")
+#pragma comment(linker, "/EXPORT:joyGetPosEx=_CialloWinMM_joyGetPosEx,@31")
+#pragma comment(linker, "/EXPORT:joyGetThreshold=_CialloWinMM_joyGetThreshold,@32")
+#pragma comment(linker, "/EXPORT:joyReleaseCapture=_CialloWinMM_joyReleaseCapture,@33")
+#pragma comment(linker, "/EXPORT:joySetCapture=_CialloWinMM_joySetCapture,@34")
+#pragma comment(linker, "/EXPORT:joySetThreshold=_CialloWinMM_joySetThreshold,@35")
+#pragma comment(linker, "/EXPORT:mci32Message=_CialloWinMM_mci32Message,@36")
+#pragma comment(linker, "/EXPORT:mciDriverNotify=_CialloWinMM_mciDriverNotify,@37")
+#pragma comment(linker, "/EXPORT:mciDriverYield=_CialloWinMM_mciDriverYield,@38")
+#pragma comment(linker, "/EXPORT:mciFreeCommandResource=_CialloWinMM_mciFreeCommandResource,@39")
+#pragma comment(linker, "/EXPORT:mciGetCreatorTask=_CialloWinMM_mciGetCreatorTask,@40")
+#pragma comment(linker, "/EXPORT:mciGetDeviceIDA=_CialloWinMM_mciGetDeviceIDA,@41")
+#pragma comment(linker, "/EXPORT:mciGetDeviceIDFromElementIDA=_CialloWinMM_mciGetDeviceIDFromElementIDA,@42")
+#pragma comment(linker, "/EXPORT:mciGetDeviceIDFromElementIDW=_CialloWinMM_mciGetDeviceIDFromElementIDW,@43")
+#pragma comment(linker, "/EXPORT:mciGetDeviceIDW=_CialloWinMM_mciGetDeviceIDW,@44")
+#pragma comment(linker, "/EXPORT:mciGetDriverData=_CialloWinMM_mciGetDriverData,@45")
+#pragma comment(linker, "/EXPORT:mciGetErrorStringA=_CialloWinMM_mciGetErrorStringA@12,@46")
+#pragma comment(linker, "/EXPORT:mciGetErrorStringW=_CialloWinMM_mciGetErrorStringW@12,@47")
+#pragma comment(linker, "/EXPORT:mciGetYieldProc=_CialloWinMM_mciGetYieldProc,@48")
+#pragma comment(linker, "/EXPORT:mciLoadCommandResource=_CialloWinMM_mciLoadCommandResource,@49")
+#pragma comment(linker, "/EXPORT:mciSendCommandA=_CialloWinMM_mciSendCommandA@16,@50")
+#pragma comment(linker, "/EXPORT:mciSendCommandW=_CialloWinMM_mciSendCommandW@16,@51")
+#pragma comment(linker, "/EXPORT:mciSendStringA=_CialloWinMM_mciSendStringA@16,@52")
+#pragma comment(linker, "/EXPORT:mciSendStringW=_CialloWinMM_mciSendStringW@16,@53")
+#pragma comment(linker, "/EXPORT:mciSetDriverData=_CialloWinMM_mciSetDriverData,@54")
+#pragma comment(linker, "/EXPORT:mciSetYieldProc=_CialloWinMM_mciSetYieldProc,@55")
+#pragma comment(linker, "/EXPORT:mid32Message=_CialloWinMM_mid32Message,@56")
+#pragma comment(linker, "/EXPORT:midiConnect=_CialloWinMM_midiConnect,@57")
+#pragma comment(linker, "/EXPORT:midiDisconnect=_CialloWinMM_midiDisconnect,@58")
+#pragma comment(linker, "/EXPORT:midiInAddBuffer=_CialloWinMM_midiInAddBuffer@12,@59")
+#pragma comment(linker, "/EXPORT:midiInClose=_CialloWinMM_midiInClose@4,@60")
+#pragma comment(linker, "/EXPORT:midiInGetDevCapsA=_CialloWinMM_midiInGetDevCapsA,@61")
+#pragma comment(linker, "/EXPORT:midiInGetDevCapsW=_CialloWinMM_midiInGetDevCapsW,@62")
+#pragma comment(linker, "/EXPORT:midiInGetErrorTextA=_CialloWinMM_midiInGetErrorTextA,@63")
+#pragma comment(linker, "/EXPORT:midiInGetErrorTextW=_CialloWinMM_midiInGetErrorTextW,@64")
+#pragma comment(linker, "/EXPORT:midiInGetID=_CialloWinMM_midiInGetID,@65")
+#pragma comment(linker, "/EXPORT:midiInGetNumDevs=_CialloWinMM_midiInGetNumDevs@0,@66")
+#pragma comment(linker, "/EXPORT:midiInMessage=_CialloWinMM_midiInMessage@16,@67")
+#pragma comment(linker, "/EXPORT:midiInOpen=_CialloWinMM_midiInOpen@20,@68")
+#pragma comment(linker, "/EXPORT:midiInPrepareHeader=_CialloWinMM_midiInPrepareHeader@12,@69")
+#pragma comment(linker, "/EXPORT:midiInReset=_CialloWinMM_midiInReset@4,@70")
+#pragma comment(linker, "/EXPORT:midiInStart=_CialloWinMM_midiInStart@4,@71")
+#pragma comment(linker, "/EXPORT:midiInStop=_CialloWinMM_midiInStop@4,@72")
+#pragma comment(linker, "/EXPORT:midiInUnprepareHeader=_CialloWinMM_midiInUnprepareHeader@12,@73")
+#pragma comment(linker, "/EXPORT:midiOutCacheDrumPatches=_CialloWinMM_midiOutCacheDrumPatches,@74")
+#pragma comment(linker, "/EXPORT:midiOutCachePatches=_CialloWinMM_midiOutCachePatches,@75")
+#pragma comment(linker, "/EXPORT:midiOutClose=_CialloWinMM_midiOutClose@4,@76")
+#pragma comment(linker, "/EXPORT:midiOutGetDevCapsA=_CialloWinMM_midiOutGetDevCapsA,@77")
+#pragma comment(linker, "/EXPORT:midiOutGetDevCapsW=_CialloWinMM_midiOutGetDevCapsW,@78")
+#pragma comment(linker, "/EXPORT:midiOutGetErrorTextA=_CialloWinMM_midiOutGetErrorTextA,@79")
+#pragma comment(linker, "/EXPORT:midiOutGetErrorTextW=_CialloWinMM_midiOutGetErrorTextW,@80")
+#pragma comment(linker, "/EXPORT:midiOutGetID=_CialloWinMM_midiOutGetID,@81")
+#pragma comment(linker, "/EXPORT:midiOutGetNumDevs=_CialloWinMM_midiOutGetNumDevs@0,@82")
+#pragma comment(linker, "/EXPORT:midiOutGetVolume=_CialloWinMM_midiOutGetVolume,@83")
+#pragma comment(linker, "/EXPORT:midiOutLongMsg=_CialloWinMM_midiOutLongMsg@12,@84")
+#pragma comment(linker, "/EXPORT:midiOutMessage=_CialloWinMM_midiOutMessage@16,@85")
+#pragma comment(linker, "/EXPORT:midiOutOpen=_CialloWinMM_midiOutOpen@20,@86")
+#pragma comment(linker, "/EXPORT:midiOutPrepareHeader=_CialloWinMM_midiOutPrepareHeader@12,@87")
+#pragma comment(linker, "/EXPORT:midiOutReset=_CialloWinMM_midiOutReset@4,@88")
+#pragma comment(linker, "/EXPORT:midiOutSetVolume=_CialloWinMM_midiOutSetVolume@8,@89")
+#pragma comment(linker, "/EXPORT:midiOutShortMsg=_CialloWinMM_midiOutShortMsg@8,@90")
+#pragma comment(linker, "/EXPORT:midiOutUnprepareHeader=_CialloWinMM_midiOutUnprepareHeader@12,@91")
+#pragma comment(linker, "/EXPORT:midiStreamClose=_CialloWinMM_midiStreamClose,@92")
+#pragma comment(linker, "/EXPORT:midiStreamOpen=_CialloWinMM_midiStreamOpen,@93")
+#pragma comment(linker, "/EXPORT:midiStreamOut=_CialloWinMM_midiStreamOut,@94")
+#pragma comment(linker, "/EXPORT:midiStreamPause=_CialloWinMM_midiStreamPause,@95")
+#pragma comment(linker, "/EXPORT:midiStreamPosition=_CialloWinMM_midiStreamPosition,@96")
+#pragma comment(linker, "/EXPORT:midiStreamProperty=_CialloWinMM_midiStreamProperty,@97")
+#pragma comment(linker, "/EXPORT:midiStreamRestart=_CialloWinMM_midiStreamRestart,@98")
+#pragma comment(linker, "/EXPORT:midiStreamStop=_CialloWinMM_midiStreamStop,@99")
+#pragma comment(linker, "/EXPORT:mixerClose=_CialloWinMM_mixerClose@4,@100")
+#pragma comment(linker, "/EXPORT:mixerGetControlDetailsA=_CialloWinMM_mixerGetControlDetailsA@12,@101")
+#pragma comment(linker, "/EXPORT:mixerGetControlDetailsW=_CialloWinMM_mixerGetControlDetailsW@12,@102")
+#pragma comment(linker, "/EXPORT:mixerGetDevCapsA=_CialloWinMM_mixerGetDevCapsA@12,@103")
+#pragma comment(linker, "/EXPORT:mixerGetDevCapsW=_CialloWinMM_mixerGetDevCapsW@12,@104")
+#pragma comment(linker, "/EXPORT:mixerGetID=_CialloWinMM_mixerGetID,@105")
+#pragma comment(linker, "/EXPORT:mixerGetLineControlsA=_CialloWinMM_mixerGetLineControlsA@12,@106")
+#pragma comment(linker, "/EXPORT:mixerGetLineControlsW=_CialloWinMM_mixerGetLineControlsW@12,@107")
+#pragma comment(linker, "/EXPORT:mixerGetLineInfoA=_CialloWinMM_mixerGetLineInfoA@12,@108")
+#pragma comment(linker, "/EXPORT:mixerGetLineInfoW=_CialloWinMM_mixerGetLineInfoW@12,@109")
+#pragma comment(linker, "/EXPORT:mixerGetNumDevs=_CialloWinMM_mixerGetNumDevs@0,@110")
+#pragma comment(linker, "/EXPORT:mixerMessage=_CialloWinMM_mixerMessage@16,@111")
+#pragma comment(linker, "/EXPORT:mixerOpen=_CialloWinMM_mixerOpen@20,@112")
+#pragma comment(linker, "/EXPORT:mixerSetControlDetails=_CialloWinMM_mixerSetControlDetails@12,@113")
+#pragma comment(linker, "/EXPORT:mmDrvInstall=_CialloWinMM_mmDrvInstall,@114")
+#pragma comment(linker, "/EXPORT:mmGetCurrentTask=_CialloWinMM_mmGetCurrentTask,@115")
+#pragma comment(linker, "/EXPORT:mmTaskBlock=_CialloWinMM_mmTaskBlock,@116")
+#pragma comment(linker, "/EXPORT:mmTaskCreate=_CialloWinMM_mmTaskCreate,@117")
+#pragma comment(linker, "/EXPORT:mmTaskSignal=_CialloWinMM_mmTaskSignal,@118")
+#pragma comment(linker, "/EXPORT:mmTaskYield=_CialloWinMM_mmTaskYield,@119")
+#pragma comment(linker, "/EXPORT:mmioAdvance=_CialloWinMM_mmioAdvance,@120")
+#pragma comment(linker, "/EXPORT:mmioAscend=_CialloWinMM_mmioAscend,@121")
+#pragma comment(linker, "/EXPORT:mmioClose=_CialloWinMM_mmioClose,@122")
+#pragma comment(linker, "/EXPORT:mmioCreateChunk=_CialloWinMM_mmioCreateChunk,@123")
+#pragma comment(linker, "/EXPORT:mmioDescend=_CialloWinMM_mmioDescend,@124")
+#pragma comment(linker, "/EXPORT:mmioFlush=_CialloWinMM_mmioFlush,@125")
+#pragma comment(linker, "/EXPORT:mmioGetInfo=_CialloWinMM_mmioGetInfo,@126")
+#pragma comment(linker, "/EXPORT:mmioInstallIOProcA=_CialloWinMM_mmioInstallIOProcA,@127")
+#pragma comment(linker, "/EXPORT:mmioInstallIOProcW=_CialloWinMM_mmioInstallIOProcW,@128")
+#pragma comment(linker, "/EXPORT:mmioOpenA=_CialloWinMM_mmioOpenA,@129")
+#pragma comment(linker, "/EXPORT:mmioOpenW=_CialloWinMM_mmioOpenW,@130")
+#pragma comment(linker, "/EXPORT:mmioRead=_CialloWinMM_mmioRead,@131")
+#pragma comment(linker, "/EXPORT:mmioRenameA=_CialloWinMM_mmioRenameA,@132")
+#pragma comment(linker, "/EXPORT:mmioRenameW=_CialloWinMM_mmioRenameW,@133")
+#pragma comment(linker, "/EXPORT:mmioSeek=_CialloWinMM_mmioSeek,@134")
+#pragma comment(linker, "/EXPORT:mmioSendMessage=_CialloWinMM_mmioSendMessage,@135")
+#pragma comment(linker, "/EXPORT:mmioSetBuffer=_CialloWinMM_mmioSetBuffer,@136")
+#pragma comment(linker, "/EXPORT:mmioSetInfo=_CialloWinMM_mmioSetInfo,@137")
+#pragma comment(linker, "/EXPORT:mmioStringToFOURCCA=_CialloWinMM_mmioStringToFOURCCA,@138")
+#pragma comment(linker, "/EXPORT:mmioStringToFOURCCW=_CialloWinMM_mmioStringToFOURCCW,@139")
+#pragma comment(linker, "/EXPORT:mmioWrite=_CialloWinMM_mmioWrite,@140")
+#pragma comment(linker, "/EXPORT:mmsystemGetVersion=_CialloWinMM_mmsystemGetVersion,@141")
+#pragma comment(linker, "/EXPORT:mod32Message=_CialloWinMM_mod32Message,@142")
+#pragma comment(linker, "/EXPORT:mxd32Message=_CialloWinMM_mxd32Message,@143")
+#pragma comment(linker, "/EXPORT:sndPlaySoundA=_CialloWinMM_sndPlaySoundA,@144")
+#pragma comment(linker, "/EXPORT:sndPlaySoundW=_CialloWinMM_sndPlaySoundW,@145")
+#pragma comment(linker, "/EXPORT:tid32Message=_CialloWinMM_tid32Message,@146")
+#pragma comment(linker, "/EXPORT:timeBeginPeriod=_CialloWinMM_timeBeginPeriod@4,@147")
+#pragma comment(linker, "/EXPORT:timeEndPeriod=_CialloWinMM_timeEndPeriod@4,@148")
+#pragma comment(linker, "/EXPORT:timeGetDevCaps=_CialloWinMM_timeGetDevCaps@8,@149")
+#pragma comment(linker, "/EXPORT:timeGetSystemTime=_CialloWinMM_timeGetSystemTime@8,@150")
+#pragma comment(linker, "/EXPORT:timeGetTime=_CialloWinMM_timeGetTime@0,@151")
+#pragma comment(linker, "/EXPORT:timeKillEvent=_CialloWinMM_timeKillEvent@4,@152")
+#pragma comment(linker, "/EXPORT:timeSetEvent=_CialloWinMM_timeSetEvent@20,@153")
+#pragma comment(linker, "/EXPORT:waveInAddBuffer=_CialloWinMM_waveInAddBuffer@12,@154")
+#pragma comment(linker, "/EXPORT:waveInClose=_CialloWinMM_waveInClose@4,@155")
+#pragma comment(linker, "/EXPORT:waveInGetDevCapsA=_CialloWinMM_waveInGetDevCapsA,@156")
+#pragma comment(linker, "/EXPORT:waveInGetDevCapsW=_CialloWinMM_waveInGetDevCapsW,@157")
+#pragma comment(linker, "/EXPORT:waveInGetErrorTextA=_CialloWinMM_waveInGetErrorTextA,@158")
+#pragma comment(linker, "/EXPORT:waveInGetErrorTextW=_CialloWinMM_waveInGetErrorTextW,@159")
+#pragma comment(linker, "/EXPORT:waveInGetID=_CialloWinMM_waveInGetID,@160")
+#pragma comment(linker, "/EXPORT:waveInGetNumDevs=_CialloWinMM_waveInGetNumDevs@0,@161")
+#pragma comment(linker, "/EXPORT:waveInGetPosition=_CialloWinMM_waveInGetPosition@12,@162")
+#pragma comment(linker, "/EXPORT:waveInMessage=_CialloWinMM_waveInMessage@16,@163")
+#pragma comment(linker, "/EXPORT:waveInOpen=_CialloWinMM_waveInOpen@24,@164")
+#pragma comment(linker, "/EXPORT:waveInPrepareHeader=_CialloWinMM_waveInPrepareHeader@12,@165")
+#pragma comment(linker, "/EXPORT:waveInReset=_CialloWinMM_waveInReset@4,@166")
+#pragma comment(linker, "/EXPORT:waveInStart=_CialloWinMM_waveInStart@4,@167")
+#pragma comment(linker, "/EXPORT:waveInStop=_CialloWinMM_waveInStop@4,@168")
+#pragma comment(linker, "/EXPORT:waveInUnprepareHeader=_CialloWinMM_waveInUnprepareHeader@12,@169")
+#pragma comment(linker, "/EXPORT:waveOutBreakLoop=_CialloWinMM_waveOutBreakLoop@4,@170")
+#pragma comment(linker, "/EXPORT:waveOutClose=_CialloWinMM_waveOutClose@4,@171")
+#pragma comment(linker, "/EXPORT:waveOutGetDevCapsA=_CialloWinMM_waveOutGetDevCapsA,@172")
+#pragma comment(linker, "/EXPORT:waveOutGetDevCapsW=_CialloWinMM_waveOutGetDevCapsW,@173")
+#pragma comment(linker, "/EXPORT:waveOutGetErrorTextA=_CialloWinMM_waveOutGetErrorTextA,@174")
+#pragma comment(linker, "/EXPORT:waveOutGetErrorTextW=_CialloWinMM_waveOutGetErrorTextW,@175")
+#pragma comment(linker, "/EXPORT:waveOutGetID=_CialloWinMM_waveOutGetID,@176")
+#pragma comment(linker, "/EXPORT:waveOutGetNumDevs=_CialloWinMM_waveOutGetNumDevs@0,@177")
+#pragma comment(linker, "/EXPORT:waveOutGetPitch=_CialloWinMM_waveOutGetPitch,@178")
+#pragma comment(linker, "/EXPORT:waveOutGetPlaybackRate=_CialloWinMM_waveOutGetPlaybackRate,@179")
+#pragma comment(linker, "/EXPORT:waveOutGetPosition=_CialloWinMM_waveOutGetPosition@12,@180")
+#pragma comment(linker, "/EXPORT:waveOutGetVolume=_CialloWinMM_waveOutGetVolume@8,@181")
+#pragma comment(linker, "/EXPORT:waveOutMessage=_CialloWinMM_waveOutMessage@16,@182")
+#pragma comment(linker, "/EXPORT:waveOutOpen=_CialloWinMM_waveOutOpen@24,@183")
+#pragma comment(linker, "/EXPORT:waveOutPause=_CialloWinMM_waveOutPause@4,@184")
+#pragma comment(linker, "/EXPORT:waveOutPrepareHeader=_CialloWinMM_waveOutPrepareHeader@12,@185")
+#pragma comment(linker, "/EXPORT:waveOutReset=_CialloWinMM_waveOutReset@4,@186")
+#pragma comment(linker, "/EXPORT:waveOutRestart=_CialloWinMM_waveOutRestart@4,@187")
+#pragma comment(linker, "/EXPORT:waveOutSetPitch=_CialloWinMM_waveOutSetPitch,@188")
+#pragma comment(linker, "/EXPORT:waveOutSetPlaybackRate=_CialloWinMM_waveOutSetPlaybackRate,@189")
+#pragma comment(linker, "/EXPORT:waveOutSetVolume=_CialloWinMM_waveOutSetVolume@8,@190")
+#pragma comment(linker, "/EXPORT:waveOutUnprepareHeader=_CialloWinMM_waveOutUnprepareHeader@12,@191")
+#pragma comment(linker, "/EXPORT:waveOutWrite=_CialloWinMM_waveOutWrite@12,@192")
+#pragma comment(linker, "/EXPORT:wid32Message=_CialloWinMM_wid32Message,@193")
+#pragma comment(linker, "/EXPORT:wod32Message=_CialloWinMM_wod32Message,@194")
 #endif
+

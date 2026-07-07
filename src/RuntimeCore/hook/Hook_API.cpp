@@ -673,6 +673,7 @@ namespace Rut
 		bool LoadFontFromFile(const wchar_t*, bool) { return false; }
 		void SetFontHookRules(const wchar_t* const*, size_t, const wchar_t* const*, const wchar_t* const*, size_t) {}
 		void EnableFontHookVerboseLog(bool) {}
+		void SetUIFontHookEnabled(bool) {}
 #define CIALLOHOOK_STUB_FONT_HOOK0(name) bool name() { return false; }
 #define CIALLOHOOK_STUB_FONT_HOOK1(name, t1) bool name(t1) { return false; }
 		bool HookCreateFontA(const uint32_t, bool, uint32_t, uint32_t, const char*, int, int, int, float, float, float, int, int, int, int, int, int) { return false; }

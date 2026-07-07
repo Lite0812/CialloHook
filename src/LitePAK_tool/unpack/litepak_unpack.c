@@ -256,15 +256,7 @@ static int litepak_core_self_check_once(void) {
     base = strrchr(module_path, '\\');
     if (!base) base = strrchr(module_path, '/');
     base = base ? base + 1 : module_path;
-#ifdef LITEPAK_STATIC_RUNTIMECORE
-    if (_stricmp(base, "CialloHook.dll") != 0 &&
-        _stricmp(base, "version.dll") != 0 &&
-        _stricmp(base, "winmm.dll") != 0 &&
-        _stricmp(base, "litepak.dll") != 0) {
-        fprintf(stderr, "litepak self-check failed: module name=%s\n", base);
-        return -1;
-    }
-#else
+#ifndef LITEPAK_STATIC_RUNTIMECORE
     if (_stricmp(base, "litepak.dll") != 0) {
         fprintf(stderr, "litepak.dll self-check failed: module name=%s\n", base);
         return -1;

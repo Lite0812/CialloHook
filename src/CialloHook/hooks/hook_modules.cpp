@@ -1504,6 +1504,7 @@ namespace CialloHook
 			}
 
 			EnableCnJpMap(false);
+			SetUIFontHookEnabled(settings.enableUIFontHook);
 			EnableFontHookVerboseLog(settings.fontHookVerboseLog);
 			EnableCnJpMapVerboseLog(settings.cnJpMapVerboseLog);
 			SetCnJpMapEncoding(settings.cnJpMapReadEncoding);
@@ -1571,12 +1572,13 @@ namespace CialloHook
 				redirectFromFontNames.empty() ? nullptr : redirectFromFontNames.data(),
 				redirectToFontNames.empty() ? nullptr : redirectToFontNames.data(),
 				redirectFromFontNames.size());
-			LogMessage(LogLevel::Info, L"ApplyFontHooks: font=%s charset=0x%X spoof=%d (0x%X->0x%X) unlock=%d fontHitLog=%d cnJpMap=%s verboseLog=%d cnJpMapCp=%u",
+			LogMessage(LogLevel::Info, L"ApplyFontHooks: font=%s charset=0x%X spoof=%d (0x%X->0x%X) uiFontHook=%d unlock=%d fontHitLog=%d cnJpMap=%s verboseLog=%d cnJpMapCp=%u",
 				fontName.c_str(),
 				settings.charset,
 				settings.enableCharsetSpoof ? 1 : 0,
 				settings.spoofFromCharset,
 				settings.spoofToCharset,
+				settings.enableUIFontHook ? 1 : 0,
 				settings.unlockFontSelection ? 1 : 0,
 				settings.fontHookVerboseLog ? 1 : 0,
 				settings.enableCnJpMap ? L"enabled" : L"disabled",
@@ -1677,7 +1679,7 @@ namespace CialloHook
 				logHookAttach(L"HookEnumFontFamiliesW", HookEnumFontFamiliesW(settings.unlockFontSelection));
 			}
 
-			if (settings.unlockFontSelection)
+			if (settings.enableUIFontHook && settings.unlockFontSelection)
 			{
 				HookChooseFontA();
 				HookChooseFontW();
@@ -1868,72 +1870,72 @@ namespace CialloHook
 				logHookAttach(L"HookGetFontUnicodeRanges", HookGetFontUnicodeRanges());
 			}
 
-			if (settings.hookLoadLibraryW)
+			if (settings.enableUIFontHook && settings.hookLoadLibraryW)
 			{
 				logHookAttach(L"HookLoadLibraryW", HookLoadLibraryW());
 			}
 
-			if (settings.hookLoadLibraryExW)
+			if (settings.enableUIFontHook && settings.hookLoadLibraryExW)
 			{
 				logHookAttach(L"HookLoadLibraryExW", HookLoadLibraryExW());
 			}
 
-			if (settings.hookDWriteCreateFactory)
+			if (settings.enableUIFontHook && settings.hookDWriteCreateFactory)
 			{
 				logHookAttach(L"HookDWriteCreateFactory", HookDWriteCreateFactory());
 			}
 
-			if (settings.hookGdipCreateFontFamilyFromName)
+			if (settings.enableUIFontHook && settings.hookGdipCreateFontFamilyFromName)
 			{
 				logHookAttach(L"HookGdipCreateFontFamilyFromName", HookGdipCreateFontFamilyFromName());
 			}
 
-			if (settings.hookGdipCreateFontFromLogfontW)
+			if (settings.enableUIFontHook && settings.hookGdipCreateFontFromLogfontW)
 			{
 				logHookAttach(L"HookGdipCreateFontFromLogfontW", HookGdipCreateFontFromLogfontW());
 			}
 
-			if (settings.hookGdipCreateFontFromLogfontA)
+			if (settings.enableUIFontHook && settings.hookGdipCreateFontFromLogfontA)
 			{
 				logHookAttach(L"HookGdipCreateFontFromLogfontA", HookGdipCreateFontFromLogfontA());
 			}
 
-			if (settings.hookGdipCreateFontFromHFONT)
+			if (settings.enableUIFontHook && settings.hookGdipCreateFontFromHFONT)
 			{
 				logHookAttach(L"HookGdipCreateFontFromHFONT", HookGdipCreateFontFromHFONT());
 			}
 
-			if (settings.hookGdipCreateFontFromDC)
+			if (settings.enableUIFontHook && settings.hookGdipCreateFontFromDC)
 			{
 				logHookAttach(L"HookGdipCreateFontFromDC", HookGdipCreateFontFromDC());
 			}
 
-			if (settings.hookGdipCreateFont)
+			if (settings.enableUIFontHook && settings.hookGdipCreateFont)
 			{
 				logHookAttach(L"HookGdipCreateFont", HookGdipCreateFont());
 			}
 
-			if (settings.hookGdipDrawString)
+			if (settings.enableUIFontHook && settings.hookGdipDrawString)
 			{
 				logHookAttach(L"HookGdipDrawString", HookGdipDrawString());
 			}
 
-			if (settings.hookGdipDrawDriverString)
+			if (settings.enableUIFontHook && settings.hookGdipDrawDriverString)
 			{
 				logHookAttach(L"HookGdipDrawDriverString", HookGdipDrawDriverString());
 			}
 
-			if (settings.hookGdipMeasureString)
+			if (settings.enableUIFontHook && settings.hookGdipMeasureString)
 			{
 				logHookAttach(L"HookGdipMeasureString", HookGdipMeasureString());
 			}
 
-			if (settings.hookGdipMeasureCharacterRanges)
+			if (settings.enableUIFontHook && settings.hookGdipMeasureCharacterRanges)
 			{
 				logHookAttach(L"HookGdipMeasureCharacterRanges", HookGdipMeasureCharacterRanges());
 			}
 
-			if (settings.hookGdipMeasureDriverString)
+			if (settings.enableUIFontHook && settings.hookGdipMeasureDriverString)
 			{
 				logHookAttach(L"HookGdipMeasureDriverString", HookGdipMeasureDriverString());
 			}
@@ -2182,7 +2184,13 @@ namespace CialloHook
 
 		void ApplyEarlyStartupHooks(const AppSettings& settings, uint32_t bypassThreadId)
 		{
-			if (!settings.startupTiming.enableStartupWindowGate)
+#if CIALLOHOOK_FEATURE_SPLASH_IMAGE
+			const bool splashGateEnabled = settings.splashImage.enable;
+#else
+			const bool splashGateEnabled = false;
+#endif
+			const bool needStartupWindowGate = settings.startupTiming.enableStartupWindowGate || splashGateEnabled;
+			if (!needStartupWindowGate)
 			{
 				return;
 			}
@@ -2205,7 +2213,7 @@ namespace CialloHook
 			LogMessage(LogLevel::Info, L"ApplyEarlyStartupHooks: startup gate enabled with bypassTid=%lu", static_cast<unsigned long>(bypassThreadId));
 		}
 
-		void ApplyPostStartupHooks(const AppSettings& settings)
+		void ApplyPostStartupHooks(const AppSettings& settings, bool releaseStartupWindowGate)
 		{
 #if CIALLOHOOK_FEATURE_FILE_PATCH || CIALLOHOOK_FEATURE_KRKR_PATCH
 			CIALLOHOOK_VERBOSE_INFO_LOG(L"Apply hooks: file patch");
@@ -2278,7 +2286,10 @@ namespace CialloHook
 			CIALLOHOOK_VERBOSE_INFO_LOG(L"Apply hooks: font");
 			ApplyFontHooks(settings.font);
 #endif
-			ReleaseStartupWindowGate();
+			if (releaseStartupWindowGate)
+			{
+				ReleaseStartupWindowGate();
+			}
 		}
 
 		void ApplyAliceSystem3xHooks(const AliceSystem3xSettings& settings, const FilePatchSettings& filePatchSettings)
@@ -2356,12 +2367,15 @@ namespace CialloHook
 #if !CIALLOHOOK_FEATURE_KRKR_PATCH
 			effectiveEnginePatchSettings.enableKrkrPatch = false;
 			effectiveEnginePatchSettings.krkrBootstrapBypass = false;
-			effectiveEnginePatchSettings.enableKrkrCxdecBridge = false;
+			effectiveEnginePatchSettings.enableKrkrCxdecPatchBridge = false;
 			effectiveEnginePatchSettings.krkrPatchNames.clear();
 #endif
-			if (!patchSettings.enable && !patchSettings.customPakEnable && !spoofSettings.enable && !directoryRedirectSettings.enable && !effectiveEnginePatchSettings.enableKrkrPatch)
+			const bool needsKrkrPluginBridge = effectiveEnginePatchSettings.enableKrkrPatch
+				|| effectiveEnginePatchSettings.krkrBootstrapBypass
+				|| effectiveEnginePatchSettings.enableKrkrCxdecPatchBridge;
+			if (!patchSettings.enable && !patchSettings.customPakEnable && !spoofSettings.enable && !directoryRedirectSettings.enable && !needsKrkrPluginBridge)
 			{
-				CIALLOHOOK_VERBOSE_INFO_LOG(L"ApplyFilePatchHooks: disabled (patch, custom pak, spoof, redirect and krkrpatch)");
+				CIALLOHOOK_VERBOSE_INFO_LOG(L"ApplyFilePatchHooks: disabled (patch, custom pak, spoof, redirect and krkr plugin bridge)");
 				return;
 			}
 			std::wstring gameDir = GetGameDirectory();
@@ -2489,7 +2503,7 @@ namespace CialloHook
 			bool enablePatch = !activePatchFolders.empty();
 			bool enableCustomPak = !activeCustomPakFiles.empty();
 				sg_activeModuleAssetCustomPak = enableCustomPak;
-			if (!enablePatch && !enableSpoof && !enableCustomPak && !enableRedirect)
+			if (!enablePatch && !enableSpoof && !enableCustomPak && !enableRedirect && !needsKrkrPluginBridge)
 			{
 				LogMessage(LogLevel::Warn, L"ApplyFilePatchHooks: no valid patch/spoof/redirect targets, skip file api hooks");
 				return;
@@ -2546,7 +2560,7 @@ namespace CialloHook
 				effectiveEnginePatchSettings.enableKrkrPatch,
 				effectiveEnginePatchSettings.krkrPatchVerboseLog,
 				effectiveEnginePatchSettings.krkrBootstrapBypass,
-				effectiveEnginePatchSettings.enableKrkrCxdecBridge,
+				effectiveEnginePatchSettings.enableKrkrCxdecPatchBridge,
 				gameDir,
 				filePatchFolders,
 				filePatchCustomPakFiles,

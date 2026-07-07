@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include "build_options.h"
 #include "settings.h"
@@ -124,6 +124,9 @@ namespace CialloHook
 		settings.font.metricsOffsetRight = 0;
 		settings.font.metricsOffsetTop = 0;
 		settings.font.metricsOffsetBottom = 0;
+
+		// UI 字体 Hook：控制 DWrite / D2D / GDI+ / ChooseFont / late-load 等 UI/现代字体链路；关闭后保留普通 GDI 字体 Hook。
+		settings.font.enableUIFontHook = true;
 
 		// ---------- API Hook 分组开关 ----------
 		// HookGroupCreate/Enumerate/Metrics/Resource/Modern/LateLoad 均与 CialloHook.ini 默认一致为 true。
@@ -390,7 +393,7 @@ namespace CialloHook
 			L"unencrypted",
 		};
 		settings.enginePatches.krkrBootstrapBypass = false;
-		settings.enginePatches.enableKrkrCxdecBridge = false;
+		settings.enginePatches.enableKrkrCxdecPatchBridge = false;
 
 		// ======================== [LocaleEmulator] 转区 ========================
 		// proxy 模式下由 winmm.dll/version.dll 直接重启转区；loader 模式下由 CialloLauncher 处理。
