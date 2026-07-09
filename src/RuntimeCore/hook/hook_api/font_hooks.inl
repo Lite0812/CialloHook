@@ -1,4 +1,4 @@
-﻿		//*********Font File Loading*********
+		//*********Font File Loading*********
 
 		bool LoadFontFromFile(const wchar_t* wpFontFilePath, bool showError)
 		{
@@ -141,6 +141,7 @@
 			}
 		};
 		static LPCWSTR sg_lpFontNameW = nullptr;
+		static bool sg_disableWideFontCreationOverride = false;
 		struct FontNameRedirectRule
 		{
 			std::wstring sourceKey;
@@ -415,6 +416,7 @@
 		}
 		static bool ApplyOverrideToLogFontW(LOGFONTW& lf, bool applySizeScale = true);
 		static bool ApplyOverrideToLogFontA(LOGFONTA& lf, bool applySizeScale = true);
+		static bool TryGetCurrentHdcLogFontW(HDC hdc, LOGFONTW& lf);
 		static std::string GetForcedFontNameA();
 		static bool ShouldApplyFloatSizeScale()
 		{
@@ -673,8 +675,26 @@
 				*widthValue = 0.0f;
 			}
 		}
+		static void ClearReplacementFontCache();
+		static void RegisterCreatedReplacementFont(HFONT createdFont, const LOGFONTW& sourceLogFont);
 		static void SetFontAdjustments(const uint32_t uiCharSet, bool enableCharsetSpoof, uint32_t spoofFromCharSet, uint32_t spoofToCharSet, int iHeight, int iWidth, int iWeight, float fScale, float fSpacingScale, float fGlyphAspectRatio, int iGlyphOffsetX, int iGlyphOffsetY, int iMetricsOffsetLeft, int iMetricsOffsetRight, int iMetricsOffsetTop, int iMetricsOffsetBottom)
 		{
+			bool cacheInvalidated = sg_dwCharSet != uiCharSet
+				|| sg_enableCharsetSpoof != enableCharsetSpoof
+				|| sg_dwSpoofFromCharSet != spoofFromCharSet
+				|| sg_dwSpoofToCharSet != spoofToCharSet
+				|| sg_iFontHeight != iHeight
+				|| sg_iFontWidth != iWidth
+				|| sg_iFontWeight != iWeight
+				|| sg_fFontScale != fScale
+				|| sg_fFontSpacingScale != fSpacingScale
+				|| sg_fGlyphAspectRatio != fGlyphAspectRatio
+				|| sg_iGlyphOffsetX != iGlyphOffsetX
+				|| sg_iGlyphOffsetY != iGlyphOffsetY
+				|| sg_iMetricsOffsetLeft != iMetricsOffsetLeft
+				|| sg_iMetricsOffsetRight != iMetricsOffsetRight
+				|| sg_iMetricsOffsetTop != iMetricsOffsetTop
+				|| sg_iMetricsOffsetBottom != iMetricsOffsetBottom;
 			sg_dwCharSet = uiCharSet;
 			sg_enableCharsetSpoof = enableCharsetSpoof;
 			sg_dwSpoofFromCharSet = spoofFromCharSet;
@@ -691,6 +711,10 @@
 			sg_iMetricsOffsetRight = iMetricsOffsetRight;
 			sg_iMetricsOffsetTop = iMetricsOffsetTop;
 			sg_iMetricsOffsetBottom = iMetricsOffsetBottom;
+			if (cacheInvalidated)
+			{
+				ClearReplacementFontCache();
+			}
 		}
 		void SetFontHookRules(
 			const wchar_t* const* skipFontNames,
@@ -880,6 +904,10 @@
 		static pCreateFontW rawCreateFontW = CreateFontW;
 		HFONT WINAPI newCreateFontW_SehImpl(INT cHeight, INT cWidth, INT cEscapement, INT cOrientation, INT cWeight, DWORD bItalic, DWORD bUnderline, DWORD bStrikeOut, DWORD iCharSet, DWORD iOutPrecision, DWORD iClipPrecision, DWORD iQuality, DWORD iPitchAndFamily, LPCWSTR pszFaceName)
 {
+			if (sg_disableWideFontCreationOverride)
+			{
+				return rawCreateFontW(cHeight, cWidth, cEscapement, cOrientation, cWeight, bItalic, bUnderline, bStrikeOut, iCharSet, iOutPrecision, iClipPrecision, iQuality, iPitchAndFamily, pszFaceName);
+			}
 			if (sg_fontCreateNesting > 0)
 			{
 				return rawCreateFontW(cHeight, cWidth, cEscapement, cOrientation, cWeight, bItalic, bUnderline, bStrikeOut, iCharSet, iOutPrecision, iClipPrecision, iQuality, iPitchAndFamily, pszFaceName);
@@ -897,6 +925,21 @@
 			{
 				return rawCreateFontW(cHeight, cWidth, cEscapement, cOrientation, cWeight, bItalic, bUnderline, bStrikeOut, iCharSet, iOutPrecision, iClipPrecision, iQuality, iPitchAndFamily, pszFaceName);
 			}
+			LOGFONTW sourceLogFont = {};
+			sourceLogFont.lfHeight = cHeight;
+			sourceLogFont.lfWidth = cWidth;
+			sourceLogFont.lfEscapement = cEscapement;
+			sourceLogFont.lfOrientation = cOrientation;
+			sourceLogFont.lfWeight = cWeight;
+			sourceLogFont.lfItalic = static_cast<BYTE>(bItalic);
+			sourceLogFont.lfUnderline = static_cast<BYTE>(bUnderline);
+			sourceLogFont.lfStrikeOut = static_cast<BYTE>(bStrikeOut);
+			sourceLogFont.lfCharSet = static_cast<BYTE>(iCharSet);
+			sourceLogFont.lfOutPrecision = static_cast<BYTE>(iOutPrecision);
+			sourceLogFont.lfClipPrecision = static_cast<BYTE>(iClipPrecision);
+			sourceLogFont.lfQuality = static_cast<BYTE>(iQuality);
+			sourceLogFont.lfPitchAndFamily = static_cast<BYTE>(iPitchAndFamily);
+			wcsncpy_s(sourceLogFont.lfFaceName, requestedFaceName, _TRUNCATE);
 			// Font size scaling: fixed height first, otherwise apply scale
 			if (sg_iFontHeight) {
 				cHeight = sg_iFontHeight;
@@ -913,6 +956,7 @@
 				pszFaceName = forcedFaceName;
 			}
 			HFONT hFont = rawCreateFontW(cHeight, cWidth, cEscapement, cOrientation, cWeight, bItalic, bUnderline, bStrikeOut, iCharSet, iOutPrecision, iClipPrecision, iQuality, iPitchAndFamily, pszFaceName);
+			RegisterCreatedReplacementFont(hFont, sourceLogFont);
 			if (IsAnyFontSizeOverrideEnabled())
 			{
 				MarkFontHandleScaled(hFont);
@@ -946,6 +990,10 @@
 
 		bool HookCreateFontW(const uint32_t uiCharSet, bool enableCharsetSpoof, uint32_t spoofFromCharSet, uint32_t spoofToCharSet, const wchar_t* wpFontName, int iHeight, int iWidth, int iWeight, float fScale, float fSpacingScale, float fGlyphAspectRatio, int iGlyphOffsetX, int iGlyphOffsetY, int iMetricsOffsetLeft, int iMetricsOffsetRight, int iMetricsOffsetTop, int iMetricsOffsetBottom)
 		{
+			if (sg_lpFontNameW != wpFontName)
+			{
+				ClearReplacementFontCache();
+			}
 			sg_lpFontNameW = wpFontName;
 			SetFontAdjustments(uiCharSet, enableCharsetSpoof, spoofFromCharSet, spoofToCharSet, iHeight, iWidth, iWeight, fScale, fSpacingScale, fGlyphAspectRatio, iGlyphOffsetX, iGlyphOffsetY, iMetricsOffsetLeft, iMetricsOffsetRight, iMetricsOffsetTop, iMetricsOffsetBottom);
 			return !TryDetourAttach(&rawCreateFontW, newCreateFontW);
@@ -957,6 +1005,10 @@
 		static pCreateFontIndirectW rawCreateFontIndirectW = CreateFontIndirectW;
 		HFONT WINAPI newCreateFontIndirectW_SehImpl(LOGFONTW* lplf)
 {
+			if (sg_disableWideFontCreationOverride)
+			{
+				return rawCreateFontIndirectW(lplf);
+			}
 			if (sg_fontCreateNesting > 0)
 			{
 				return rawCreateFontIndirectW(lplf);
@@ -971,6 +1023,7 @@
 			{
 				return rawCreateFontIndirectW(lplf);
 			}
+			LOGFONTW sourceLogFont = local;
 			bool skipOverride = false;
 			wchar_t forcedFaceName[LF_FACESIZE] = {};
 			bool hasForcedFaceName = TryGetForcedFontNameWForRequest(local.lfFaceName, forcedFaceName, skipOverride);
@@ -994,6 +1047,7 @@
 				wcsncpy_s(local.lfFaceName, forcedFaceName, _TRUNCATE);
 			}
 			HFONT hFont = rawCreateFontIndirectW(&local);
+			RegisterCreatedReplacementFont(hFont, sourceLogFont);
 			if (IsAnyFontSizeOverrideEnabled())
 			{
 				MarkFontHandleScaled(hFont);
@@ -1027,6 +1081,10 @@
 
 		bool HookCreateFontIndirectW(const uint32_t uiCharSet, bool enableCharsetSpoof, uint32_t spoofFromCharSet, uint32_t spoofToCharSet, const wchar_t* wpFontName, int iHeight, int iWidth, int iWeight, float fScale, float fSpacingScale, float fGlyphAspectRatio, int iGlyphOffsetX, int iGlyphOffsetY, int iMetricsOffsetLeft, int iMetricsOffsetRight, int iMetricsOffsetTop, int iMetricsOffsetBottom)
 		{
+			if (sg_lpFontNameW != wpFontName)
+			{
+				ClearReplacementFontCache();
+			}
 			sg_lpFontNameW = wpFontName;
 			SetFontAdjustments(uiCharSet, enableCharsetSpoof, spoofFromCharSet, spoofToCharSet, iHeight, iWidth, iWeight, fScale, fSpacingScale, fGlyphAspectRatio, iGlyphOffsetX, iGlyphOffsetY, iMetricsOffsetLeft, iMetricsOffsetRight, iMetricsOffsetTop, iMetricsOffsetBottom);
 			return !TryDetourAttach(&rawCreateFontIndirectW, newCreateFontIndirectW);
@@ -1115,6 +1173,8 @@
 		}
 
 		static pSelectObject rawSelectObject = SelectObject;
+		static pGetCurrentObject rawGetCurrentObject = GetCurrentObject;
+		static pDeleteObject rawDeleteObject = DeleteObject;
 
 		static bool ApplyOverrideToLogFontW(LOGFONTW& lf, bool applySizeScale)
 		{
@@ -1267,6 +1327,592 @@
 
 		static pGetObjectA rawGetObjectA = GetObjectA;
 		static pGetObjectW rawGetObjectW = GetObjectW;
+		static bool sg_selectObjectTrackedOnly = true;
+		static bool sg_enableVirtualGlyphIndex = true;
+		static bool sg_virtualGlyphIndexTrackedOnly = true;
+		static bool sg_enableFontDataPatch = true;
+		static bool sg_enableFontNameTablePatch = true;
+		static bool sg_enableFontCmapTablePatch = true;
+		static bool sg_enginePreferPinnedFontData = false;
+		static bool sg_engineFontDataCompatLog = false;
+		static thread_local int sg_selectObjectHookNesting = 0;
+
+		struct ReplacementFontInfo
+		{
+			HFONT originalFont = nullptr;
+			LOGFONTW sourceLogFont = {};
+			bool ownedByCache = true;
+		};
+
+		struct EnginePinnedFontDataSource
+		{
+			HDC hdc = nullptr;
+			HFONT originalFont = nullptr;
+			LOGFONTW sourceLogFont = {};
+			HFONT replacementFont = nullptr;
+		};
+
+		static SRWLOCK sg_replacementFontCacheLock = SRWLOCK_INIT;
+		static std::unordered_map<HFONT, HFONT> sg_replacementByOriginal;
+		static std::unordered_map<HFONT, ReplacementFontInfo> sg_replacementInfoByFont;
+		static SRWLOCK sg_enginePinnedFontDataLock = SRWLOCK_INIT;
+		static std::vector<EnginePinnedFontDataSource> sg_enginePinnedFontDataSources;
+
+		static void ClearReplacementFontCache()
+		{
+			AcquireSRWLockExclusive(&sg_enginePinnedFontDataLock);
+			sg_enginePinnedFontDataSources.clear();
+			ReleaseSRWLockExclusive(&sg_enginePinnedFontDataLock);
+
+			std::vector<HFONT> fontsToDelete;
+			AcquireSRWLockExclusive(&sg_replacementFontCacheLock);
+			fontsToDelete.reserve(sg_replacementInfoByFont.size());
+			for (const auto& entry : sg_replacementInfoByFont)
+			{
+				if (entry.second.ownedByCache)
+				{
+					fontsToDelete.push_back(entry.first);
+				}
+			}
+			sg_replacementByOriginal.clear();
+			sg_replacementInfoByFont.clear();
+			ReleaseSRWLockExclusive(&sg_replacementFontCacheLock);
+			for (HFONT hFont : fontsToDelete)
+			{
+				rawDeleteObject(hFont);
+			}
+		}
+
+		static bool TryGetCachedReplacementFont(HFONT originalFont, HFONT& replacementFont)
+		{
+			replacementFont = nullptr;
+			if (!originalFont)
+			{
+				return false;
+			}
+			AcquireSRWLockShared(&sg_replacementFontCacheLock);
+			auto it = sg_replacementByOriginal.find(originalFont);
+			if (it == sg_replacementByOriginal.end())
+			{
+				ReleaseSRWLockShared(&sg_replacementFontCacheLock);
+				return false;
+			}
+			replacementFont = it->second;
+			ReleaseSRWLockShared(&sg_replacementFontCacheLock);
+			return replacementFont != nullptr;
+		}
+
+		static bool TryGetReplacementInfo(HFONT hFont, ReplacementFontInfo& info)
+		{
+			if (!hFont)
+			{
+				return false;
+			}
+			AcquireSRWLockShared(&sg_replacementFontCacheLock);
+			auto it = sg_replacementInfoByFont.find(hFont);
+			if (it == sg_replacementInfoByFont.end())
+			{
+				ReleaseSRWLockShared(&sg_replacementFontCacheLock);
+				return false;
+			}
+			info = it->second;
+			ReleaseSRWLockShared(&sg_replacementFontCacheLock);
+			return true;
+		}
+
+		static void RegisterCreatedReplacementFont(HFONT createdFont, const LOGFONTW& sourceLogFont)
+		{
+			if (!createdFont)
+			{
+				return;
+			}
+			AcquireSRWLockExclusive(&sg_replacementFontCacheLock);
+			sg_replacementByOriginal[createdFont] = createdFont;
+			ReplacementFontInfo info = {};
+			info.originalFont = createdFont;
+			info.sourceLogFont = sourceLogFont;
+			info.ownedByCache = false;
+			sg_replacementInfoByFont[createdFont] = info;
+			ReleaseSRWLockExclusive(&sg_replacementFontCacheLock);
+		}
+
+		static HFONT ExposeLogicalFontObject(HFONT hFont)
+		{
+			ReplacementFontInfo info = {};
+			if (TryGetReplacementInfo(hFont, info) && info.originalFont)
+			{
+				return info.originalFont;
+			}
+			return hFont;
+		}
+
+		static bool SameEngineSourceLogFont(const LOGFONTW& a, const LOGFONTW& b)
+		{
+			LOGFONTW left = a;
+			LOGFONTW right = b;
+			left.lfFaceName[0] = L'\0';
+			right.lfFaceName[0] = L'\0';
+			return memcmp(&left, &right, sizeof(LOGFONTW)) == 0
+				&& _wcsicmp(a.lfFaceName, b.lfFaceName) == 0;
+		}
+
+		static HFONT GetOrCreateReplacementFont(HFONT originalFont, bool requireTrackedOriginal = false)
+		{
+			if (!originalFont)
+			{
+				return nullptr;
+			}
+			HFONT cachedReplacement = nullptr;
+			if (TryGetCachedReplacementFont(originalFont, cachedReplacement))
+			{
+				return cachedReplacement;
+			}
+			if (requireTrackedOriginal)
+			{
+				return nullptr;
+			}
+			if (!IsFontObjectHandle(originalFont))
+			{
+				return nullptr;
+			}
+
+			ReplacementFontInfo existingInfo = {};
+			if (TryGetReplacementInfo(originalFont, existingInfo))
+			{
+				return originalFont;
+			}
+
+			LOGFONTW lf = {};
+			if (rawGetObjectW(originalFont, sizeof(lf), &lf) == 0)
+			{
+				return nullptr;
+			}
+			const bool applySizeScale = !IsFontHandleMarkedScaled(originalFont);
+			LOGFONTW replacementLf = lf;
+			if (!ApplyOverrideToLogFontW(replacementLf, applySizeScale))
+			{
+				return nullptr;
+			}
+
+			HFONT replacementFont = rawCreateFontIndirectW(&replacementLf);
+			if (!replacementFont)
+			{
+				return nullptr;
+			}
+			if (applySizeScale && IsAnyFontSizeOverrideEnabled())
+			{
+				MarkFontHandleScaled(replacementFont);
+			}
+
+			AcquireSRWLockExclusive(&sg_replacementFontCacheLock);
+			auto raceIt = sg_replacementByOriginal.find(originalFont);
+			if (raceIt != sg_replacementByOriginal.end())
+			{
+				HFONT raced = raceIt->second;
+				ReleaseSRWLockExclusive(&sg_replacementFontCacheLock);
+				rawDeleteObject(replacementFont);
+				return raced;
+			}
+			sg_replacementByOriginal[originalFont] = replacementFont;
+			ReplacementFontInfo info = {};
+			info.originalFont = originalFont;
+			info.sourceLogFont = lf;
+			sg_replacementInfoByFont[replacementFont] = info;
+			ReleaseSRWLockExclusive(&sg_replacementFontCacheLock);
+			return replacementFont;
+		}
+
+		HGDIOBJ WINAPI newSelectObject_SehImpl(HDC hdc, HGDIOBJ h)
+		{
+			if (sg_selectObjectHookNesting > 0 || !hdc || !h)
+			{
+				return rawSelectObject(hdc, h);
+			}
+			DWORD type = 0;
+			if (!TryGetObjectType(h, type) || type != OBJ_FONT)
+			{
+				return rawSelectObject(hdc, h);
+			}
+			++sg_selectObjectHookNesting;
+			HFONT selectFont = GetOrCreateReplacementFont((HFONT)h, sg_selectObjectTrackedOnly);
+			HGDIOBJ selectedOld = rawSelectObject(hdc, selectFont ? (HGDIOBJ)selectFont : h);
+			if (sg_selectObjectHookNesting > 0)
+			{
+				--sg_selectObjectHookNesting;
+			}
+			if (!selectedOld || selectedOld == HGDI_ERROR)
+			{
+				return selectedOld;
+			}
+			return (HGDIOBJ)ExposeLogicalFontObject((HFONT)selectedOld);
+		}
+		HGDIOBJ WINAPI newSelectObject(HDC hdc, HGDIOBJ h)
+		{
+			LogFontHookHit(L"SelectObject");
+			__try { return newSelectObject_SehImpl(hdc, h); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawSelectObject(hdc, h); }
+		}
+
+		HGDIOBJ WINAPI newGetCurrentObject_SehImpl(HDC hdc, UINT type)
+		{
+			HGDIOBJ current = rawGetCurrentObject(hdc, type);
+			if (type == OBJ_FONT && current && current != HGDI_ERROR)
+			{
+				return (HGDIOBJ)ExposeLogicalFontObject((HFONT)current);
+			}
+			return current;
+		}
+		HGDIOBJ WINAPI newGetCurrentObject(HDC hdc, UINT type)
+		{
+			LogFontHookHit(L"GetCurrentObject");
+			__try { return newGetCurrentObject_SehImpl(hdc, type); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetCurrentObject(hdc, type); }
+		}
+
+		void SetFontSelectObjectTrackedOnly(bool trackedOnly)
+		{
+			sg_selectObjectTrackedOnly = trackedOnly;
+		}
+
+		void SetWideFontCreationOverrideEnabled(bool enabled)
+		{
+			sg_disableWideFontCreationOverride = !enabled;
+		}
+
+		void SetFontVirtualGlyphIndexOptions(bool enable, bool trackedOnly)
+		{
+			sg_enableVirtualGlyphIndex = enable;
+			sg_virtualGlyphIndexTrackedOnly = trackedOnly;
+		}
+
+		void SetFontDataPatchEnabled(bool enable)
+		{
+			sg_enableFontDataPatch = enable;
+		}
+
+		void SetFontTablePatchOptions(bool patchNameTable, bool patchCmapTable)
+		{
+			sg_enableFontNameTablePatch = patchNameTable;
+			sg_enableFontCmapTablePatch = patchCmapTable;
+		}
+
+		void SetFontEngineDataCompatOptions(bool preferPinnedFontData, bool enableLog)
+		{
+			sg_enginePreferPinnedFontData = preferPinnedFontData;
+			sg_engineFontDataCompatLog = enableLog;
+		}
+
+		static bool TryResolveEngineCurrentFontDataSource(HDC hdc, HFONT& originalFont, LOGFONTW& sourceLogFont)
+		{
+			originalFont = nullptr;
+			ZeroMemory(&sourceLogFont, sizeof(sourceLogFont));
+			if (!hdc)
+			{
+				return false;
+			}
+			HFONT currentFont = (HFONT)rawGetCurrentObject(hdc, OBJ_FONT);
+			if (!currentFont || currentFont == (HFONT)HGDI_ERROR)
+			{
+				return false;
+			}
+
+			ReplacementFontInfo info = {};
+			if (TryGetReplacementInfo(currentFont, info))
+			{
+				originalFont = info.originalFont ? info.originalFont : currentFont;
+				sourceLogFont = info.sourceLogFont;
+				return true;
+			}
+
+			if (rawGetObjectW(currentFont, sizeof(sourceLogFont), &sourceLogFont) == 0)
+			{
+				return false;
+			}
+			originalFont = currentFont;
+			return true;
+		}
+
+		static HFONT FindEnginePinnedFontDataSource(HDC hdc, HFONT originalFont, const LOGFONTW& sourceLogFont)
+		{
+			AcquireSRWLockShared(&sg_enginePinnedFontDataLock);
+			for (const EnginePinnedFontDataSource& item : sg_enginePinnedFontDataSources)
+			{
+				if (item.hdc == hdc && item.originalFont == originalFont && SameEngineSourceLogFont(item.sourceLogFont, sourceLogFont))
+				{
+					HFONT replacementFont = item.replacementFont;
+					ReleaseSRWLockShared(&sg_enginePinnedFontDataLock);
+					if (IsFontObjectHandle(replacementFont))
+					{
+						return replacementFont;
+					}
+					return nullptr;
+				}
+			}
+			ReleaseSRWLockShared(&sg_enginePinnedFontDataLock);
+			return nullptr;
+		}
+
+		static void RememberEnginePinnedFontDataSource(HDC hdc, HFONT originalFont, const LOGFONTW& sourceLogFont, HFONT replacementFont)
+		{
+			if (!hdc || !originalFont || !replacementFont)
+			{
+				return;
+			}
+			AcquireSRWLockExclusive(&sg_enginePinnedFontDataLock);
+			for (const EnginePinnedFontDataSource& item : sg_enginePinnedFontDataSources)
+			{
+				if (item.hdc == hdc && item.originalFont == originalFont && SameEngineSourceLogFont(item.sourceLogFont, sourceLogFont))
+				{
+					ReleaseSRWLockExclusive(&sg_enginePinnedFontDataLock);
+					return;
+				}
+			}
+			if (sg_enginePinnedFontDataSources.size() >= 64)
+			{
+				sg_enginePinnedFontDataSources.erase(sg_enginePinnedFontDataSources.begin());
+			}
+			EnginePinnedFontDataSource item = {};
+			item.hdc = hdc;
+			item.originalFont = originalFont;
+			item.sourceLogFont = sourceLogFont;
+			item.replacementFont = replacementFont;
+			sg_enginePinnedFontDataSources.push_back(item);
+			ReleaseSRWLockExclusive(&sg_enginePinnedFontDataLock);
+		}
+
+		static bool ShouldVirtualizeGlyphIndexForHdc(HDC hdc)
+		{
+			if (!sg_enableVirtualGlyphIndex || !hdc)
+			{
+				return false;
+			}
+			if (!sg_virtualGlyphIndexTrackedOnly)
+			{
+				return true;
+			}
+			HFONT currentFont = (HFONT)rawGetCurrentObject(hdc, OBJ_FONT);
+			if (!currentFont)
+			{
+				return false;
+			}
+			ReplacementFontInfo info = {};
+			HFONT cachedReplacement = nullptr;
+			return TryGetReplacementInfo(currentFont, info) || TryGetCachedReplacementFont(currentFont, cachedReplacement);
+		}
+
+		static WORD VirtualizeGlyphIndex(WORD glyphIndex)
+		{
+			if (glyphIndex == 0 || glyphIndex == 0xFFFF)
+			{
+				return glyphIndex;
+			}
+			return (WORD)(glyphIndex | 0x8000);
+		}
+
+		static WORD TranslateVirtualGlyphIndex(WORD glyphIndex)
+		{
+			if ((glyphIndex & 0x8000) == 0)
+			{
+				return glyphIndex;
+			}
+			return (WORD)(glyphIndex & 0x7FFF);
+		}
+
+		static void VirtualizeGlyphIndicesForHdc(HDC hdc, LPWORD glyphs, int count)
+		{
+			if (!glyphs || count <= 0 || !ShouldVirtualizeGlyphIndexForHdc(hdc))
+			{
+				return;
+			}
+			for (int i = 0; i < count; ++i)
+			{
+				glyphs[i] = VirtualizeGlyphIndex(glyphs[i]);
+			}
+		}
+
+		static void TranslateVirtualGlyphIndicesForHdc(HDC hdc, LPWORD glyphs, int count)
+		{
+			if (!glyphs || count <= 0 || !ShouldVirtualizeGlyphIndexForHdc(hdc))
+			{
+				return;
+			}
+			for (int i = 0; i < count; ++i)
+			{
+				glyphs[i] = TranslateVirtualGlyphIndex(glyphs[i]);
+			}
+		}
+
+		static WORD TranslateSingleVirtualGlyphIndexForHdc(HDC hdc, WORD glyphIndex)
+		{
+			if (!ShouldVirtualizeGlyphIndexForHdc(hdc))
+			{
+				return glyphIndex;
+			}
+			return TranslateVirtualGlyphIndex(glyphIndex);
+		}
+
+		static DWORD FontTableTag(char a, char b, char c, char d)
+		{
+			return ((DWORD)(BYTE)a) | ((DWORD)(BYTE)b << 8) | ((DWORD)(BYTE)c << 16) | ((DWORD)(BYTE)d << 24);
+		}
+
+		static DWORD ReadBigEndianDword(const BYTE* p)
+		{
+			return ((DWORD)p[0] << 24) | ((DWORD)p[1] << 16) | ((DWORD)p[2] << 8) | (DWORD)p[3];
+		}
+
+		static void WriteBigEndianDword(BYTE* p, DWORD value)
+		{
+			p[0] = (BYTE)((value >> 24) & 0xFF);
+			p[1] = (BYTE)((value >> 16) & 0xFF);
+			p[2] = (BYTE)((value >> 8) & 0xFF);
+			p[3] = (BYTE)(value & 0xFF);
+		}
+
+		static bool TryGetCodePageRangeBitsForCharset(BYTE charSet, DWORD& range1Bits, DWORD& range2Bits)
+		{
+			range1Bits = 0;
+			range2Bits = 0;
+			switch (charSet)
+			{
+			case SHIFTJIS_CHARSET:
+				range1Bits = (1u << 17); // JIS/Japan, code page 932
+				return true;
+			case GB2312_CHARSET:
+				range1Bits = (1u << 18); // Simplified Chinese, code page 936
+				return true;
+			case HANGEUL_CHARSET:
+			case JOHAB_CHARSET:
+				range1Bits = (1u << 19); // Korean Wansung/Johab
+				return true;
+			case CHINESEBIG5_CHARSET:
+				range1Bits = (1u << 20); // Traditional Chinese, code page 950
+				return true;
+			case GREEK_CHARSET:
+				range1Bits = (1u << 3);
+				return true;
+			case TURKISH_CHARSET:
+				range1Bits = (1u << 4);
+				return true;
+			case HEBREW_CHARSET:
+				range1Bits = (1u << 5);
+				return true;
+			case ARABIC_CHARSET:
+				range1Bits = (1u << 6);
+				return true;
+			case BALTIC_CHARSET:
+				range1Bits = (1u << 7);
+				return true;
+			case RUSSIAN_CHARSET:
+				range1Bits = (1u << 2);
+				return true;
+			case THAI_CHARSET:
+				range1Bits = (1u << 16);
+				return true;
+			case EASTEUROPE_CHARSET:
+				range1Bits = (1u << 1);
+				return true;
+			case OEM_CHARSET:
+				range1Bits = (1u << 30);
+				return true;
+			case SYMBOL_CHARSET:
+				range1Bits = (1u << 31);
+				return true;
+			default:
+				return false;
+			}
+		}
+
+		static BYTE ResolveCurrentHdcEffectiveCharSet(HDC hdc)
+		{
+			LOGFONTW currentLf = {};
+			if (TryGetCurrentHdcLogFontW(hdc, currentLf))
+			{
+				return ResolveOverrideCharSet(currentLf.lfCharSet);
+			}
+			return ResolveOverrideCharSet((BYTE)DEFAULT_CHARSET);
+		}
+
+		static void PatchFontSignatureCodePageBits(LPFONTSIGNATURE lpSig, BYTE effectiveCharSet)
+		{
+			if (!lpSig)
+			{
+				return;
+			}
+			DWORD cpRange1 = 0;
+			DWORD cpRange2 = 0;
+			if (!TryGetCodePageRangeBitsForCharset(effectiveCharSet, cpRange1, cpRange2))
+			{
+				return;
+			}
+			lpSig->fsCsb[0] |= cpRange1;
+			lpSig->fsCsb[1] |= cpRange2;
+		}
+
+		static void PatchWholeFontDataBuffer(PVOID pvBuffer, DWORD cjBuffer, DWORD bytesReturned, BYTE effectiveCharSet)
+		{
+			if (!sg_enableFontDataPatch || !pvBuffer || cjBuffer == 0 || bytesReturned == 0 || bytesReturned == GDI_ERROR || bytesReturned > cjBuffer)
+			{
+				return;
+			}
+			BYTE* fontData = (BYTE*)pvBuffer;
+			if (!FontPatcher::IsFontFile(fontData, bytesReturned) && !FontPatcher::IsFontCollection(fontData, bytesReturned))
+			{
+				return;
+			}
+			FontPatcher::PatchOS2CodePageRangeForCharset(fontData, bytesReturned, effectiveCharSet);
+			if (sg_enableFontNameTablePatch)
+			{
+				wchar_t forcedFaceName[LF_FACESIZE] = {};
+				if (TryGetForcedFontNameW(forcedFaceName))
+				{
+					std::vector<BYTE> patched(fontData, fontData + bytesReturned);
+					if (FontPatcher::PatchNameTableFamily(patched, forcedFaceName) && patched.size() <= cjBuffer)
+					{
+						memcpy(fontData, patched.data(), patched.size());
+					}
+				}
+			}
+			if (sg_enableFontCmapTablePatch)
+			{
+				// Reserved for future CnJp map alias export. Kept behind an independent off-by-default switch.
+			}
+		}
+
+		static void PatchOs2FontDataBuffer(DWORD dwOffset, PVOID pvBuffer, DWORD cjBuffer, DWORD bytesReturned, BYTE effectiveCharSet)
+		{
+			if (!sg_enableFontDataPatch || !pvBuffer || cjBuffer == 0 || bytesReturned == 0 || bytesReturned == GDI_ERROR)
+			{
+				return;
+			}
+			DWORD cpRange1 = 0;
+			DWORD cpRange2 = 0;
+			if (!TryGetCodePageRangeBitsForCharset(effectiveCharSet, cpRange1, cpRange2))
+			{
+				return;
+			}
+
+			BYTE* buffer = (BYTE*)pvBuffer;
+			DWORD available = bytesReturned < cjBuffer ? bytesReturned : cjBuffer;
+			auto patchDwordAtTableOffset = [&](DWORD fieldOffset, DWORD orBits)
+			{
+				if (orBits == 0 || fieldOffset < dwOffset)
+				{
+					return;
+				}
+				DWORD localOffset = fieldOffset - dwOffset;
+				if (localOffset > available || available - localOffset < sizeof(DWORD))
+				{
+					return;
+				}
+				BYTE* p = buffer + localOffset;
+				DWORD value = ReadBigEndianDword(p);
+				WriteBigEndianDword(p, value | orBits);
+			};
+
+			patchDwordAtTableOffset(78, cpRange1); // OS/2 ulCodePageRange1
+			patchDwordAtTableOffset(82, cpRange2); // OS/2 ulCodePageRange2
+		}
 
 		static HFONT ReplaceHdcFont(HDC hdc, HFONT* pOldFont)
 		{
@@ -1279,35 +1925,16 @@
 				return nullptr;
 			}
 			HdcFontReplacementScope replacementScope;
-			HFONT hCurFont = (HFONT)GetCurrentObject(hdc, OBJ_FONT);
-			if (!hCurFont)
-			{
-				return nullptr;
-			}
-			LOGFONTW lf = {};
-			if (rawGetObjectW(hCurFont, sizeof(lf), &lf) == 0)
-			{
-				return nullptr;
-			}
-			bool applySizeScale = !IsFontHandleMarkedScaled(hCurFont);
-			if (!ApplyOverrideToLogFontW(lf, applySizeScale))
-			{
-				return nullptr;
-			}
-			HFONT hNewFont = rawCreateFontIndirectW(&lf);
-			if (!hNewFont)
+			HFONT hCurFont = (HFONT)rawGetCurrentObject(hdc, OBJ_FONT);
+			HFONT hNewFont = GetOrCreateReplacementFont(hCurFont);
+			if (!hNewFont || hNewFont == hCurFont)
 			{
 				return nullptr;
 			}
 			HGDIOBJ oldObject = rawSelectObject(hdc, hNewFont);
 			if (!oldObject || oldObject == HGDI_ERROR)
 			{
-				DeleteObject(hNewFont);
 				return nullptr;
-			}
-			if (applySizeScale && IsAnyFontSizeOverrideEnabled())
-			{
-				MarkFontHandleScaled(hNewFont);
 			}
 			if (pOldFont)
 			{
@@ -1327,7 +1954,6 @@
 			{
 				rawSelectObject(hdc, hOldFont);
 			}
-			DeleteObject(hNewFont);
 			if (sg_hdcFontReplacementNesting > 0)
 			{
 				--sg_hdcFontReplacementNesting;
@@ -1340,7 +1966,7 @@
 			{
 				return false;
 			}
-			HFONT hCurFont = (HFONT)GetCurrentObject(hdc, OBJ_FONT);
+			HFONT hCurFont = (HFONT)rawGetCurrentObject(hdc, OBJ_FONT);
 			if (!hCurFont)
 			{
 				return false;
@@ -1349,6 +1975,8 @@
 		}
 		static pGetTextFaceA rawGetTextFaceA = GetTextFaceA;
 		static pGetTextFaceW rawGetTextFaceW = GetTextFaceW;
+		static pGetTextCharset rawGetTextCharset = GetTextCharset;
+		static pGetTextCharsetInfo rawGetTextCharsetInfo = GetTextCharsetInfo;
 		static pGetTextMetricsA rawGetTextMetricsA = GetTextMetricsA;
 		static pGetTextMetricsW rawGetTextMetricsW = GetTextMetricsW;
 		static bool IsSafeChooseFontResultA(const LOGFONTA* logFont)
@@ -1633,6 +2261,52 @@
 			LogFontHookHit(L"GetTextFaceW");
 			__try { return newGetTextFaceW_SehImpl(hdc, c, lpName); }
 			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetTextFaceW(hdc, c, lpName); }
+		}
+
+		int WINAPI newGetTextCharset_SehImpl(HDC hdc)
+		{
+			int ret = rawGetTextCharset(hdc);
+			if (ret < 0 || ret > 0xFF)
+			{
+				LOGFONTW currentLf = {};
+				if (TryGetCurrentHdcLogFontW(hdc, currentLf))
+				{
+					return (int)ResolveOverrideCharSet(currentLf.lfCharSet);
+				}
+				return ret;
+			}
+			return (int)ResolveOverrideCharSet((DWORD)ret);
+		}
+		int WINAPI newGetTextCharset(HDC hdc)
+		{
+			LogFontHookHit(L"GetTextCharset");
+			__try { return newGetTextCharset_SehImpl(hdc); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetTextCharset(hdc); }
+		}
+
+		int WINAPI newGetTextCharsetInfo_SehImpl(HDC hdc, LPFONTSIGNATURE lpSig, DWORD dwFlags)
+		{
+			int ret = rawGetTextCharsetInfo(hdc, lpSig, dwFlags);
+			if (ret < 0 || ret > 0xFF)
+			{
+				LOGFONTW currentLf = {};
+				if (TryGetCurrentHdcLogFontW(hdc, currentLf))
+				{
+					BYTE resolvedCharSet = ResolveOverrideCharSet(currentLf.lfCharSet);
+					PatchFontSignatureCodePageBits(lpSig, resolvedCharSet);
+					return (int)resolvedCharSet;
+				}
+				return ret;
+			}
+			BYTE resolvedCharSet = ResolveOverrideCharSet((BYTE)ret);
+			PatchFontSignatureCodePageBits(lpSig, resolvedCharSet);
+			return (int)resolvedCharSet;
+		}
+		int WINAPI newGetTextCharsetInfo(HDC hdc, LPFONTSIGNATURE lpSig, DWORD dwFlags)
+		{
+			LogFontHookHit(L"GetTextCharsetInfo");
+			__try { return newGetTextCharsetInfo_SehImpl(hdc, lpSig, dwFlags); }
+			__except(EXCEPTION_EXECUTE_HANDLER) { return rawGetTextCharsetInfo(hdc, lpSig, dwFlags); }
 		}
 
 
@@ -2344,7 +3018,20 @@
 {
 			HFONT hOld = nullptr;
 			HFONT hNew = ReplaceHdcFont(hdc, &hOld);
-			BOOL ret = rawGetCharWidthI(hdc, giFirst, cgi, pgi, piWidths);
+			std::vector<WORD> translatedGlyphs;
+			LPWORD useGlyphs = pgi;
+			UINT useFirst = giFirst;
+			if (pgi && cgi > 0 && ShouldVirtualizeGlyphIndexForHdc(hdc))
+			{
+				translatedGlyphs.assign(pgi, pgi + cgi);
+				TranslateVirtualGlyphIndicesForHdc(hdc, translatedGlyphs.data(), (int)translatedGlyphs.size());
+				useGlyphs = translatedGlyphs.data();
+			}
+			else if (!pgi && cgi > 0)
+			{
+				useFirst = TranslateSingleVirtualGlyphIndexForHdc(hdc, (WORD)giFirst);
+			}
+			BOOL ret = rawGetCharWidthI(hdc, useFirst, cgi, useGlyphs, piWidths);
 			RestoreHdcFont(hdc, hOld, hNew);
 			if (ret && piWidths != nullptr && cgi > 0
 				&& (sg_fFontSpacingScale != 1.0f || sg_iMetricsOffsetLeft != 0 || sg_iMetricsOffsetRight != 0))
@@ -2360,6 +3047,7 @@
 			}
 			return ret;
 		}
+
 		BOOL WINAPI newGetCharWidthI(HDC hdc, UINT giFirst, UINT cgi, LPWORD pgi, LPINT piWidths)
 		{
 			LogFontHookHit(L"GetCharWidthI");
@@ -2372,10 +3060,38 @@
 {
 			HFONT hOld = nullptr;
 			HFONT hNew = ReplaceHdcFont(hdc, &hOld);
-			BOOL ret = rawGetCharABCWidthsI(hdc, giFirst, cgi, pgi, lpabc);
+			std::vector<WORD> translatedGlyphs;
+			LPWORD useGlyphs = pgi;
+			UINT useFirst = giFirst;
+			if (pgi && cgi > 0 && ShouldVirtualizeGlyphIndexForHdc(hdc))
+			{
+				translatedGlyphs.assign(pgi, pgi + cgi);
+				TranslateVirtualGlyphIndicesForHdc(hdc, translatedGlyphs.data(), (int)translatedGlyphs.size());
+				useGlyphs = translatedGlyphs.data();
+			}
+			else if (!pgi && cgi > 0)
+			{
+				useFirst = TranslateSingleVirtualGlyphIndexForHdc(hdc, (WORD)giFirst);
+			}
+			BOOL ret = rawGetCharABCWidthsI(hdc, useFirst, cgi, useGlyphs, lpabc);
 			RestoreHdcFont(hdc, hOld, hNew);
+			if (ret && lpabc != nullptr && cgi > 0
+				&& (sg_fFontSpacingScale != 1.0f || sg_iGlyphOffsetX != 0 || sg_iMetricsOffsetLeft != 0 || sg_iMetricsOffsetRight != 0))
+			{
+				for (UINT i = 0; i < cgi; ++i)
+				{
+					if (sg_fFontSpacingScale != 1.0f)
+					{
+						lpabc[i].abcA = (int)(lpabc[i].abcA * sg_fFontSpacingScale);
+						lpabc[i].abcB = (UINT)(lpabc[i].abcB * sg_fFontSpacingScale);
+						lpabc[i].abcC = (int)(lpabc[i].abcC * sg_fFontSpacingScale);
+					}
+					ApplyGlyphOffsetToABCArr(&lpabc[i]);
+				}
+			}
 			return ret;
 		}
+
 		BOOL WINAPI newGetCharABCWidthsI(HDC hdc, UINT giFirst, UINT cgi, LPWORD pgi, LPABC lpabc)
 		{
 			LogFontHookHit(L"GetCharABCWidthsI");
@@ -2388,10 +3104,19 @@
 {
 			HFONT hOld = nullptr;
 			HFONT hNew = ReplaceHdcFont(hdc, &hOld);
-			BOOL ret = rawGetTextExtentPointI(hdc, pgiIn, cgi, pSize);
+			std::vector<WORD> translatedGlyphs;
+			LPWORD useGlyphs = pgiIn;
+			if (pgiIn && cgi > 0 && ShouldVirtualizeGlyphIndexForHdc(hdc))
+			{
+				translatedGlyphs.assign(pgiIn, pgiIn + cgi);
+				TranslateVirtualGlyphIndicesForHdc(hdc, translatedGlyphs.data(), (int)translatedGlyphs.size());
+				useGlyphs = translatedGlyphs.data();
+			}
+			BOOL ret = rawGetTextExtentPointI(hdc, useGlyphs, cgi, pSize);
 			RestoreHdcFont(hdc, hOld, hNew);
 			return ret;
 		}
+
 		BOOL WINAPI newGetTextExtentPointI(HDC hdc, LPWORD pgiIn, int cgi, LPSIZE pSize)
 		{
 			LogFontHookHit(L"GetTextExtentPointI");
@@ -2404,10 +3129,19 @@
 {
 			HFONT hOld = nullptr;
 			HFONT hNew = ReplaceHdcFont(hdc, &hOld);
-			BOOL ret = rawGetTextExtentExPointI(hdc, lpwszString, cwchString, nMaxExtent, lpnFit, lpnDx, lpSize);
+			std::vector<WORD> translatedGlyphs;
+			LPWORD useGlyphs = lpwszString;
+			if (lpwszString && cwchString > 0 && ShouldVirtualizeGlyphIndexForHdc(hdc))
+			{
+				translatedGlyphs.assign(lpwszString, lpwszString + cwchString);
+				TranslateVirtualGlyphIndicesForHdc(hdc, translatedGlyphs.data(), (int)translatedGlyphs.size());
+				useGlyphs = translatedGlyphs.data();
+			}
+			BOOL ret = rawGetTextExtentExPointI(hdc, useGlyphs, cwchString, nMaxExtent, lpnFit, lpnDx, lpSize);
 			RestoreHdcFont(hdc, hOld, hNew);
 			return ret;
 		}
+
 		BOOL WINAPI newGetTextExtentExPointI(HDC hdc, LPWORD lpwszString, int cwchString, int nMaxExtent, LPINT lpnFit, LPINT lpnDx, LPSIZE lpSize)
 		{
 			LogFontHookHit(L"GetTextExtentExPointI");
@@ -2418,10 +3152,48 @@
 
 		DWORD WINAPI newGetFontData_SehImpl(HDC hdc, DWORD dwTable, DWORD dwOffset, PVOID pvBuffer, DWORD cjBuffer)
 {
+			BYTE effectiveCharSet = ResolveCurrentHdcEffectiveCharSet(hdc);
 			HFONT hOld = nullptr;
 			HFONT hNew = ReplaceHdcFont(hdc, &hOld);
+			if (!hNew && sg_enginePreferPinnedFontData && hdc && IsHdcObjectHandle(hdc))
+			{
+				HFONT hCurFont = (HFONT)rawGetCurrentObject(hdc, OBJ_FONT);
+				hNew = GetOrCreateReplacementFont(hCurFont, false);
+				if (hNew && hNew != hCurFont)
+				{
+					HGDIOBJ oldObject = rawSelectObject(hdc, hNew);
+					if (oldObject && oldObject != HGDI_ERROR)
+					{
+						hOld = (HFONT)oldObject;
+						++sg_hdcFontReplacementNesting;
+						if (sg_engineFontDataCompatLog)
+						{
+							LogMessage(LogLevel::Info, L"[EngineFontData] pinned replacement source for GetFontData");
+						}
+					}
+					else
+					{
+						hNew = nullptr;
+					}
+				}
+				else
+				{
+					hNew = nullptr;
+				}
+			}
 			DWORD ret = rawGetFontData(hdc, dwTable, dwOffset, pvBuffer, cjBuffer);
 			RestoreHdcFont(hdc, hOld, hNew);
+			if (ret != GDI_ERROR)
+			{
+				if (dwTable == 0 && dwOffset == 0)
+				{
+					PatchWholeFontDataBuffer(pvBuffer, cjBuffer, ret, effectiveCharSet);
+				}
+				else if (dwTable == FontTableTag('O', 'S', '/', '2'))
+				{
+					PatchOs2FontDataBuffer(dwOffset, pvBuffer, cjBuffer, ret, effectiveCharSet);
+				}
+			}
 			return ret;
 		}
 		DWORD WINAPI newGetFontData(HDC hdc, DWORD dwTable, DWORD dwOffset, PVOID pvBuffer, DWORD cjBuffer)
@@ -3495,6 +4267,16 @@
 			return !TryDetourAttach(&rawCreateFontIndirectExW, newCreateFontIndirectExW);
 		}
 
+		bool HookSelectObject()
+		{
+			return !TryDetourAttach(&rawSelectObject, newSelectObject);
+		}
+
+		bool HookGetCurrentObject()
+		{
+			return !TryDetourAttach(&rawGetCurrentObject, newGetCurrentObject);
+		}
+
 		bool HookGetObjectA()
 		{
 			return !TryDetourAttach(&rawGetObjectA, newGetObjectA);
@@ -3513,6 +4295,16 @@
 		bool HookGetTextFaceW()
 		{
 			return !TryDetourAttach(&rawGetTextFaceW, newGetTextFaceW);
+		}
+
+		bool HookGetTextCharset()
+		{
+			return !TryDetourAttach(&rawGetTextCharset, newGetTextCharset);
+		}
+
+		bool HookGetTextCharsetInfo()
+		{
+			return !TryDetourAttach(&rawGetTextCharsetInfo, newGetTextCharsetInfo);
 		}
 
 		bool HookGetTextMetricsA()

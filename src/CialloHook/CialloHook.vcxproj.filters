@@ -10,6 +10,9 @@
     <Filter Include="hooks">
       <UniqueIdentifier>{5FB9C90B-5F3F-42D9-B86A-F4DCE54C2032}</UniqueIdentifier>
     </Filter>
+    <Filter Include="hooks\font_engines">
+      <UniqueIdentifier>{31A172E3-04A5-4564-932E-4E465C4F0E8D}</UniqueIdentifier>
+    </Filter>
     <Filter Include="entry">
       <UniqueIdentifier>{E7866E44-9A80-4CFD-8A1A-D1A4A8D3C05A}</UniqueIdentifier>
     </Filter>
@@ -26,6 +29,42 @@
     </ClCompile>
     <ClCompile Include="hooks\binary_patch_1337.cpp">
       <Filter>hooks</Filter>
+    </ClCompile>
+    <ClCompile Include="hooks\font_engines\engine_compat.cpp">
+      <Filter>hooks\font_engines</Filter>
+    </ClCompile>
+    <ClCompile Include="hooks\font_engines\engine_compat_artemis.cpp">
+      <Filter>hooks\font_engines</Filter>
+    </ClCompile>
+    <ClCompile Include="hooks\font_engines\engine_compat_artemis_legacy.cpp">
+      <Filter>hooks\font_engines</Filter>
+    </ClCompile>
+    <ClCompile Include="hooks\font_engines\engine_compat_detect.cpp">
+      <Filter>hooks\font_engines</Filter>
+    </ClCompile>
+    <ClCompile Include="hooks\font_engines\engine_compat_dxlib.cpp">
+      <Filter>hooks\font_engines</Filter>
+    </ClCompile>
+    <ClCompile Include="hooks\font_engines\engine_compat_escude.cpp">
+      <Filter>hooks\font_engines</Filter>
+    </ClCompile>
+    <ClCompile Include="hooks\font_engines\engine_compat_file.cpp">
+      <Filter>hooks\font_engines</Filter>
+    </ClCompile>
+    <ClCompile Include="hooks\font_engines\engine_compat_krkr.cpp">
+      <Filter>hooks\font_engines</Filter>
+    </ClCompile>
+    <ClCompile Include="hooks\font_engines\engine_compat_majiro.cpp">
+      <Filter>hooks\font_engines</Filter>
+    </ClCompile>
+    <ClCompile Include="hooks\font_engines\engine_compat_mirai.cpp">
+      <Filter>hooks\font_engines</Filter>
+    </ClCompile>
+    <ClCompile Include="hooks\font_engines\engine_compat_softpal.cpp">
+      <Filter>hooks\font_engines</Filter>
+    </ClCompile>
+    <ClCompile Include="hooks\font_engines\font_hook_policy.cpp">
+      <Filter>hooks\font_engines</Filter>
     </ClCompile>
     <ClCompile Include="hooks\hook_modules.cpp">
       <Filter>hooks</Filter>
@@ -61,6 +100,15 @@
     </ClInclude>
     <ClInclude Include="hooks\binary_patch_1337.h">
       <Filter>hooks</Filter>
+    </ClInclude>
+    <ClInclude Include="hooks\font_engines\engine_compat.h">
+      <Filter>hooks\font_engines</Filter>
+    </ClInclude>
+    <ClInclude Include="hooks\font_engines\engine_compat_file.h">
+      <Filter>hooks\font_engines</Filter>
+    </ClInclude>
+    <ClInclude Include="hooks\font_engines\font_hook_policy.h">
+      <Filter>hooks\font_engines</Filter>
     </ClInclude>
     <ClInclude Include="hooks\hook_modules.h">
       <Filter>hooks</Filter>

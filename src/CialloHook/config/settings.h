@@ -27,16 +27,31 @@ namespace CialloHook
 		bool enableUIFontHook = true;
 		bool hookCreateFontA = true;
 		bool hookCreateFontIndirectA = true;
-		bool hookCreateFontW = false;
-		bool hookCreateFontIndirectW = false;
+		bool hookCreateFontW = true;
+		bool hookCreateFontIndirectW = true;
+		bool fontEngineCompatMode = true;
+		bool fontRiskAutoDowngrade = true;
+		bool fontRiskPolicyVerboseLog = false;
+		bool compatSkipWideFontCreationOnSensitiveEngine = true;
+		bool compatSelectObjectTrackedOnly = true;
+		std::wstring fontEngineProfile = L"auto";
 		bool hookEnumFontFamiliesExA = true;
 		bool hookEnumFontFamiliesExW = false;
 		bool hookCreateFontIndirectExA = true;
 		bool hookCreateFontIndirectExW = true;
+		bool hookSelectObject = true;
+		bool hookGetCurrentObject = true;
+		bool enableVirtualGlyphIndex = true;
+		bool virtualGlyphIndexForTrackedFontsOnly = true;
+		bool enableFontDataPatch = true;
+		bool enableFontNameTablePatch = true;
+		bool enableFontCmapTablePatch = true;
 		bool hookGetObjectA = true;
 		bool hookGetObjectW = true;
 		bool hookGetTextFaceA = true;
 		bool hookGetTextFaceW = true;
+		bool hookGetTextCharset = true;
+		bool hookGetTextCharsetInfo = true;
 		bool hookGetTextMetricsA = true;
 		bool hookGetTextMetricsW = true;
 		bool hookGetCharABCWidthsA = true;
@@ -337,6 +352,28 @@ namespace CialloHook
 		bool waffleFixGetTextCrash = true;
 	};
 
+	struct EngineCompatSettings
+	{
+		bool enable = true;
+		std::wstring mode = L"auto";
+		std::wstring forceEngine = L"auto";
+		bool enableLog = false;
+		bool enableTinkerBell = true;
+		bool enableCyberworks = true;
+		bool enableAdvHD = true;
+		bool enableDxLibFontCache = true;
+		bool enableMedFontCache = true;
+		bool enableMajiroFontCache = true;
+		bool enableSoftpalFont = true;
+		bool enableMiraiFontData = true;
+		bool enableArtemisFont = true;
+		bool enableKrkrFont = true;
+		bool enableEscudeFontConfig = true;
+		bool artemisAggressiveCacheScan = true;
+		bool krkrMapPrerenderedFontPatch = true;
+		bool softpalPalDllShim = true;
+	};
+
 	struct BinaryPatchSettings
 	{
 		bool enable = false;
@@ -390,6 +427,7 @@ namespace CialloHook
 		RioShiinaSettings rioShiina;
 		EngineCacheSettings engineCache;
 		EnginePatchSettings enginePatches;
+		EngineCompatSettings engineCompat;
 		BinaryPatchSettings binaryPatch;
 	};
 }

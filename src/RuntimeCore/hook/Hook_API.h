@@ -46,10 +46,20 @@ namespace Rut
 		bool HookEnumFontFamiliesExW(bool unlockSelection);
 		bool HookCreateFontIndirectExA();
 		bool HookCreateFontIndirectExW();
+		void SetFontSelectObjectTrackedOnly(bool trackedOnly);
+		void SetWideFontCreationOverrideEnabled(bool enabled);
+		void SetFontVirtualGlyphIndexOptions(bool enable, bool trackedOnly);
+		void SetFontDataPatchEnabled(bool enable);
+		void SetFontTablePatchOptions(bool patchNameTable, bool patchCmapTable);
+		void SetFontEngineDataCompatOptions(bool preferPinnedFontData, bool enableLog);
+		bool HookSelectObject();
+		bool HookGetCurrentObject();
 		bool HookGetObjectA();
 		bool HookGetObjectW();
 		bool HookGetTextFaceA();
 		bool HookGetTextFaceW();
+		bool HookGetTextCharset();
+		bool HookGetTextCharsetInfo();
 		bool HookGetTextMetricsA();
 		bool HookGetTextMetricsW();
 		bool HookGetCharABCWidthsA();
@@ -88,7 +98,7 @@ namespace Rut
 		bool HookGetFontLanguageInfo();
 		bool HookGetFontUnicodeRanges();
 		bool HookDWriteCreateFactory();
-			bool HookD2D1CreateFactory();
+		bool HookD2D1CreateFactory();
 		bool HookGdipCreateFontFamilyFromName();
 		bool HookGdipCreateFontFromLogfontW();
 		bool HookGdipCreateFontFromLogfontA();
@@ -144,32 +154,32 @@ namespace Rut
 		bool HookGetGlyphIndicesW();
 		bool HookGetGlyphOutlineA();
 		bool HookGetGlyphOutlineW();
-			bool HookMessageBoxA();
-			bool HookSetDlgItemTextA();
-			bool HookSendDlgItemMessageA();
-			bool HookSendDlgItemMessageW();
-			bool HookSendMessageA();
-			bool HookSendMessageW();
-			bool HookAppendMenuA();
-			bool HookModifyMenuA();
-			bool HookInsertMenuA();
-			bool HookInsertMenuItemA();
-			bool HookSetMenuItemInfoA();
-			bool HookMessageBoxIndirectA();
-			bool HookDrawThemeText();
-			bool HookDrawThemeTextEx();
-			bool HookDefWindowProcA();
-			bool HookDefWindowProcW();
-			bool HookDialogBoxParamA();
-			bool HookDialogBoxParamW();
-			bool HookCreateDialogParamA();
-			bool HookCreateDialogParamW();
-			bool HookDialogBoxIndirectParamA();
-			bool HookDialogBoxIndirectParamW();
-			bool HookCreateDialogIndirectParamA();
-			bool HookCreateDialogIndirectParamW();
-			bool HookPropertySheetA();
-			bool HookExitProcessGuard();
+		bool HookMessageBoxA();
+		bool HookSetDlgItemTextA();
+		bool HookSendDlgItemMessageA();
+		bool HookSendDlgItemMessageW();
+		bool HookSendMessageA();
+		bool HookSendMessageW();
+		bool HookAppendMenuA();
+		bool HookModifyMenuA();
+		bool HookInsertMenuA();
+		bool HookInsertMenuItemA();
+		bool HookSetMenuItemInfoA();
+		bool HookMessageBoxIndirectA();
+		bool HookDrawThemeText();
+		bool HookDrawThemeTextEx();
+		bool HookDefWindowProcA();
+		bool HookDefWindowProcW();
+		bool HookDialogBoxParamA();
+		bool HookDialogBoxParamW();
+		bool HookCreateDialogParamA();
+		bool HookCreateDialogParamW();
+		bool HookDialogBoxIndirectParamA();
+		bool HookDialogBoxIndirectParamW();
+		bool HookCreateDialogIndirectParamA();
+		bool HookCreateDialogIndirectParamW();
+		bool HookPropertySheetA();
+		bool HookExitProcessGuard();
 
 		// 窗口标题替换功能
 		void AddWindowTitleRule(const wchar_t* originalTitle, const wchar_t* newTitle);
@@ -193,10 +203,10 @@ namespace Rut
 		// 代码页转换功能
 		void SetCodePageMapping(uint32_t fromCodePage, uint32_t toCodePage);
 		bool HookMultiByteToWideChar();
-			bool HookWideCharToMultiByte();
-			bool HookCodePageAPIs();
-			void SetLocaleEmulatorLanguage(uint32_t localeID);
-			bool HookUILanguageAPIs();
+		bool HookWideCharToMultiByte();
+		bool HookCodePageAPIs();
+		void SetLocaleEmulatorLanguage(uint32_t localeID);
+		bool HookUILanguageAPIs();
 
 		// 文件热补丁功能
 		void SetPatchFolder(const wchar_t* folderPath, bool enableLog = false);
@@ -204,8 +214,18 @@ namespace Rut
 		void SetSpoofRules(const wchar_t* const* filePaths, size_t fileCount, const wchar_t* const* directoryPaths, size_t directoryCount, bool enableLog = false);
 		void SetDirectoryRedirectRules(const wchar_t* const* sourceDirectories, const wchar_t* const* targetDirectories, size_t ruleCount, bool enableLog = false);
 		void SetSyntheticFilePrefixSizeRule(const wchar_t* pathPrefix, uint64_t logicalSize, bool enableLog = false);
-			void ClearSyntheticFileRules();
-			bool LoadVirtualRegistryFile(const wchar_t* regFilePath, bool enableLog = false);
+		void ClearSyntheticFileRules();
+		void ClearEngineFileCompatRules();
+		void AddEngineHideFileRule(const wchar_t* pathOrGlob, bool readOnlyOnly, bool affectAttributes, bool affectFind);
+		void AddEngineDxLibFontCacheRule(const wchar_t* replacementFaceName);
+		void AddEngineMajiroFontCacheRule();
+		void AddEngineKrkrTftCacheRule();
+		void AddEngineVirtualFileRule(const wchar_t* virtualPathOrGlob, const wchar_t* sourceFilePath, bool affectAttributes, bool affectFind);
+		void AddEnginePatchedTextFileRule(const wchar_t* pathOrGlob, const wchar_t* replacementFontPath, const wchar_t* replacementFaceName, bool affectAttributes, bool affectFind);
+		void AddEngineMemoryFileRule(const wchar_t* pathOrGlob, const uint8_t* data, size_t dataSize, bool affectAttributes, bool affectFind);
+		void SetEngineWindowsFontsRedirectFile(const wchar_t* sourceFilePath);
+		void SetEngineFileCompatLogEnabled(bool enableLog);
+		bool LoadVirtualRegistryFile(const wchar_t* regFilePath, bool enableLog = false);
 		bool LoadVirtualRegistryFiles(const wchar_t* const* regFilePaths, size_t count, bool enableLog = false);
 		void SetCustomPakVFS(bool enable, const wchar_t* const* pakPaths, size_t pakCount, bool enableLog = false);
 		void SetCustomPakReadMode(int mode);
@@ -214,6 +234,6 @@ namespace Rut
 		bool HookFileAPIs();
 		bool UnhookFileAPIs();
 		bool HookRegistryAPIs();
-			bool UnhookRegistryAPIs();
+		bool UnhookRegistryAPIs();
 	}
 }

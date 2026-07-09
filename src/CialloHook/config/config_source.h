@@ -128,6 +128,14 @@ namespace CialloHook
 		// UI 字体 Hook：控制 DWrite / D2D / GDI+ / ChooseFont / late-load 等 UI/现代字体链路；关闭后保留普通 GDI 字体 Hook。
 		settings.font.enableUIFontHook = true;
 
+		// 字体 Hook 风险与引擎兼容策略：默认允许高命中率 API，由策略层按引擎特征自动降级。
+		settings.font.fontEngineCompatMode = true;
+		settings.font.fontRiskAutoDowngrade = true;
+		settings.font.fontRiskPolicyVerboseLog = false;
+		settings.font.compatSkipWideFontCreationOnSensitiveEngine = true;
+		settings.font.compatSelectObjectTrackedOnly = true;
+		settings.font.fontEngineProfile = L"auto";
+
 		// ---------- API Hook 分组开关 ----------
 		// HookGroupCreate/Enumerate/Metrics/Resource/Modern/LateLoad 均与 CialloHook.ini 默认一致为 true。
 		const bool hookGroupCreate = true;
@@ -146,15 +154,24 @@ namespace CialloHook
 		settings.font.hookGdipCreateFontFamilyFromName = true;
 		settings.font.hookGdipCreateFontFromLogfontW = true;
 		settings.font.hookGdipMeasureDriverString = true;
-		// W/IW 不稳定，没 hook 上字体的时候再自行决定开启。
-		settings.font.hookCreateFontW = false;
-		settings.font.hookCreateFontIndirectW = false;
+		// W/IW 默认允许开启；FontEngineCompatMode 可按敏感引擎自动降级。
+		settings.font.hookCreateFontW = true;
+		settings.font.hookCreateFontIndirectW = true;
 		settings.font.hookCreateFontIndirectExA = hookGroupCreate;
 		settings.font.hookCreateFontIndirectExW = hookGroupCreate;
+		settings.font.hookSelectObject = hookGroupMetrics;
+		settings.font.hookGetCurrentObject = hookGroupMetrics;
+		settings.font.enableVirtualGlyphIndex = true;
+		settings.font.virtualGlyphIndexForTrackedFontsOnly = true;
+		settings.font.enableFontDataPatch = true;
+		settings.font.enableFontNameTablePatch = true;
+		settings.font.enableFontCmapTablePatch = true;
 		settings.font.hookGetObjectA = hookGroupMetrics;
 		settings.font.hookGetObjectW = hookGroupMetrics;
 		settings.font.hookGetTextFaceA = hookGroupMetrics;
 		settings.font.hookGetTextFaceW = hookGroupMetrics;
+		settings.font.hookGetTextCharset = hookGroupMetrics;
+		settings.font.hookGetTextCharsetInfo = hookGroupMetrics;
 		settings.font.hookGetTextMetricsA = hookGroupMetrics;
 		settings.font.hookGetTextMetricsW = hookGroupMetrics;
 		settings.font.hookGetCharABCWidthsA = hookGroupMetrics;
@@ -385,6 +402,26 @@ namespace CialloHook
 		settings.engineCache.majiro = false;
 		settings.enginePatches.enableWafflePatch = false;
 		settings.enginePatches.waffleFixGetTextCrash = true;
+
+		// ======================== [EngineCompat] 引擎兼容层 ========================
+		settings.engineCompat.enable = true;
+		settings.engineCompat.mode = L"auto";
+		settings.engineCompat.forceEngine = L"auto";
+		settings.engineCompat.enableLog = false;
+		settings.engineCompat.enableTinkerBell = true;
+		settings.engineCompat.enableCyberworks = true;
+		settings.engineCompat.enableAdvHD = true;
+		settings.engineCompat.enableDxLibFontCache = true;
+		settings.engineCompat.enableMedFontCache = true;
+		settings.engineCompat.enableMajiroFontCache = true;
+		settings.engineCompat.enableSoftpalFont = true;
+		settings.engineCompat.enableMiraiFontData = true;
+		settings.engineCompat.enableArtemisFont = true;
+		settings.engineCompat.enableKrkrFont = true;
+		settings.engineCompat.enableEscudeFontConfig = true;
+		settings.engineCompat.artemisAggressiveCacheScan = true;
+		settings.engineCompat.krkrMapPrerenderedFontPatch = true;
+		settings.engineCompat.softpalPalDllShim = true;
 
 		// ======================== [Krkr] KRKR 引擎补丁 ========================
 		settings.enginePatches.enableKrkrPatch = false;

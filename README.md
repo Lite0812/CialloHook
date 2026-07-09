@@ -8,7 +8,7 @@
 - 文本替换、窗口标题替换、启动提示、启动图片动画
 - 代码页伪装、Locale Emulator 转区
 - 挂载补丁目录、补丁包、目录重定向、文件伪装、虚拟注册表
-- 兼容 kirikiri / Waffle / MED / MAJIRO / Siglus / RioShiina 等引擎场景
+- 兼容 kirikiri / Waffle / MED / MAJIRO / Siglus / RioShiina / 特定旧式脚本引擎等场景
 
 ## 功能特性
 
@@ -23,7 +23,7 @@
 - **启动控制**：支持延迟挂载、入口点挂载、GUI 就绪等待、窗口门控
 - **注册表引导**：支持虚拟注册表注入和临时真实注册表引导（进程退出自动回滚）
 - **RioShiina 引擎**：支持资源覆盖、WARC 解包、注册表/DVD 检测自动处理
-- **引擎兼容**：支持 kirikiri xp3 补丁链、krkr bootstrap 绕过、krkr cxdec 桥接、Siglus 密钥提取
+- **引擎兼容**：支持 kirikiri xp3 补丁链、krkr bootstrap 绕过、krkr cxdec 桥接、Siglus 密钥提取、特定旧式脚本引擎字体创建降级
 - **配置驱动**：绝大部分行为都通过 `ini` 控制，同时支持 `built-in` 内嵌配置
 - **日志排障**：支持文件日志、控制台日志和详细调试日志
 
@@ -619,7 +619,7 @@ KrkrPatchName_0 = unencrypted
 
 说明：
 
-- `KrkrBootstrapBypass`：hook `LoadLibraryExW`，在加载 `appdata\\local\\temp` 下的临时 DLL 前应用 Fuck_Cxdec_Check 风格 x86 文件补丁，绕过 cxdec/启动校验
+- `KrkrBootstrapBypass`：hook `LoadLibraryExW`，在加载 `appdata\\local\\temp` 下的临时 DLL 前应用 x86 文件校验绕过补丁，绕过 cxdec/启动校验
 - `EnableKrkrCxdecPatchBridge`：让 cxdec 场景也能命中现有的补丁目录 / xp3 / custom pak 路径；`.sig` 等验证敏感资源会直接回落原始 cxdec media，避免补丁层影响校验
 - 支持链式归档名如 `patch.cpk>inner.xp3`，用于读取 cpk 内嵌 xp3
 

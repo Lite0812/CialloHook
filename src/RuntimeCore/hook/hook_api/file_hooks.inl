@@ -1,4 +1,4 @@
-﻿		//*********START File Hot-Patch*********
+		//*********START File Hot-Patch*********
 		static std::vector<std::wstring> sg_vecPatchFolders = { L"patch" };
 		static std::vector<std::wstring> sg_vecSpoofFiles;
 		static std::vector<std::wstring> sg_vecSpoofDirectories;
@@ -16,6 +16,57 @@
 				uint64_t logicalSize = 0;
 			};
 			static std::vector<SyntheticFileRule> sg_vecSyntheticFileRules;
+		struct EngineFileCompatRule
+		{
+			std::wstring pattern;
+			std::wstring patternLower;
+			bool hasWildcard = false;
+			bool readOnlyOnly = true;
+			bool affectAttributes = true;
+			bool affectFind = true;
+		};
+		struct EngineDxLibFontCacheRule
+		{
+			std::wstring replacementFaceName;
+		};
+		struct EngineVirtualFileRule
+		{
+			std::wstring pattern;
+			std::wstring patternLower;
+			std::wstring sourceFilePath;
+			bool hasWildcard = false;
+			bool affectAttributes = true;
+			bool affectFind = true;
+		};
+		struct EnginePatchedTextFileRule
+		{
+			std::wstring pattern;
+			std::wstring patternLower;
+			std::wstring replacementFontPath;
+			std::wstring replacementFaceName;
+			bool hasWildcard = false;
+			bool affectAttributes = true;
+			bool affectFind = true;
+		};
+		struct EngineMemoryFileRule
+		{
+			std::wstring pattern;
+			std::wstring patternLower;
+			std::shared_ptr<const std::vector<uint8_t>> data;
+			bool hasWildcard = false;
+			bool affectAttributes = true;
+			bool affectFind = true;
+		};
+		static std::vector<EngineFileCompatRule> sg_vecEngineFileCompatRules;
+		static std::vector<EngineDxLibFontCacheRule> sg_vecEngineDxLibFontCacheRules;
+		static std::wstring sg_engineDxLibCachedFaceName;
+		static bool sg_engineMajiroFontCacheRule = false;
+		static bool sg_engineKrkrTftCacheRule = false;
+		static std::vector<EngineVirtualFileRule> sg_vecEngineVirtualFileRules;
+		static std::vector<EnginePatchedTextFileRule> sg_vecEnginePatchedTextFileRules;
+		static std::vector<EngineMemoryFileRule> sg_vecEngineMemoryFileRules;
+		static std::wstring sg_engineWindowsFontsRedirectFile;
+		static bool sg_engineFileCompatLog = false;
 		static std::wstring sg_wsGameDir;
 		static std::wstring sg_wsGameDirLower;
 		static bool sg_bEnableLog = false;
@@ -29,6 +80,8 @@
 		static pCreateFileA_File rawCreateFileA_Patch = CreateFileA;
 		static pCreateFileW_File rawCreateFileW_Patch = CreateFileW;
 		static bool BuildRelativePath(const wchar_t* originalPath, std::wstring& relativePath);
+		static std::string WideToUtf8FileHook(const std::wstring& text);
+		static bool TryReadWholeFile(const std::wstring& path, std::vector<uint8_t>& dataOut);
 		static bool ShouldBypassFileHook()
 		{
 			return IsHookRuntimeShuttingDown();
@@ -140,6 +193,41 @@
 				return false;
 			}
 			return _wcsnicmp(textLower.c_str(), prefixLower.c_str(), prefixLower.size()) == 0;
+		}
+
+		static bool SimpleWildcardMatchNoCase(const wchar_t* pattern, const wchar_t* text)
+		{
+			while (*pattern)
+			{
+				if (*pattern == L'*')
+				{
+					++pattern;
+					if (!*pattern)
+					{
+						return true;
+					}
+					while (*text)
+					{
+						if (SimpleWildcardMatchNoCase(pattern, text))
+						{
+							return true;
+						}
+						++text;
+					}
+					return false;
+				}
+				if (!*text)
+				{
+					return false;
+				}
+				if (*pattern != L'?' && towlower(*pattern) != towlower(*text))
+				{
+					return false;
+				}
+				++pattern;
+				++text;
+			}
+			return *text == L'\0';
 		}
 
 		static std::wstring NormalizeSyntheticPathPrefix(std::wstring value)
@@ -693,6 +781,690 @@
 				}
 			}
 			return false;
+		}
+
+
+		static bool IsReadOnlyOpenRequest(DWORD desiredAccess, DWORD creationDisposition)
+		{
+			if (creationDisposition == CREATE_ALWAYS || creationDisposition == CREATE_NEW || creationDisposition == OPEN_ALWAYS || creationDisposition == TRUNCATE_EXISTING)
+			{
+				return false;
+			}
+			const DWORD writeBits = GENERIC_WRITE | FILE_WRITE_DATA | FILE_APPEND_DATA | FILE_WRITE_ATTRIBUTES | FILE_WRITE_EA | DELETE;
+			return (desiredAccess & writeBits) == 0;
+		}
+
+		static bool FileBytesContainNoCase(const std::vector<uint8_t>& bytes, const std::string& needle)
+		{
+			if (needle.empty() || bytes.size() < needle.size())
+			{
+				return false;
+			}
+			for (size_t i = 0; i <= bytes.size() - needle.size(); ++i)
+			{
+				bool matched = true;
+				for (size_t j = 0; j < needle.size(); ++j)
+				{
+					char left = static_cast<char>(bytes[i + j]);
+					char right = needle[j];
+					if (left >= 'A' && left <= 'Z') left = static_cast<char>(left - 'A' + 'a');
+					if (right >= 'A' && right <= 'Z') right = static_cast<char>(right - 'A' + 'a');
+					if (left != right)
+					{
+						matched = false;
+						break;
+					}
+				}
+				if (matched)
+				{
+					return true;
+				}
+			}
+			return false;
+		}
+
+		static bool IsMajiroDigits3(const std::wstring& text, size_t pos)
+		{
+			return pos + 2 < text.size() && iswdigit(text[pos]) && iswdigit(text[pos + 1]) && iswdigit(text[pos + 2]);
+		}
+
+		static bool IsMajiroFontCacheFileName(const std::wstring& fileName, bool allowWildcard)
+		{
+			bool hasPrefix = fileName.rfind(L"fc_", 0) == 0 || fileName.rfind(L"fca_", 0) == 0;
+			bool hasWildcard = fileName.find(L'*') != std::wstring::npos || fileName.find(L'?') != std::wstring::npos;
+			if (allowWildcard && hasWildcard)
+			{
+				return hasPrefix || fileName == L"*.fcd";
+			}
+			if (fileName.size() < 12 || !hasPrefix || fileName.compare(fileName.size() - 4, 4, L".fcd") != 0)
+			{
+				return false;
+			}
+			size_t suffix = fileName.size() - 12;
+			return fileName[suffix] == L'_'
+				&& IsMajiroDigits3(fileName, suffix + 1)
+				&& fileName[suffix + 4] == L'x'
+				&& IsMajiroDigits3(fileName, suffix + 5);
+		}
+
+		static bool IsEngineMajiroFontCacheTarget(const wchar_t* originalPath, bool allowWildcard)
+		{
+			if (!sg_engineMajiroFontCacheRule)
+			{
+				return false;
+			}
+			std::wstring relativePath;
+			if (!BuildRelativePath(originalPath, relativePath))
+			{
+				return false;
+			}
+			std::wstring normalized = NormalizeRelativePath(relativePath);
+			const std::wstring prefix = L"savedata\\";
+			if (normalized.size() <= prefix.size() || normalized.compare(0, prefix.size(), prefix) != 0)
+			{
+				return false;
+			}
+			std::wstring fileName = normalized.substr(prefix.size());
+			if (fileName.find(L'\\') != std::wstring::npos || fileName.find(L'/') != std::wstring::npos)
+			{
+				return false;
+			}
+			return IsMajiroFontCacheFileName(fileName, allowWildcard);
+		}
+
+		static bool IsEngineKrkrTftCacheTarget(const wchar_t* originalPath, bool allowWildcard)
+		{
+			if (!sg_engineKrkrTftCacheRule)
+			{
+				return false;
+			}
+			std::wstring relativePath;
+			if (!BuildRelativePath(originalPath, relativePath))
+			{
+				return false;
+			}
+			std::wstring normalized = NormalizeRelativePath(relativePath);
+			if (normalized.empty())
+			{
+				return false;
+			}
+			if (allowWildcard && (normalized.find(L'*') != std::wstring::npos || normalized.find(L'?') != std::wstring::npos))
+			{
+				return normalized.find(L".tft") != std::wstring::npos || normalized.find(L"*.tft") != std::wstring::npos;
+			}
+			return normalized.size() >= 4 && normalized.compare(normalized.size() - 4, 4, L".tft") == 0;
+		}
+
+		static bool IsEngineDxLibFontCachePath(const wchar_t* originalPath, bool allowWildcard)
+		{
+			if (sg_vecEngineDxLibFontCacheRules.empty())
+			{
+				return false;
+			}
+			std::wstring relativePath;
+			if (!BuildRelativePath(originalPath, relativePath))
+			{
+				return false;
+			}
+			std::wstring normalized = NormalizeRelativePath(relativePath);
+			if (allowWildcard && (normalized.find(L'*') != std::wstring::npos || normalized.find(L'?') != std::wstring::npos))
+			{
+				std::wstring leaf = normalized;
+				size_t slash = leaf.find_last_of(L'\\');
+				if (slash != std::wstring::npos) leaf = leaf.substr(slash + 1);
+				return leaf == L"_fontset.med" || leaf == L"_fontset.*";
+			}
+			return normalized == L"_fontset.med";
+		}
+
+		static const EngineDxLibFontCacheRule* FirstEngineDxLibFontCacheRule()
+		{
+			return sg_vecEngineDxLibFontCacheRules.empty() ? nullptr : &sg_vecEngineDxLibFontCacheRules.front();
+		}
+
+		static bool IsEngineDxLibFontCacheTarget(const wchar_t* originalPath)
+		{
+			if (!IsEngineDxLibFontCachePath(originalPath, false))
+			{
+				return false;
+			}
+			const EngineDxLibFontCacheRule* rule = FirstEngineDxLibFontCacheRule();
+			if (!rule || rule->replacementFaceName.empty() || sg_engineDxLibCachedFaceName.empty())
+			{
+				return true;
+			}
+			return _wcsicmp(sg_engineDxLibCachedFaceName.c_str(), rule->replacementFaceName.c_str()) != 0;
+		}
+
+		static void RecordEngineDxLibFontCacheWrite(const wchar_t* sourcePath)
+		{
+			if (!IsEngineDxLibFontCachePath(sourcePath, false))
+			{
+				return;
+			}
+			const EngineDxLibFontCacheRule* rule = FirstEngineDxLibFontCacheRule();
+			if (!rule || rule->replacementFaceName.empty())
+			{
+				return;
+			}
+			sg_engineDxLibCachedFaceName = rule->replacementFaceName;
+			if (sg_engineFileCompatLog) LogMessage(LogLevel::Info, L"[EngineFileCompat] DxLib cached face recorded: %s", sg_engineDxLibCachedFaceName.c_str());
+		}
+
+		static bool IsEngineFileCompatTarget(const wchar_t* originalPath, bool forReadOnlyOpen, bool forAttributes, bool forFind)
+		{
+			if (IsEngineMajiroFontCacheTarget(originalPath, forFind))
+			{
+				return true;
+			}
+			if (IsEngineKrkrTftCacheTarget(originalPath, forFind))
+			{
+				return true;
+			}
+			if (sg_vecEngineFileCompatRules.empty())
+			{
+				return false;
+			}
+			std::wstring relativePath;
+			if (!BuildRelativePath(originalPath, relativePath))
+			{
+				return false;
+			}
+			std::wstring normalized = NormalizeRelativePath(relativePath);
+			if (normalized.empty())
+			{
+				return false;
+			}
+			for (const EngineFileCompatRule& rule : sg_vecEngineFileCompatRules)
+			{
+				if (forAttributes && !rule.affectAttributes)
+				{
+					continue;
+				}
+				if (forFind && !rule.affectFind)
+				{
+					continue;
+				}
+				if (rule.readOnlyOnly && !forReadOnlyOpen && !forAttributes && !forFind)
+				{
+					continue;
+				}
+				bool matched = rule.hasWildcard
+					? SimpleWildcardMatchNoCase(rule.patternLower.c_str(), normalized.c_str())
+					: (normalized == rule.patternLower);
+				if (matched)
+				{
+					return true;
+				}
+			}
+			return false;
+		}
+
+
+		static bool EngineRuleMatches(const std::wstring& patternLower, bool hasWildcard, const std::wstring& normalized)
+		{
+			return hasWildcard ? SimpleWildcardMatchNoCase(patternLower.c_str(), normalized.c_str()) : (normalized == patternLower);
+		}
+
+		static bool TryNormalizeEngineRelativePath(const wchar_t* originalPath, std::wstring& normalizedOut)
+		{
+			normalizedOut.clear();
+			std::wstring relativePath;
+			if (!BuildRelativePath(originalPath, relativePath))
+			{
+				return false;
+			}
+			normalizedOut = NormalizeRelativePath(relativePath);
+			return !normalizedOut.empty();
+		}
+
+		static bool TryMatchEngineVirtualFileRule(const wchar_t* originalPath, bool forAttributes, bool forFind, EngineVirtualFileRule& ruleOut)
+		{
+			std::wstring normalized;
+			if (!TryNormalizeEngineRelativePath(originalPath, normalized))
+			{
+				return false;
+			}
+			for (const EngineVirtualFileRule& rule : sg_vecEngineVirtualFileRules)
+			{
+				if (forAttributes && !rule.affectAttributes) continue;
+				if (forFind && !rule.affectFind) continue;
+				if (!rule.sourceFilePath.empty() && EngineRuleMatches(rule.patternLower, rule.hasWildcard, normalized))
+				{
+					ruleOut = rule;
+					return true;
+				}
+			}
+			return false;
+		}
+
+		static bool TryMatchEnginePatchedTextFileRule(const wchar_t* originalPath, bool forAttributes, bool forFind, EnginePatchedTextFileRule& ruleOut)
+		{
+			std::wstring normalized;
+			if (!TryNormalizeEngineRelativePath(originalPath, normalized))
+			{
+				return false;
+			}
+			for (const EnginePatchedTextFileRule& rule : sg_vecEnginePatchedTextFileRules)
+			{
+				if (forAttributes && !rule.affectAttributes) continue;
+				if (forFind && !rule.affectFind) continue;
+				if (EngineRuleMatches(rule.patternLower, rule.hasWildcard, normalized))
+				{
+					ruleOut = rule;
+					return true;
+				}
+			}
+			return false;
+		}
+
+		static bool TryMatchEngineMemoryFileRule(const wchar_t* originalPath, bool forAttributes, bool forFind, EngineMemoryFileRule& ruleOut)
+		{
+			std::wstring normalized;
+			if (!TryNormalizeEngineRelativePath(originalPath, normalized))
+			{
+				return false;
+			}
+			for (const EngineMemoryFileRule& rule : sg_vecEngineMemoryFileRules)
+			{
+				if (forAttributes && !rule.affectAttributes) continue;
+				if (forFind && !rule.affectFind) continue;
+				if (rule.data && EngineRuleMatches(rule.patternLower, rule.hasWildcard, normalized))
+				{
+					ruleOut = rule;
+					return true;
+				}
+			}
+			return false;
+		}
+
+		static bool IsFontFileExtensionPath(const std::wstring& path)
+		{
+			std::wstring lower = ToLowerCopy(path);
+			return EndsWithInsensitive(lower, L".ttf") || EndsWithInsensitive(lower, L".ttc") || EndsWithInsensitive(lower, L".otf") || EndsWithInsensitive(lower, L".otc");
+		}
+
+		static bool IsWindowsFontsPath(const std::wstring& path)
+		{
+			std::wstring normalized = ToLowerCopy(NormalizeFileHookSlashes(path));
+			return normalized.find(L"\\windows\\fonts\\") != std::wstring::npos && IsFontFileExtensionPath(normalized);
+		}
+
+		static bool TryResolveWindowsFontsRedirect(const wchar_t* originalPath, std::wstring& redirectedPath)
+		{
+			redirectedPath.clear();
+			if (sg_engineWindowsFontsRedirectFile.empty() || !originalPath)
+			{
+				return false;
+			}
+			std::wstring source = NormalizeFileHookSlashes(originalPath);
+			if (!IsWindowsFontsPath(source))
+			{
+				return false;
+			}
+			redirectedPath = sg_engineWindowsFontsRedirectFile;
+			return true;
+		}
+
+		static std::string WideToUtf8FileHook(const std::wstring& text)
+		{
+			if (text.empty()) return std::string();
+			int len = WideCharToMultiByte(CP_UTF8, 0, text.c_str(), -1, nullptr, 0, nullptr, nullptr);
+			if (len <= 0) return std::string();
+			std::string result(len, '\0');
+			WideCharToMultiByte(CP_UTF8, 0, text.c_str(), -1, &result[0], len, nullptr, nullptr);
+			if (!result.empty() && result.back() == '\0')
+			{
+				result.pop_back();
+			}
+			return result;
+		}
+
+		static void ReplaceAllAscii(std::string& text, const std::string& from, const std::string& to)
+		{
+			if (from.empty()) return;
+			size_t pos = 0;
+			while ((pos = text.find(from, pos)) != std::string::npos)
+			{
+				text.replace(pos, from.size(), to);
+				pos += to.size();
+			}
+		}
+
+		static bool TryReadWholeFile(const std::wstring& path, std::vector<uint8_t>& dataOut)
+		{
+			dataOut.clear();
+			HANDLE hFile = rawCreateFileW_Patch(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+			if (hFile == INVALID_HANDLE_VALUE) return false;
+			LARGE_INTEGER size = {};
+			if (!GetFileSizeEx(hFile, &size) || size.QuadPart < 0 || size.QuadPart > 64ll * 1024ll * 1024ll)
+			{
+				CloseHandle(hFile);
+				return false;
+			}
+			dataOut.resize(static_cast<size_t>(size.QuadPart));
+			DWORD read = 0;
+			BOOL ok = dataOut.empty() ? TRUE : ReadFile(hFile, dataOut.data(), static_cast<DWORD>(dataOut.size()), &read, nullptr);
+			CloseHandle(hFile);
+			if (!ok || read != dataOut.size())
+			{
+				dataOut.clear();
+				return false;
+			}
+			return true;
+		}
+
+		static bool IsAsciiIdentFileHook(char ch)
+		{
+			return (ch >= '0' && ch <= '9') || (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || ch == '_';
+		}
+
+		static bool IsAsciiDigitFileHook(char ch)
+		{
+			return ch >= '0' && ch <= '9';
+		}
+
+		static char LowerAsciiFileHook(char ch)
+		{
+			return (ch >= 'A' && ch <= 'Z') ? static_cast<char>(ch - 'A' + 'a') : ch;
+		}
+
+		static bool EqualsAsciiAtFileHook(const std::string& text, size_t pos, const char* key)
+		{
+			for (size_t i = 0; key[i]; ++i)
+			{
+				if (pos + i >= text.size() || LowerAsciiFileHook(text[pos + i]) != LowerAsciiFileHook(key[i]))
+				{
+					return false;
+				}
+			}
+			return true;
+		}
+
+		static bool PatchQuotedFieldFileHook(std::string& text, const char* key, const std::string& value, bool requireFontValue)
+		{
+			if (!key || value.empty()) return false;
+			const size_t keyLen = strlen(key);
+			bool changed = false;
+			for (size_t pos = 0; pos + keyLen < text.size();)
+			{
+				if (!EqualsAsciiAtFileHook(text, pos, key) || (pos > 0 && IsAsciiIdentFileHook(text[pos - 1])))
+				{
+					++pos;
+					continue;
+				}
+				size_t p = pos + keyLen;
+				if (p < text.size() && IsAsciiIdentFileHook(text[p])) { pos = p; continue; }
+				while (p < text.size() && (text[p] == ' ' || text[p] == '\t')) ++p;
+				if (p >= text.size() || (text[p] != '=' && text[p] != ':')) { ++pos; continue; }
+				++p;
+				while (p < text.size() && (text[p] == ' ' || text[p] == '\t')) ++p;
+				if (p >= text.size() || (text[p] != '"' && text[p] != '\'')) { ++pos; continue; }
+				char quote = text[p++];
+				size_t valueStart = p;
+				while (p < text.size() && text[p] != quote && text[p] != '\r' && text[p] != '\n') ++p;
+				if (p >= text.size() || text[p] != quote) { pos = valueStart; continue; }
+				std::string oldValue = text.substr(valueStart, p - valueStart);
+				std::string lowerValue = oldValue;
+				for (char& ch : lowerValue) { if (ch == '\\') ch = '/'; ch = LowerAsciiFileHook(ch); }
+				const bool looksLikeFontValue = lowerValue.find("/font/") != std::string::npos
+					|| (lowerValue.size() >= 4 && lowerValue.rfind(".ttf") == lowerValue.size() - 4)
+					|| (lowerValue.size() >= 4 && lowerValue.rfind(".ttc") == lowerValue.size() - 4)
+					|| (lowerValue.size() >= 4 && lowerValue.rfind(".otf") == lowerValue.size() - 4);
+				if (requireFontValue && !looksLikeFontValue)
+				{
+					pos = p + 1;
+					continue;
+				}
+				text.replace(valueStart, p - valueStart, value);
+				pos = valueStart + value.size() + 1;
+				changed = true;
+			}
+			return changed;
+		}
+
+		static bool PatchNumericFieldFileHook(std::string& text, const char* key, int value)
+		{
+			char replacement[32] = {};
+			sprintf_s(replacement, "%d", value);
+			const size_t keyLen = strlen(key);
+			bool changed = false;
+			for (size_t pos = 0; pos + keyLen < text.size();)
+			{
+				if (!EqualsAsciiAtFileHook(text, pos, key) || (pos > 0 && IsAsciiIdentFileHook(text[pos - 1])))
+				{
+					++pos;
+					continue;
+				}
+				size_t p = pos + keyLen;
+				if (p < text.size() && IsAsciiIdentFileHook(text[p])) { pos = p; continue; }
+				while (p < text.size() && (text[p] == ' ' || text[p] == '\t')) ++p;
+				if (p >= text.size() || (text[p] != '=' && text[p] != ':')) { ++pos; continue; }
+				++p;
+				while (p < text.size() && (text[p] == ' ' || text[p] == '\t')) ++p;
+				bool quoted = false;
+				char quote = 0;
+				if (p < text.size() && (text[p] == '"' || text[p] == '\'')) { quoted = true; quote = text[p++]; }
+				size_t valueStart = p;
+				if (p < text.size() && (text[p] == '-' || text[p] == '+')) ++p;
+				size_t digitStart = p;
+				while (p < text.size() && IsAsciiDigitFileHook(text[p])) ++p;
+				if (p == digitStart || (quoted && (p >= text.size() || text[p] != quote))) { ++pos; continue; }
+				text.replace(valueStart, p - valueStart, replacement);
+				pos = valueStart + strlen(replacement) + (quoted ? 1 : 0);
+				changed = true;
+			}
+			return changed;
+		}
+
+		static std::shared_ptr<const std::vector<uint8_t>> BuildPatchedTextFileData(const std::wstring& sourcePath, const EnginePatchedTextFileRule& rule)
+		{
+			std::vector<uint8_t> bytes;
+			if (!TryReadWholeFile(sourcePath, bytes))
+			{
+				return nullptr;
+			}
+			std::string text(bytes.begin(), bytes.end());
+			if (text.empty()) return std::make_shared<std::vector<uint8_t>>(bytes);
+			std::string fontPath = WideToUtf8FileHook(rule.replacementFontPath.empty() ? rule.replacementFaceName : rule.replacementFontPath);
+			std::string faceName = WideToUtf8FileHook(rule.replacementFaceName.empty() ? rule.replacementFontPath : rule.replacementFaceName);
+			if (!fontPath.empty())
+			{
+				PatchQuotedFieldFileHook(text, "font", fontPath, true);
+				PatchQuotedFieldFileHook(text, "path", fontPath, true);
+				PatchQuotedFieldFileHook(text, "file", fontPath, true);
+				for (int i = 0; i <= 32; ++i)
+				{
+					char key[16] = {};
+					sprintf_s(key, "font%02d", i);
+					PatchQuotedFieldFileHook(text, key, fontPath, false);
+				}
+			}
+			if (!faceName.empty())
+			{
+				PatchQuotedFieldFileHook(text, "name", faceName, false);
+				PatchQuotedFieldFileHook(text, "face", faceName, false);
+				PatchQuotedFieldFileHook(text, "rubyface", faceName, false);
+				PatchQuotedFieldFileHook(text, "facename", faceName, false);
+				ReplaceAllAscii(text, "MS Gothic", faceName);
+				ReplaceAllAscii(text, "ＭＳ ゴシック", faceName);
+				ReplaceAllAscii(text, "MS PGothic", faceName);
+			}
+			PatchNumericFieldFileHook(text, "kerning", 1);
+			PatchNumericFieldFileHook(text, "spacemiddle", 1);
+			PatchNumericFieldFileHook(text, "size", 0);
+			PatchNumericFieldFileHook(text, "rubysize", 0);
+			auto data = std::make_shared<std::vector<uint8_t>>(text.begin(), text.end());
+			return data;
+		}
+
+		void ClearEngineFileCompatRules()
+		{
+			sg_vecEngineFileCompatRules.clear();
+			sg_vecEngineDxLibFontCacheRules.clear();
+			sg_engineDxLibCachedFaceName.clear();
+			sg_engineMajiroFontCacheRule = false;
+			sg_engineKrkrTftCacheRule = false;
+			sg_vecEngineVirtualFileRules.clear();
+			sg_vecEnginePatchedTextFileRules.clear();
+			sg_vecEngineMemoryFileRules.clear();
+			sg_engineWindowsFontsRedirectFile.clear();
+		}
+
+		void AddEngineHideFileRule(const wchar_t* pathOrGlob, bool readOnlyOnly, bool affectAttributes, bool affectFind)
+		{
+			if (sg_wsGameDir.empty())
+			{
+				RefreshGameDir();
+			}
+			std::wstring normalized = NormalizeRelativePath(pathOrGlob ? pathOrGlob : L"");
+			if (normalized.empty())
+			{
+				return;
+			}
+			EngineFileCompatRule rule = {};
+			rule.pattern = normalized;
+			rule.patternLower = ToLowerCopy(normalized);
+			rule.hasWildcard = rule.patternLower.find_first_of(L"*?") != std::wstring::npos;
+			rule.readOnlyOnly = readOnlyOnly;
+			rule.affectAttributes = affectAttributes;
+			rule.affectFind = affectFind;
+			sg_vecEngineFileCompatRules.push_back(std::move(rule));
+			if (sg_engineFileCompatLog)
+			{
+				LogMessage(LogLevel::Info, L"[EngineFileCompat] hide pattern=%s readOnlyOnly=%u attr=%u find=%u", normalized.c_str(), readOnlyOnly ? 1u : 0u, affectAttributes ? 1u : 0u, affectFind ? 1u : 0u);
+			}
+		}
+
+		void AddEngineDxLibFontCacheRule(const wchar_t* replacementFaceName)
+		{
+			if (sg_wsGameDir.empty())
+			{
+				RefreshGameDir();
+			}
+			EngineDxLibFontCacheRule rule = {};
+			rule.replacementFaceName = replacementFaceName ? replacementFaceName : L"";
+			sg_vecEngineDxLibFontCacheRules.push_back(std::move(rule));
+			if (sg_engineFileCompatLog)
+			{
+				LogMessage(LogLevel::Info, L"[EngineFileCompat] DxLib font cache rule face=%s", replacementFaceName ? replacementFaceName : L"");
+			}
+		}
+
+		void AddEngineMajiroFontCacheRule()
+		{
+			if (sg_wsGameDir.empty())
+			{
+				RefreshGameDir();
+			}
+			sg_engineMajiroFontCacheRule = true;
+			if (sg_engineFileCompatLog)
+			{
+				LogMessage(LogLevel::Info, L"[EngineFileCompat] Majiro font cache rule enabled");
+			}
+		}
+
+		void AddEngineKrkrTftCacheRule()
+		{
+			if (sg_wsGameDir.empty())
+			{
+				RefreshGameDir();
+			}
+			sg_engineKrkrTftCacheRule = true;
+			if (sg_engineFileCompatLog)
+			{
+				LogMessage(LogLevel::Info, L"[EngineFileCompat] KRKR .tft cache rule enabled");
+			}
+		}
+
+		void AddEngineVirtualFileRule(const wchar_t* virtualPathOrGlob, const wchar_t* sourceFilePath, bool affectAttributes, bool affectFind)
+		{
+			if (sg_wsGameDir.empty())
+			{
+				RefreshGameDir();
+			}
+			std::wstring normalized = NormalizeRelativePath(virtualPathOrGlob ? virtualPathOrGlob : L"");
+			if (normalized.empty() || !sourceFilePath || sourceFilePath[0] == L'\0')
+			{
+				return;
+			}
+			EngineVirtualFileRule rule = {};
+			rule.pattern = normalized;
+			rule.patternLower = ToLowerCopy(normalized);
+			rule.sourceFilePath = sourceFilePath;
+			rule.hasWildcard = rule.patternLower.find_first_of(L"*?") != std::wstring::npos;
+			rule.affectAttributes = affectAttributes;
+			rule.affectFind = affectFind;
+			sg_vecEngineVirtualFileRules.push_back(std::move(rule));
+			if (sg_engineFileCompatLog)
+			{
+				LogMessage(LogLevel::Info, L"[EngineFileCompat] virtual pattern=%s source=%s attr=%u find=%u", normalized.c_str(), sourceFilePath, affectAttributes ? 1u : 0u, affectFind ? 1u : 0u);
+			}
+		}
+
+		void AddEnginePatchedTextFileRule(const wchar_t* pathOrGlob, const wchar_t* replacementFontPath, const wchar_t* replacementFaceName, bool affectAttributes, bool affectFind)
+		{
+			if (sg_wsGameDir.empty())
+			{
+				RefreshGameDir();
+			}
+			std::wstring normalized = NormalizeRelativePath(pathOrGlob ? pathOrGlob : L"");
+			if (normalized.empty())
+			{
+				return;
+			}
+			EnginePatchedTextFileRule rule = {};
+			rule.pattern = normalized;
+			rule.patternLower = ToLowerCopy(normalized);
+			rule.replacementFontPath = replacementFontPath ? replacementFontPath : L"";
+			rule.replacementFaceName = replacementFaceName ? replacementFaceName : L"";
+			rule.hasWildcard = rule.patternLower.find_first_of(L"*?") != std::wstring::npos;
+			rule.affectAttributes = affectAttributes;
+			rule.affectFind = affectFind;
+			sg_vecEnginePatchedTextFileRules.push_back(std::move(rule));
+			if (sg_engineFileCompatLog)
+			{
+				LogMessage(LogLevel::Info, L"[EngineFileCompat] patched-text pattern=%s fontPath=%s face=%s attr=%u find=%u", normalized.c_str(), rule.replacementFontPath.c_str(), rule.replacementFaceName.c_str(), affectAttributes ? 1u : 0u, affectFind ? 1u : 0u);
+			}
+		}
+
+		void AddEngineMemoryFileRule(const wchar_t* pathOrGlob, const uint8_t* data, size_t dataSize, bool affectAttributes, bool affectFind)
+		{
+			if (sg_wsGameDir.empty())
+			{
+				RefreshGameDir();
+			}
+			std::wstring normalized = NormalizeRelativePath(pathOrGlob ? pathOrGlob : L"");
+			if (normalized.empty() || !data || dataSize == 0)
+			{
+				return;
+			}
+			EngineMemoryFileRule rule = {};
+			rule.pattern = normalized;
+			rule.patternLower = ToLowerCopy(normalized);
+			rule.data = std::make_shared<std::vector<uint8_t>>(data, data + dataSize);
+			rule.hasWildcard = rule.patternLower.find_first_of(L"*?") != std::wstring::npos;
+			rule.affectAttributes = affectAttributes;
+			rule.affectFind = affectFind;
+			sg_vecEngineMemoryFileRules.push_back(std::move(rule));
+			if (sg_engineFileCompatLog)
+			{
+				LogMessage(LogLevel::Info, L"[EngineFileCompat] memory-file pattern=%s size=%u attr=%u find=%u", normalized.c_str(), static_cast<unsigned>(dataSize), affectAttributes ? 1u : 0u, affectFind ? 1u : 0u);
+			}
+		}
+
+		void SetEngineWindowsFontsRedirectFile(const wchar_t* sourceFilePath)
+		{
+			sg_engineWindowsFontsRedirectFile = sourceFilePath ? sourceFilePath : L"";
+			if (sg_engineFileCompatLog && !sg_engineWindowsFontsRedirectFile.empty())
+			{
+				LogMessage(LogLevel::Info, L"[EngineFileCompat] Windows Fonts redirect source=%s", sg_engineWindowsFontsRedirectFile.c_str());
+			}
+		}
+
+		void SetEngineFileCompatLogEnabled(bool enableLog)
+		{
+			sg_engineFileCompatLog = enableLog;
 		}
 
 		void SetPatchFolder(const wchar_t* folderPath, bool enableLog)
@@ -1259,6 +2031,39 @@
 				return AllocateMemoryFileHandle(sourcePath, data, data ? static_cast<uint64_t>(data->size()) : 0);
 			}
 
+			static HANDLE CreateTempReadHandleFromMemoryFile(const std::shared_ptr<const std::vector<uint8_t>>& data)
+			{
+				if (!data)
+				{
+					SetLastError(ERROR_INVALID_DATA);
+					return INVALID_HANDLE_VALUE;
+				}
+				wchar_t tempDir[MAX_PATH] = {};
+				wchar_t tempPath[MAX_PATH] = {};
+				if (GetTempPathW(MAX_PATH, tempDir) == 0 || GetTempFileNameW(tempDir, L"chl", 0, tempPath) == 0)
+				{
+					return INVALID_HANDLE_VALUE;
+				}
+				HANDLE hFile = rawCreateFileW_Patch(tempPath, GENERIC_READ | GENERIC_WRITE,
+					FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr, CREATE_ALWAYS,
+					FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE | FILE_ATTRIBUTE_NOT_CONTENT_INDEXED, nullptr);
+				if (hFile == INVALID_HANDLE_VALUE)
+				{
+					return INVALID_HANDLE_VALUE;
+				}
+				if (!data->empty())
+				{
+					DWORD written = 0;
+					if (!WriteFile(hFile, data->data(), static_cast<DWORD>(data->size()), &written, nullptr) || written != data->size())
+					{
+						CloseHandle(hFile);
+						return INVALID_HANDLE_VALUE;
+					}
+				}
+				SetFilePointer(hFile, 0, nullptr, FILE_BEGIN);
+				return hFile;
+			}
+
 			static uint64_t GetMemoryFileLogicalSize(const MemoryFileState& state)
 			{
 				return state.data ? static_cast<uint64_t>(state.data->size()) : state.logicalSize;
@@ -1436,6 +2241,66 @@
 				LogMessage(LogLevel::Info, L"[CreateFileA] Block direct custom pak archive access: %s", sourcePath.c_str());
 				return INVALID_HANDLE_VALUE;
 			}
+			if (IsReadOnlyOpenRequest(dwDesiredAccess, dwCreationDisposition))
+			{
+				std::wstring engineRedirectPath;
+				EngineVirtualFileRule virtualRule = {};
+				EnginePatchedTextFileRule textRule = {};
+				EngineMemoryFileRule memoryRule = {};
+				if (TryResolveWindowsFontsRedirect(sourcePath.c_str(), engineRedirectPath))
+				{
+					std::string redirectA = WideToAnsi(engineRedirectPath);
+					if (!redirectA.empty())
+					{
+						HANDLE hFile = rawCreateFileA_Patch(redirectA.c_str(), dwDesiredAccess, dwShareMode, lpSecurityAttributes, OPEN_EXISTING, dwFlagsAndAttributes, hTemplateFile);
+						if (hFile != INVALID_HANDLE_VALUE)
+						{
+							if (sg_engineFileCompatLog) LogMessage(LogLevel::Info, L"[CreateFileA] EngineCompat Windows Fonts redirected: %s => %s", sourcePath.c_str(), engineRedirectPath.c_str());
+							return hFile;
+						}
+					}
+				}
+				if (TryMatchEngineMemoryFileRule(sourcePath.c_str(), false, false, memoryRule))
+				{
+					if (sg_engineFileCompatLog) LogMessage(LogLevel::Info, L"[CreateFileA] EngineCompat memory file: %s", sourcePath.c_str());
+					HANDLE hTemp = CreateTempReadHandleFromMemoryFile(memoryRule.data);
+					return hTemp != INVALID_HANDLE_VALUE ? hTemp : AllocateMemoryFileHandle(sourcePath.c_str(), memoryRule.data);
+				}
+				if (TryMatchEngineVirtualFileRule(sourcePath.c_str(), false, false, virtualRule))
+				{
+					std::string sourceA = WideToAnsi(virtualRule.sourceFilePath);
+					if (!sourceA.empty())
+					{
+						HANDLE hFile = rawCreateFileA_Patch(sourceA.c_str(), dwDesiredAccess, dwShareMode, lpSecurityAttributes, OPEN_EXISTING, dwFlagsAndAttributes, hTemplateFile);
+						if (hFile != INVALID_HANDLE_VALUE)
+						{
+							if (sg_engineFileCompatLog) LogMessage(LogLevel::Info, L"[CreateFileA] EngineCompat virtual file: %s => %s", sourcePath.c_str(), virtualRule.sourceFilePath.c_str());
+							return hFile;
+						}
+					}
+				}
+				if (TryMatchEnginePatchedTextFileRule(sourcePath.c_str(), false, false, textRule))
+				{
+					std::shared_ptr<const std::vector<uint8_t>> patchedData = BuildPatchedTextFileData(sourcePath, textRule);
+					if (patchedData && !patchedData->empty())
+					{
+						if (sg_engineFileCompatLog) LogMessage(LogLevel::Info, L"[CreateFileA] EngineCompat patched text file: %s", sourcePath.c_str());
+						return AllocateMemoryFileHandle(sourcePath.c_str(), patchedData);
+					}
+				}
+			}
+			if (IsEngineDxLibFontCacheTarget(sourcePath.c_str()) && IsReadOnlyOpenRequest(dwDesiredAccess, dwCreationDisposition))
+			{
+				SetLastError(ERROR_FILE_NOT_FOUND);
+				if (sg_engineFileCompatLog) LogMessage(LogLevel::Info, L"[CreateFileA] EngineCompat DxLib font cache hidden: %s", sourcePath.c_str());
+				return INVALID_HANDLE_VALUE;
+			}
+			if (IsEngineFileCompatTarget(sourcePath.c_str(), IsReadOnlyOpenRequest(dwDesiredAccess, dwCreationDisposition), false, false))
+			{
+				SetLastError(ERROR_FILE_NOT_FOUND);
+				if (sg_engineFileCompatLog) LogMessage(LogLevel::Info, L"[CreateFileA] EngineCompat hidden: %s", sourcePath.c_str());
+				return INVALID_HANDLE_VALUE;
+			}
 			std::wstring redirectedPathW;
 			if (ResolveDirectoryRedirectPath(sourcePath.c_str(), redirectedPathW))
 			{
@@ -1518,8 +2383,13 @@
 				return INVALID_HANDLE_VALUE;
 			}
 
-			return rawCreateFileA_Patch(lpFileName, dwDesiredAccess, dwShareMode, 
+			HANDLE hOriginal = rawCreateFileA_Patch(lpFileName, dwDesiredAccess, dwShareMode,
 				lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
+			if (hOriginal != INVALID_HANDLE_VALUE && !IsReadOnlyOpenRequest(dwDesiredAccess, dwCreationDisposition))
+			{
+				RecordEngineDxLibFontCacheWrite(sourcePath.c_str());
+			}
+			return hOriginal;
 		}
 		HANDLE WINAPI newCreateFileA_Patch(LPCSTR lpFileName, DWORD dwDesiredAccess, DWORD dwShareMode, 
 			LPSECURITY_ATTRIBUTES lpSecurityAttributes, DWORD dwCreationDisposition, 
@@ -1556,6 +2426,58 @@
 			{
 				SetLastError(ERROR_FILE_NOT_FOUND);
 				LogMessage(LogLevel::Info, L"[CreateFileW] Block direct custom pak archive access: %s", sourcePathW);
+				return INVALID_HANDLE_VALUE;
+			}
+			if (IsReadOnlyOpenRequest(dwDesiredAccess, dwCreationDisposition))
+			{
+				std::wstring engineRedirectPath;
+				EngineVirtualFileRule virtualRule = {};
+				EnginePatchedTextFileRule textRule = {};
+				EngineMemoryFileRule memoryRule = {};
+				if (TryResolveWindowsFontsRedirect(sourcePathW, engineRedirectPath))
+				{
+					HANDLE hFile = rawCreateFileW_Patch(engineRedirectPath.c_str(), dwDesiredAccess, dwShareMode, lpSecurityAttributes, OPEN_EXISTING, dwFlagsAndAttributes, hTemplateFile);
+					if (hFile != INVALID_HANDLE_VALUE)
+					{
+						if (sg_engineFileCompatLog) LogMessage(LogLevel::Info, L"[CreateFileW] EngineCompat Windows Fonts redirected: %s => %s", sourcePathW, engineRedirectPath.c_str());
+						return hFile;
+					}
+				}
+				if (TryMatchEngineMemoryFileRule(sourcePathW, false, false, memoryRule))
+				{
+					if (sg_engineFileCompatLog) LogMessage(LogLevel::Info, L"[CreateFileW] EngineCompat memory file: %s", sourcePathW);
+					HANDLE hTemp = CreateTempReadHandleFromMemoryFile(memoryRule.data);
+					return hTemp != INVALID_HANDLE_VALUE ? hTemp : AllocateMemoryFileHandle(sourcePathW, memoryRule.data);
+				}
+				if (TryMatchEngineVirtualFileRule(sourcePathW, false, false, virtualRule))
+				{
+					HANDLE hFile = rawCreateFileW_Patch(virtualRule.sourceFilePath.c_str(), dwDesiredAccess, dwShareMode, lpSecurityAttributes, OPEN_EXISTING, dwFlagsAndAttributes, hTemplateFile);
+					if (hFile != INVALID_HANDLE_VALUE)
+					{
+						if (sg_engineFileCompatLog) LogMessage(LogLevel::Info, L"[CreateFileW] EngineCompat virtual file: %s => %s", sourcePathW, virtualRule.sourceFilePath.c_str());
+						return hFile;
+					}
+				}
+				if (TryMatchEnginePatchedTextFileRule(sourcePathW, false, false, textRule))
+				{
+					std::shared_ptr<const std::vector<uint8_t>> patchedData = BuildPatchedTextFileData(sourcePathW, textRule);
+					if (patchedData && !patchedData->empty())
+					{
+						if (sg_engineFileCompatLog) LogMessage(LogLevel::Info, L"[CreateFileW] EngineCompat patched text file: %s", sourcePathW);
+						return AllocateMemoryFileHandle(sourcePathW, patchedData);
+					}
+				}
+			}
+			if (IsEngineDxLibFontCacheTarget(sourcePathW) && IsReadOnlyOpenRequest(dwDesiredAccess, dwCreationDisposition))
+			{
+				SetLastError(ERROR_FILE_NOT_FOUND);
+				if (sg_engineFileCompatLog) LogMessage(LogLevel::Info, L"[CreateFileW] EngineCompat DxLib font cache hidden: %s", sourcePathW);
+				return INVALID_HANDLE_VALUE;
+			}
+			if (IsEngineFileCompatTarget(sourcePathW, IsReadOnlyOpenRequest(dwDesiredAccess, dwCreationDisposition), false, false))
+			{
+				SetLastError(ERROR_FILE_NOT_FOUND);
+				if (sg_engineFileCompatLog) LogMessage(LogLevel::Info, L"[CreateFileW] EngineCompat hidden: %s", sourcePathW);
 				return INVALID_HANDLE_VALUE;
 			}
 			std::wstring redirectedPathW;
@@ -1633,8 +2555,13 @@
 				return INVALID_HANDLE_VALUE;
 			}
 
-			return rawCreateFileW_Patch(lpFileName, dwDesiredAccess, dwShareMode, 
+			HANDLE hOriginal = rawCreateFileW_Patch(lpFileName, dwDesiredAccess, dwShareMode,
 				lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
+			if (hOriginal != INVALID_HANDLE_VALUE && !IsReadOnlyOpenRequest(dwDesiredAccess, dwCreationDisposition))
+			{
+				RecordEngineDxLibFontCacheWrite(sourcePathW);
+			}
+			return hOriginal;
 		}
 		HANDLE WINAPI newCreateFileW_Patch(LPCWSTR lpFileName, DWORD dwDesiredAccess, DWORD dwShareMode, 
 			LPSECURITY_ATTRIBUTES lpSecurityAttributes, DWORD dwCreationDisposition, 
@@ -1660,6 +2587,23 @@
 				SetLastError(ERROR_FILE_NOT_FOUND);
 				LogMessage(LogLevel::Info, L"[GetFileAttributesA] Block direct custom pak archive access: %s", sourcePath.c_str());
 				return INVALID_FILE_ATTRIBUTES;
+			}
+			if (IsEngineDxLibFontCacheTarget(sourcePath.c_str()))
+			{
+				SetLastError(ERROR_FILE_NOT_FOUND);
+				if (sg_engineFileCompatLog) LogMessage(LogLevel::Info, L"[GetFileAttributesA] EngineCompat DxLib font cache hidden: %s", sourcePath.c_str());
+				return INVALID_FILE_ATTRIBUTES;
+			}
+			if (IsEngineFileCompatTarget(sourcePath.c_str(), false, true, false))
+			{
+				SetLastError(ERROR_FILE_NOT_FOUND);
+				if (sg_engineFileCompatLog) LogMessage(LogLevel::Info, L"[GetFileAttributesA] EngineCompat hidden: %s", sourcePath.c_str());
+				return INVALID_FILE_ATTRIBUTES;
+			}
+			EngineMemoryFileRule memoryRule = {};
+			if (TryMatchEngineMemoryFileRule(sourcePath.c_str(), true, false, memoryRule))
+			{
+				return FILE_ATTRIBUTE_ARCHIVE | FILE_ATTRIBUTE_READONLY;
 			}
 			std::wstring redirectedPathW;
 			if (ResolveDirectoryRedirectPath(sourcePath.c_str(), redirectedPathW))
@@ -1756,6 +2700,41 @@
 				LogMessage(LogLevel::Info, L"[GetFileAttributesW] Block direct custom pak archive access: %s", sourcePathW);
 				return INVALID_FILE_ATTRIBUTES;
 			}
+			if (IsEngineDxLibFontCacheTarget(sourcePathW))
+			{
+				SetLastError(ERROR_FILE_NOT_FOUND);
+				if (sg_engineFileCompatLog) LogMessage(LogLevel::Info, L"[GetFileAttributesW] EngineCompat DxLib font cache hidden: %s", sourcePathW);
+				return INVALID_FILE_ATTRIBUTES;
+			}
+			EngineVirtualFileRule virtualRule = {};
+			EnginePatchedTextFileRule textRule = {};
+			EngineMemoryFileRule memoryRule = {};
+			std::wstring engineRedirectPath;
+			if (TryResolveWindowsFontsRedirect(sourcePathW, engineRedirectPath))
+			{
+				DWORD attr = rawGetFileAttributesW_Patch(engineRedirectPath.c_str());
+				if (attr != INVALID_FILE_ATTRIBUTES) return attr;
+			}
+			if (TryMatchEngineMemoryFileRule(sourcePathW, true, false, memoryRule))
+			{
+				return FILE_ATTRIBUTE_ARCHIVE | FILE_ATTRIBUTE_READONLY;
+			}
+			if (TryMatchEngineVirtualFileRule(sourcePathW, true, false, virtualRule))
+			{
+				DWORD attr = rawGetFileAttributesW_Patch(virtualRule.sourceFilePath.c_str());
+				if (attr != INVALID_FILE_ATTRIBUTES) return attr;
+			}
+			if (TryMatchEnginePatchedTextFileRule(sourcePathW, true, false, textRule))
+			{
+				DWORD attr = rawGetFileAttributesW_Patch(sourcePathW);
+				if (attr != INVALID_FILE_ATTRIBUTES) return attr | FILE_ATTRIBUTE_READONLY;
+			}
+			if (IsEngineFileCompatTarget(sourcePathW, false, true, false))
+			{
+				SetLastError(ERROR_FILE_NOT_FOUND);
+				if (sg_engineFileCompatLog) LogMessage(LogLevel::Info, L"[GetFileAttributesW] EngineCompat hidden: %s", sourcePathW);
+				return INVALID_FILE_ATTRIBUTES;
+			}
 			std::wstring redirectedPathW;
 			if (ResolveDirectoryRedirectPath(sourcePathW, redirectedPathW))
 			{
@@ -1836,6 +2815,18 @@
 			{
 				SetLastError(ERROR_FILE_NOT_FOUND);
 				LogMessage(LogLevel::Info, L"[GetFileAttributesExA] Block direct custom pak archive access: %s", sourcePath.c_str());
+				return FALSE;
+			}
+			if (IsEngineDxLibFontCacheTarget(sourcePath.c_str()))
+			{
+				SetLastError(ERROR_FILE_NOT_FOUND);
+				if (sg_engineFileCompatLog) LogMessage(LogLevel::Info, L"[GetFileAttributesExA] EngineCompat DxLib font cache hidden: %s", sourcePath.c_str());
+				return FALSE;
+			}
+			if (IsEngineFileCompatTarget(sourcePath.c_str(), false, true, false))
+			{
+				SetLastError(ERROR_FILE_NOT_FOUND);
+				if (sg_engineFileCompatLog) LogMessage(LogLevel::Info, L"[GetFileAttributesExA] EngineCompat hidden: %s", sourcePath.c_str());
 				return FALSE;
 			}
 			std::wstring redirectedPathW;
@@ -1952,6 +2943,18 @@
 			{
 				SetLastError(ERROR_FILE_NOT_FOUND);
 				LogMessage(LogLevel::Info, L"[GetFileAttributesExW] Block direct custom pak archive access: %s", sourcePathW);
+				return FALSE;
+			}
+			if (IsEngineDxLibFontCacheTarget(sourcePathW))
+			{
+				SetLastError(ERROR_FILE_NOT_FOUND);
+				if (sg_engineFileCompatLog) LogMessage(LogLevel::Info, L"[GetFileAttributesExW] EngineCompat DxLib font cache hidden: %s", sourcePathW);
+				return FALSE;
+			}
+			if (IsEngineFileCompatTarget(sourcePathW, false, true, false))
+			{
+				SetLastError(ERROR_FILE_NOT_FOUND);
+				if (sg_engineFileCompatLog) LogMessage(LogLevel::Info, L"[GetFileAttributesExW] EngineCompat hidden: %s", sourcePathW);
 				return FALSE;
 			}
 			std::wstring redirectedPathW;
@@ -2185,6 +3188,21 @@
 				ansiData.nFileSizeLow = wideData.nFileSizeLow;
 				std::string nameA = WideToAnsi(wideData.cFileName);
 				strncpy_s(ansiData.cFileName, nameA.c_str(), _TRUNCATE);
+			}
+
+			static bool ShouldFailEngineHiddenFindRequest(const FindRequestInfo& request)
+			{
+				if (IsEngineDxLibFontCacheTarget(request.sourcePath.c_str()))
+				{
+					if (sg_engineFileCompatLog) LogMessage(LogLevel::Info, L"[FindFirstFile] EngineCompat DxLib font cache hidden request: %s", request.sourcePath.c_str());
+					return true;
+				}
+				if (IsEngineFileCompatTarget(request.sourcePath.c_str(), false, false, true))
+				{
+					if (sg_engineFileCompatLog) LogMessage(LogLevel::Info, L"[FindFirstFile] EngineCompat hidden request: %s", request.sourcePath.c_str());
+					return true;
+				}
+				return false;
 			}
 
 			static void AddMergedFindEntry(std::unordered_map<std::wstring, WIN32_FIND_DATAW>& mergedEntries, const WIN32_FIND_DATAW& data)
@@ -2442,6 +3460,11 @@
 				entriesOut.clear();
 				FindRequestInfo request = {};
 				ParseFindRequest(sourcePathW, request);
+				if (ShouldFailEngineHiddenFindRequest(request))
+				{
+					SetLastError(ERROR_FILE_NOT_FOUND);
+					return true;
+				}
 				std::unordered_map<std::wstring, WIN32_FIND_DATAW> mergedEntries;
 				bool hasVirtual = CollectPatchVirtualFindEntries(request, mergedEntries);
 				bool allowCustomPak = !IsPathInsidePatchFolder(request.sourcePath.c_str());
@@ -2449,7 +3472,8 @@
 				{
 					hasVirtual = CollectCustomPakVirtualFindEntries(request, mergedEntries) || hasVirtual;
 				}
-				if (!hasVirtual)
+				const bool hasEngineFindRules = !sg_vecEngineFileCompatRules.empty() || !sg_vecEngineDxLibFontCacheRules.empty();
+				if (!hasVirtual && !hasEngineFindRules)
 				{
 					return false;
 				}
@@ -2457,13 +3481,29 @@
 				entriesOut.reserve(mergedEntries.size());
 				for (auto& pair : mergedEntries)
 				{
+					std::wstring itemPath = request.directoryPath;
+					if (!itemPath.empty() && itemPath.back() != L'\\')
+					{
+						itemPath += L'\\';
+					}
+					itemPath += pair.second.cFileName;
+					if (IsEngineDxLibFontCacheTarget(itemPath.c_str()))
+					{
+						if (sg_engineFileCompatLog) LogMessage(LogLevel::Info, L"[FindFirstFile] EngineCompat DxLib font cache filtered: %s", itemPath.c_str());
+						continue;
+					}
+					if (IsEngineFileCompatTarget(itemPath.c_str(), false, false, true))
+					{
+						if (sg_engineFileCompatLog) LogMessage(LogLevel::Info, L"[FindFirstFile] EngineCompat filtered: %s", itemPath.c_str());
+						continue;
+					}
 					entriesOut.push_back(std::move(pair.second));
 				}
 				std::sort(entriesOut.begin(), entriesOut.end(), [](const WIN32_FIND_DATAW& a, const WIN32_FIND_DATAW& b)
 					{
 						return _wcsicmp(a.cFileName, b.cFileName) < 0;
 					});
-				return !entriesOut.empty();
+				return hasVirtual || hasEngineFindRules;
 			}
 
 			static HANDLE TryCreateCustomPakDiskMappingW(const MemoryFileState& state,
@@ -3132,6 +4172,10 @@
 			// 启用文件 Hook
 		bool HookFileAPIs()
 		{
+			if (sg_fileApisAttached)
+			{
+				return true;
+			}
 			bool hasFailed = false;
 			bool failedCreateFileA = !TryDetourAttach(&rawCreateFileA_Patch, newCreateFileA_Patch);
 			bool failedCreateFileW = !TryDetourAttach(&rawCreateFileW_Patch, newCreateFileW_Patch);
@@ -3200,11 +4244,19 @@
 					failedFindNextFileW ? L"failed" : L"ok",
 					failedFindClose ? L"failed" : L"ok");
 			}
+			if (!hasFailed)
+			{
+				sg_fileApisAttached = true;
+			}
 			return !hasFailed;
 		}
 
 		bool UnhookFileAPIs()
 		{
+			if (!sg_fileApisAttached)
+			{
+				return true;
+			}
 			bool hasFailed = false;
 			bool failedCreateFileA = rawCreateFileA_Patch == CreateFileA ? false : !TryDetourDetach(&rawCreateFileA_Patch, newCreateFileA_Patch);
 			bool failedCreateFileW = rawCreateFileW_Patch == CreateFileW ? false : !TryDetourDetach(&rawCreateFileW_Patch, newCreateFileW_Patch);
@@ -3272,6 +4324,10 @@
 					failedFindNextFileA ? L"failed" : L"ok",
 					failedFindNextFileW ? L"failed" : L"ok",
 					failedFindClose ? L"failed" : L"ok");
+			}
+			if (!hasFailed)
+			{
+				sg_fileApisAttached = false;
 			}
 			return !hasFailed;
 		}

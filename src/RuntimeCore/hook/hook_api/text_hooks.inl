@@ -2580,12 +2580,23 @@
 			int length = c == -1 ? (lpstr ? (int)strlen(lpstr) : 0) : c;
 			std::string replaced = ProcessGlyphStageA(lpstr, length);
 			ScopedDrawHdcFontOverride fontOverride(hdc);
+			DWORD ret = GDI_ERROR;
+			int glyphCount = length;
 			if (length > 0 && !replaced.empty() && replaced != std::string(lpstr, length))
 			{
 				LogTextReplaceApiHitA(L"GetGlyphIndicesA", std::string(lpstr, length), replaced);
-				return rawGetGlyphIndicesA(hdc, replaced.c_str(), (int)replaced.length(), pgi, fl);
+				glyphCount = (int)replaced.length();
+				ret = rawGetGlyphIndicesA(hdc, replaced.c_str(), glyphCount, pgi, fl);
 			}
-			return rawGetGlyphIndicesA(hdc, lpstr, c, pgi, fl);
+			else
+			{
+				ret = rawGetGlyphIndicesA(hdc, lpstr, c, pgi, fl);
+			}
+			if (ret != GDI_ERROR && pgi && glyphCount > 0)
+			{
+				VirtualizeGlyphIndicesForHdc(hdc, pgi, glyphCount);
+			}
+			return ret;
 		}
 		DWORD WINAPI newGetGlyphIndicesA(HDC hdc, LPCSTR lpstr, int c, LPWORD pgi, DWORD fl)
 		{
@@ -2604,12 +2615,23 @@
 			int length = c == -1 ? (lpstr ? (int)wcslen(lpstr) : 0) : c;
 			std::wstring replaced = ProcessGlyphStageW(lpstr, length);
 			ScopedDrawHdcFontOverride fontOverride(hdc);
+			DWORD ret = GDI_ERROR;
+			int glyphCount = length;
 			if (length > 0 && !replaced.empty() && replaced != std::wstring(lpstr, length))
 			{
 				LogTextReplaceApiHitW(L"GetGlyphIndicesW", std::wstring(lpstr, length), replaced);
-				return rawGetGlyphIndicesW(hdc, replaced.c_str(), (int)replaced.length(), pgi, fl);
+				glyphCount = (int)replaced.length();
+				ret = rawGetGlyphIndicesW(hdc, replaced.c_str(), glyphCount, pgi, fl);
 			}
-			return rawGetGlyphIndicesW(hdc, lpstr, c, pgi, fl);
+			else
+			{
+				ret = rawGetGlyphIndicesW(hdc, lpstr, c, pgi, fl);
+			}
+			if (ret != GDI_ERROR && pgi && glyphCount > 0)
+			{
+				VirtualizeGlyphIndicesForHdc(hdc, pgi, glyphCount);
+			}
+			return ret;
 		}
 		DWORD WINAPI newGetGlyphIndicesW(HDC hdc, LPCWSTR lpstr, int c, LPWORD pgi, DWORD fl)
 		{
@@ -2635,7 +2657,7 @@
 			DWORD ret = 0;
 			if ((fuFormat & GGO_GLYPH_INDEX) != 0)
 			{
-				ret = rawGetGlyphOutlineA(hdc, uChar, fuFormat, lpgm, cjBuffer, pvBuffer, lpmat2);
+				ret = rawGetGlyphOutlineA(hdc, TranslateSingleVirtualGlyphIndexForHdc(hdc, (WORD)uChar), fuFormat, lpgm, cjBuffer, pvBuffer, lpmat2);
 				if (ret != GDI_ERROR && lpgm)
 				{
 					lpgm->gmptGlyphOrigin.x += sg_iGlyphOffsetX;
@@ -2784,7 +2806,7 @@
 			DWORD ret = 0;
 			if ((fuFormat & GGO_GLYPH_INDEX) != 0)
 			{
-				ret = rawGetGlyphOutlineW(hdc, uChar, fuFormat, lpgm, cjBuffer, pvBuffer, lpmat2);
+				ret = rawGetGlyphOutlineW(hdc, TranslateSingleVirtualGlyphIndexForHdc(hdc, (WORD)uChar), fuFormat, lpgm, cjBuffer, pvBuffer, lpmat2);
 				if (ret != GDI_ERROR && lpgm)
 				{
 					lpgm->gmptGlyphOrigin.x += sg_iGlyphOffsetX;

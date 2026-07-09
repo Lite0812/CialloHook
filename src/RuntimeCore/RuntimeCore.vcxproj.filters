@@ -4,6 +4,9 @@
     <Filter Include="base">
       <UniqueIdentifier>{9F2117CE-6601-4CD1-AE67-8782896A8EA3}</UniqueIdentifier>
     </Filter>
+    <Filter Include="font">
+      <UniqueIdentifier>{D3145F8F-415A-4A2E-8E9C-5D79A16D4F93}</UniqueIdentifier>
+    </Filter>
     <Filter Include="hook">
       <UniqueIdentifier>{1EE24DCD-957A-4949-A22B-FF574A8D00F2}</UniqueIdentifier>
     </Filter>
@@ -26,6 +29,9 @@
     </ClInclude>
     <ClInclude Include="base\Str.h">
       <Filter>base</Filter>
+    </ClInclude>
+    <ClInclude Include="font\font_patcher.h">
+      <Filter>font</Filter>
     </ClInclude>
     <ClInclude Include="hook\Hook.h">
       <Filter>hook</Filter>
@@ -91,6 +97,9 @@
     </ClCompile>
     <ClCompile Include="base\Str.cpp">
       <Filter>base</Filter>
+    </ClCompile>
+    <ClCompile Include="font\font_patcher.cpp">
+      <Filter>font</Filter>
     </ClCompile>
     <ClCompile Include="hook\Hook.cpp">
       <Filter>hook</Filter>

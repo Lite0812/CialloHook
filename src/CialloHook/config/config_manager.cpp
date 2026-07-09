@@ -208,6 +208,23 @@ namespace CialloHook
 		return fallback;
 	}
 
+	static std::wstring GetLowerStringOrDefault(ConfigReadContext& context, const wchar_t* section, const wchar_t* key, const wchar_t* fallback)
+	{
+		std::wstring value = Rut::StrX::Trim(GetStringOrDefault(context, section, key, fallback));
+		std::transform(value.begin(), value.end(), value.begin(), [](wchar_t ch) { return static_cast<wchar_t>(std::towlower(ch)); });
+		return value;
+	}
+
+	static bool IsConfigModeEnabled(const std::wstring& value)
+	{
+		return value == L"on" || value == L"true" || value == L"1" || value == L"auto" || value == L"safe" || value == L"full" || value == L"aggressive";
+	}
+
+	static bool IsConfigModeVerbose(const std::wstring& value)
+	{
+		return value == L"verbose" || value == L"debug";
+	}
+
 	static int GetIntOrDefault(ConfigReadContext& context, const wchar_t* section, const wchar_t* key, int fallback, int minValue = (std::numeric_limits<int>::min)(), int maxValue = (std::numeric_limits<int>::max)())
 	{
 		if (!context.ini.Has(section, key))
@@ -562,6 +579,13 @@ namespace CialloHook
 			settings.font.skipFonts = GetIndexedList(context, fontSection, L"SkipFontCount", L"SkipFontName_");
 			settings.font.redirectRules = GetIndexedFontRedirectRules(context, fontSection, L"RedirectFontCount");
 			settings.font.enableUIFontHook = GetBoolOrDefault(context, fontSection, L"EnableUIFontHook", true);
+			const std::wstring fontRiskPolicy = GetLowerStringOrDefault(context, fontSection, L"RiskPolicy", L"auto");
+			settings.font.fontEngineCompatMode = IsConfigModeEnabled(fontRiskPolicy);
+			settings.font.fontRiskAutoDowngrade = fontRiskPolicy != L"off" && fontRiskPolicy != L"none" && fontRiskPolicy != L"manual";
+			settings.font.fontRiskPolicyVerboseLog = IsConfigModeVerbose(fontRiskPolicy);
+			settings.font.compatSkipWideFontCreationOnSensitiveEngine = settings.font.fontRiskAutoDowngrade;
+			settings.font.compatSelectObjectTrackedOnly = settings.font.fontRiskAutoDowngrade;
+			settings.font.fontEngineProfile = GetStringOrDefault(context, fontSection, L"FontEngineProfile", L"auto");
 			const bool hookGroupCreate = GetBoolOrDefault(context, fontSection, L"HookGroupCreate", true);
 			const bool hookGroupEnumerate = GetBoolOrDefault(context, fontSection, L"HookGroupEnumerate", true);
 			const bool hookGroupMetrics = GetBoolOrDefault(context, fontSection, L"HookGroupMetrics", true);
@@ -577,10 +601,21 @@ namespace CialloHook
 			settings.font.hookEnumFontFamiliesExW = GetBoolOrDefault(context, fontSection, L"HookEnumFontFamiliesExW", hookGroupEnumerate);
 			settings.font.hookCreateFontIndirectExA = GetBoolOrDefault(context, fontSection, L"HookCreateFontIndirectExA", hookGroupCreate);
 			settings.font.hookCreateFontIndirectExW = GetBoolOrDefault(context, fontSection, L"HookCreateFontIndirectExW", hookGroupCreate);
+			settings.font.hookSelectObject = GetBoolOrDefault(context, fontSection, L"HookSelectObject", hookGroupMetrics);
+			settings.font.hookGetCurrentObject = GetBoolOrDefault(context, fontSection, L"HookGetCurrentObject", hookGroupMetrics);
+			const std::wstring glyphCompat = GetLowerStringOrDefault(context, fontSection, L"GlyphCompat", L"tracked");
+			settings.font.enableVirtualGlyphIndex = glyphCompat != L"off" && glyphCompat != L"false" && glyphCompat != L"0";
+			settings.font.virtualGlyphIndexForTrackedFontsOnly = glyphCompat != L"all" && glyphCompat != L"global";
+			const std::wstring fontDataPatch = GetLowerStringOrDefault(context, fontSection, L"FontDataPatch", L"full");
+			settings.font.enableFontDataPatch = fontDataPatch != L"off" && fontDataPatch != L"false" && fontDataPatch != L"0";
+			settings.font.enableFontNameTablePatch = fontDataPatch == L"full" || fontDataPatch == L"name" || fontDataPatch == L"all";
+			settings.font.enableFontCmapTablePatch = fontDataPatch == L"full" || fontDataPatch == L"cmap" || fontDataPatch == L"all";
 			settings.font.hookGetObjectA = GetBoolOrDefault(context, fontSection, L"HookGetObjectA", hookGroupMetrics);
 			settings.font.hookGetObjectW = GetBoolOrDefault(context, fontSection, L"HookGetObjectW", hookGroupMetrics);
 			settings.font.hookGetTextFaceA = GetBoolOrDefault(context, fontSection, L"HookGetTextFaceA", hookGroupMetrics);
 			settings.font.hookGetTextFaceW = GetBoolOrDefault(context, fontSection, L"HookGetTextFaceW", hookGroupMetrics);
+			settings.font.hookGetTextCharset = GetBoolOrDefault(context, fontSection, L"HookGetTextCharset", hookGroupMetrics);
+			settings.font.hookGetTextCharsetInfo = GetBoolOrDefault(context, fontSection, L"HookGetTextCharsetInfo", hookGroupMetrics);
 			settings.font.hookGetTextMetricsA = GetBoolOrDefault(context, fontSection, L"HookGetTextMetricsA", hookGroupMetrics);
 			settings.font.hookGetTextMetricsW = GetBoolOrDefault(context, fontSection, L"HookGetTextMetricsW", hookGroupMetrics);
 			settings.font.hookGetCharABCWidthsA = GetBoolOrDefault(context, fontSection, L"HookGetCharABCWidthsA", hookGroupMetrics);
@@ -1026,9 +1061,41 @@ namespace CialloHook
 			{
 				AppendWarning(context, L"RioShiina.SpecDvdFileSize 已设置，但 ProcessDvd=false；运行时不会启用 DVD 文件大小模拟");
 			}
-			settings.engineCache.med = GetBoolOrDefault(context, L"GLOBAL", L"MED", false);
-			settings.engineCache.majiro = GetBoolOrDefault(context, L"GLOBAL", L"MAJIRO", false);
-			settings.enginePatches.enableKrkrPatch = GetBoolOrDefault(context, L"Krkr", L"EnableKrkrPatch", false);
+			const wchar_t* engineCompatSection = L"EngineCompat";
+				settings.engineCompat.enable = GetBoolOrDefault(context, engineCompatSection, L"Enable", true);
+				settings.engineCompat.mode = Rut::StrX::Trim(GetStringOrDefault(context, engineCompatSection, L"Mode", L"auto"));
+				settings.engineCompat.forceEngine = Rut::StrX::Trim(GetStringOrDefault(context, engineCompatSection, L"ForceEngine", L"auto"));
+				settings.engineCompat.enableLog = GetBoolOrDefault(context, engineCompatSection, L"EnableLog", false);
+				const std::wstring engineFeatureSet = GetLowerStringOrDefault(context, engineCompatSection, L"FeatureSet", L"all");
+				const bool engineFeaturesEnabled = engineFeatureSet != L"off" && engineFeatureSet != L"none" && engineFeatureSet != L"false" && engineFeatureSet != L"0";
+				settings.engineCompat.enableTinkerBell = engineFeaturesEnabled;
+				settings.engineCompat.enableCyberworks = engineFeaturesEnabled;
+				settings.engineCompat.enableAdvHD = engineFeaturesEnabled;
+				settings.engineCompat.enableDxLibFontCache = engineFeaturesEnabled;
+				settings.engineCompat.enableMedFontCache = engineFeaturesEnabled;
+				settings.engineCompat.enableMajiroFontCache = engineFeaturesEnabled;
+				settings.engineCompat.enableSoftpalFont = engineFeaturesEnabled;
+				settings.engineCompat.enableMiraiFontData = engineFeaturesEnabled;
+				settings.engineCompat.enableArtemisFont = engineFeaturesEnabled;
+				settings.engineCompat.enableKrkrFont = engineFeaturesEnabled;
+				settings.engineCompat.enableEscudeFontConfig = engineFeaturesEnabled;
+				const std::wstring runtimePatch = GetLowerStringOrDefault(context, engineCompatSection, L"RuntimePatch", L"safe");
+				const bool runtimePatchEnabled = runtimePatch != L"off" && runtimePatch != L"none" && runtimePatch != L"false" && runtimePatch != L"0";
+				settings.engineCompat.artemisAggressiveCacheScan = runtimePatch == L"aggressive" || runtimePatch == L"full";
+				settings.engineCompat.krkrMapPrerenderedFontPatch = runtimePatchEnabled;
+				settings.engineCompat.softpalPalDllShim = runtimePatchEnabled;
+				if (settings.engineCompat.mode.empty())
+				{
+					settings.engineCompat.mode = L"auto";
+					AppendWarning(context, L"EngineCompat.Mode 为空，已回退为 auto");
+				}
+				if (settings.engineCompat.forceEngine.empty())
+				{
+					settings.engineCompat.forceEngine = L"auto";
+					AppendWarning(context, L"EngineCompat.ForceEngine 为空，已回退为 auto");
+				}
+
+settings.enginePatches.enableKrkrPatch = GetBoolOrDefault(context, L"Krkr", L"EnableKrkrPatch", false);
 			settings.enginePatches.krkrPatchVerboseLog = GetBoolOrDefault(context, L"Krkr", L"KrkrPatchVerboseLog", false);
 			settings.enginePatches.enableKrkrCxdecPatchBridge = GetBoolOrDefault(context, L"Krkr", L"EnableKrkrCxdecPatchBridge", false);
 			settings.enginePatches.krkrBootstrapBypass = GetBoolOrDefault(context, L"Krkr", L"KrkrBootstrapBypass", false);

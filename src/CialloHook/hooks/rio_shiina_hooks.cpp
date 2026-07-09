@@ -1530,8 +1530,8 @@ namespace CialloHook
 				sg_currentArchivePath.clear();
 				sg_archivesToExtract.clear();
 				sg_fileNamesInArchives.clear();
-					sg_patchRootFolders.clear();
-					sg_patchCustomPakFiles.clear();
+				sg_patchRootFolders.clear();
+				sg_patchCustomPakFiles.clear();
 				InterlockedExchange(&sg_runtimeInstallRequested, 0);
 				InterlockedExchange(&sg_runtimeInstallInProgress, 0);
 				InterlockedExchange(&sg_runtimeWorkerStarted, 0);
@@ -1540,8 +1540,8 @@ namespace CialloHook
 				InterlockedExchange(&sg_processDvdInstalled, 0);
 				InterlockedExchange(&sg_regObserved, 0);
 				InterlockedExchange(&sg_regInstallDelayElapsed, 0);
-					InterlockedExchange(&sg_findAndOpenDetached, 0);
-					InterlockedExchange(&sg_processRegDetached, 0);
+				InterlockedExchange(&sg_findAndOpenDetached, 0);
+				InterlockedExchange(&sg_processRegDetached, 0);
 				RemoveJumpPatch(sg_afterDecompressPatch);
 				if (sg_runtimeInstallEvent)
 				{

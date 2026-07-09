@@ -1,6 +1,8 @@
 #include "hook_modules.h"
 #include "alice_system3x_hooks.h"
 #include "binary_patch_1337.h"
+#include "font_engines/engine_compat.h"
+#include "font_engines/font_hook_policy.h"
 #include "krkr_plugin_bridge.h"
 #include "rio_shiina_hooks.h"
 #include "../config/build_options.h"
@@ -1494,7 +1496,7 @@ namespace CialloHook
 			return ResolveConfiguredFontTarget(settings.font, settings.fontNameOverride, L"Font");
 		}
 
-		void ApplyFontHooks(const FontSettings& settings)
+		void ApplyFontHooks(const FontSettings& settings, const EngineCompat::EngineCompatState* engineState)
 		{
 			const bool hasFontOverride = !IsBlankText(settings.font);
 			if (!hasFontOverride && !settings.enableCnJpMap)
@@ -1608,6 +1610,42 @@ namespace CialloHook
 				settings.hookGdipMeasureCharacterRanges ? 1 : 0,
 				settings.hookGdipMeasureDriverString ? 1 : 0,
 				settings.hookLoadLibraryExW || settings.hookLoadLibraryW ? 1 : 0);
+			SetFontSelectObjectTrackedOnly(engineState ? engineState->selectObjectTrackedOnly : settings.compatSelectObjectTrackedOnly);
+			SetFontVirtualGlyphIndexOptions(settings.enableVirtualGlyphIndex, settings.virtualGlyphIndexForTrackedFontsOnly);
+			SetFontDataPatchEnabled(settings.enableFontDataPatch);
+			SetFontTablePatchOptions(settings.enableFontNameTablePatch, settings.enableFontCmapTablePatch);
+			CIALLOHOOK_VERBOSE_INFO_LOG(L"ApplyFontHooks: replacementCache selectObject=%d getCurrentObject=%d trackedOnly=%d virtualGlyphIndex=%d virtualGlyphTrackedOnly=%d fontDataPatch=%d nameTablePatch=%d cmapPatch=%d",
+				settings.hookSelectObject ? 1 : 0,
+				settings.hookGetCurrentObject ? 1 : 0,
+				(engineState ? engineState->selectObjectTrackedOnly : settings.compatSelectObjectTrackedOnly) ? 1 : 0,
+				settings.enableVirtualGlyphIndex ? 1 : 0,
+				settings.virtualGlyphIndexForTrackedFontsOnly ? 1 : 0,
+				settings.enableFontDataPatch ? 1 : 0,
+				settings.enableFontNameTablePatch ? 1 : 0,
+				settings.enableFontCmapTablePatch ? 1 : 0,
+				(engineState && engineState->preferPinnedFontData) ? 1 : 0);
+			const FontHookPolicy::FontInstallPlan fontInstallPlan = engineState
+					? FontHookPolicy::BuildFontInstallPlan(settings, *engineState)
+					: FontHookPolicy::BuildFontInstallPlan(settings);
+			SetWideFontCreationOverrideEnabled(fontInstallPlan.createFontW.install || fontInstallPlan.createFontIndirectW.install);
+			auto logFontPolicyDecision = [&](FontHookPolicy::FontRiskApi api, bool configAllows, const FontHookPolicy::FontInstallDecision& decision)
+			{
+				if (!settings.fontRiskPolicyVerboseLog && (decision.install || !configAllows))
+				{
+					return;
+				}
+				LogMessage(decision.install ? LogLevel::Info : LogLevel::Warn,
+					L"FontPolicy: api=%s config=%d final=%d engine=%s compat=%d autoDowngrade=%d reason=%s",
+					FontHookPolicy::FontRiskApiName(api),
+					configAllows ? 1 : 0,
+					decision.install ? 1 : 0,
+					FontHookPolicy::FontEngineProfileName(fontInstallPlan.profile),
+					settings.fontEngineCompatMode ? 1 : 0,
+					settings.fontRiskAutoDowngrade ? 1 : 0,
+					FontHookPolicy::FontPolicyReasonName(decision.reason));
+			};
+			logFontPolicyDecision(FontHookPolicy::FontRiskApi::CreateFontW, settings.hookCreateFontW, fontInstallPlan.createFontW);
+			logFontPolicyDecision(FontHookPolicy::FontRiskApi::CreateFontIndirectW, settings.hookCreateFontIndirectW, fontInstallPlan.createFontIndirectW);
 			std::string fontNameA = WideToCodePage(fontName, 0);
 			uint32_t attachOkCount = 0;
 			uint32_t attachFailCount = 0;
@@ -1631,22 +1669,22 @@ namespace CialloHook
 
 			if (settings.hookCreateFontA)
 			{
-				HookCreateFontA(settings.charset, settings.enableCharsetSpoof, settings.spoofFromCharset, settings.spoofToCharset, SaveStrOnHeap(fontNameA), settings.fontHeight, settings.fontWidth, settings.fontWeight, settings.fontScale, settings.fontSpacingScale, settings.glyphAspectRatio, settings.glyphOffsetX, settings.glyphOffsetY, settings.metricsOffsetLeft, settings.metricsOffsetRight, settings.metricsOffsetTop, settings.metricsOffsetBottom);
+				logHookAttach(L"HookCreateFontA", HookCreateFontA(settings.charset, settings.enableCharsetSpoof, settings.spoofFromCharset, settings.spoofToCharset, SaveStrOnHeap(fontNameA), settings.fontHeight, settings.fontWidth, settings.fontWeight, settings.fontScale, settings.fontSpacingScale, settings.glyphAspectRatio, settings.glyphOffsetX, settings.glyphOffsetY, settings.metricsOffsetLeft, settings.metricsOffsetRight, settings.metricsOffsetTop, settings.metricsOffsetBottom));
 			}
 
 			if (settings.hookCreateFontIndirectA)
 			{
-				HookCreateFontIndirectA(settings.charset, settings.enableCharsetSpoof, settings.spoofFromCharset, settings.spoofToCharset, SaveStrOnHeap(fontNameA), settings.fontHeight, settings.fontWidth, settings.fontWeight, settings.fontScale, settings.fontSpacingScale, settings.glyphAspectRatio, settings.glyphOffsetX, settings.glyphOffsetY, settings.metricsOffsetLeft, settings.metricsOffsetRight, settings.metricsOffsetTop, settings.metricsOffsetBottom);
+				logHookAttach(L"HookCreateFontIndirectA", HookCreateFontIndirectA(settings.charset, settings.enableCharsetSpoof, settings.spoofFromCharset, settings.spoofToCharset, SaveStrOnHeap(fontNameA), settings.fontHeight, settings.fontWidth, settings.fontWeight, settings.fontScale, settings.fontSpacingScale, settings.glyphAspectRatio, settings.glyphOffsetX, settings.glyphOffsetY, settings.metricsOffsetLeft, settings.metricsOffsetRight, settings.metricsOffsetTop, settings.metricsOffsetBottom));
 			}
 
-			if (settings.hookCreateFontW)
+			if (fontInstallPlan.createFontW.install)
 			{
-				HookCreateFontW(settings.charset, settings.enableCharsetSpoof, settings.spoofFromCharset, settings.spoofToCharset, SaveWStrOnHeap(fontName), settings.fontHeight, settings.fontWidth, settings.fontWeight, settings.fontScale, settings.fontSpacingScale, settings.glyphAspectRatio, settings.glyphOffsetX, settings.glyphOffsetY, settings.metricsOffsetLeft, settings.metricsOffsetRight, settings.metricsOffsetTop, settings.metricsOffsetBottom);
+				logHookAttach(L"HookCreateFontW", HookCreateFontW(settings.charset, settings.enableCharsetSpoof, settings.spoofFromCharset, settings.spoofToCharset, SaveWStrOnHeap(fontName), settings.fontHeight, settings.fontWidth, settings.fontWeight, settings.fontScale, settings.fontSpacingScale, settings.glyphAspectRatio, settings.glyphOffsetX, settings.glyphOffsetY, settings.metricsOffsetLeft, settings.metricsOffsetRight, settings.metricsOffsetTop, settings.metricsOffsetBottom));
 			}
 
-			if (settings.hookCreateFontIndirectW)
+			if (fontInstallPlan.createFontIndirectW.install)
 			{
-				HookCreateFontIndirectW(settings.charset, settings.enableCharsetSpoof, settings.spoofFromCharset, settings.spoofToCharset, SaveWStrOnHeap(fontName), settings.fontHeight, settings.fontWidth, settings.fontWeight, settings.fontScale, settings.fontSpacingScale, settings.glyphAspectRatio, settings.glyphOffsetX, settings.glyphOffsetY, settings.metricsOffsetLeft, settings.metricsOffsetRight, settings.metricsOffsetTop, settings.metricsOffsetBottom);
+				logHookAttach(L"HookCreateFontIndirectW", HookCreateFontIndirectW(settings.charset, settings.enableCharsetSpoof, settings.spoofFromCharset, settings.spoofToCharset, SaveWStrOnHeap(fontName), settings.fontHeight, settings.fontWidth, settings.fontWeight, settings.fontScale, settings.fontSpacingScale, settings.glyphAspectRatio, settings.glyphOffsetX, settings.glyphOffsetY, settings.metricsOffsetLeft, settings.metricsOffsetRight, settings.metricsOffsetTop, settings.metricsOffsetBottom));
 			}
 
 			if (settings.hookEnumFontFamiliesExA)
@@ -1695,6 +1733,16 @@ namespace CialloHook
 				HookCreateFontIndirectExW();
 			}
 
+			if (settings.hookSelectObject)
+			{
+				logHookAttach(L"HookSelectObject", HookSelectObject());
+			}
+
+			if (settings.hookGetCurrentObject)
+			{
+				logHookAttach(L"HookGetCurrentObject", HookGetCurrentObject());
+			}
+
 			if (settings.hookGetObjectA)
 			{
 				HookGetObjectA();
@@ -1713,6 +1761,16 @@ namespace CialloHook
 			if (settings.hookGetTextFaceW)
 			{
 				HookGetTextFaceW();
+			}
+
+			if (settings.hookGetTextCharset)
+			{
+				logHookAttach(L"HookGetTextCharset", HookGetTextCharset());
+			}
+
+			if (settings.hookGetTextCharsetInfo)
+			{
+				logHookAttach(L"HookGetTextCharsetInfo", HookGetTextCharsetInfo());
 			}
 
 			if (settings.hookGetTextMetricsA)
@@ -1958,8 +2016,8 @@ namespace CialloHook
 			LogMessage(LogLevel::Debug, L"Font hooks enabled: A=%d IA=%d W=%d IW=%d EFA=%d EFW=%d",
 				settings.hookCreateFontA ? 1 : 0,
 				settings.hookCreateFontIndirectA ? 1 : 0,
-				settings.hookCreateFontW ? 1 : 0,
-				settings.hookCreateFontIndirectW ? 1 : 0,
+				fontInstallPlan.createFontW.install ? 1 : 0,
+				fontInstallPlan.createFontIndirectW.install ? 1 : 0,
 				settings.hookEnumFontFamiliesExA ? 1 : 0,
 				settings.hookEnumFontFamiliesExW ? 1 : 0);
 		}
@@ -2220,6 +2278,12 @@ namespace CialloHook
 			ApplyFilePatchHooks(settings.filePatch, settings.fileSpoof, settings.directoryRedirect, settings.enginePatches);
 #endif
 
+			EngineCompat::EngineCompatState engineCompatState = EngineCompat::DetectEngineCompatState(settings);
+			EngineCompat::LogEngineCompatState(engineCompatState, settings.engineCompat.enableLog || settings.font.fontRiskPolicyVerboseLog);
+#if CIALLOHOOK_FEATURE_FILE_PATCH || CIALLOHOOK_FEATURE_KRKR_PATCH
+			ApplyEngineCompatFileHooks(settings, engineCompatState);
+#endif
+
 #if CIALLOHOOK_FEATURE_BINARY_PATCH
 			CIALLOHOOK_VERBOSE_INFO_LOG(L"Apply hooks: binary patch");
 			ApplyBinaryPatches(settings.binaryPatch);
@@ -2284,7 +2348,7 @@ namespace CialloHook
 
 #if CIALLOHOOK_FEATURE_FONT
 			CIALLOHOOK_VERBOSE_INFO_LOG(L"Apply hooks: font");
-			ApplyFontHooks(settings.font);
+			ApplyFontHooks(settings.font, &engineCompatState);
 #endif
 			if (releaseStartupWindowGate)
 			{
@@ -2356,6 +2420,32 @@ namespace CialloHook
 						MB_OK | MB_ICONWARNING);
 				}
 			}
+		}
+
+		void ApplyEngineCompatFileHooks(const AppSettings& settings, const EngineCompat::EngineCompatState& engineCompatState)
+		{
+			const bool needsFileHooks = engineCompatState.hideFontCacheFiles
+				|| engineCompatState.needsVirtualFontFiles
+				|| engineCompatState.needsWindowsFontsRedirect;
+			if (!engineCompatState.enabled || !needsFileHooks)
+			{
+				EngineCompat::ApplyEngineCompatHooks(settings, engineCompatState);
+				return;
+			}
+			const bool detourBatchStarted = BeginDetourBatch();
+			bool hookSuccess = HookFileAPIs();
+			if (!CommitDetourBatchIfStarted(detourBatchStarted, L"ApplyEngineCompatFileHooks detour batch"))
+			{
+				hookSuccess = false;
+				LogMessage(LogLevel::Warn, L"ApplyEngineCompatFileHooks: detour batch commit failed");
+			}
+			EngineCompat::ApplyEngineCompatHooks(settings, engineCompatState);
+			LogMessage(hookSuccess ? LogLevel::Info : LogLevel::Warn,
+				L"ApplyEngineCompatFileHooks: hideCache=%d virtualFonts=%d windowsFontsRedirect=%d hook=%s",
+				engineCompatState.hideFontCacheFiles ? 1 : 0,
+				engineCompatState.needsVirtualFontFiles ? 1 : 0,
+				engineCompatState.needsWindowsFontsRedirect ? 1 : 0,
+				hookSuccess ? L"success" : L"failed");
 		}
 
 		void ApplyFilePatchHooks(const FilePatchSettings& patchSettings, const FileSpoofSettings& spoofSettings, const DirectoryRedirectSettings& directoryRedirectSettings, const EnginePatchSettings& enginePatchSettings)

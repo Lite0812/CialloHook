@@ -33,6 +33,10 @@ typedef int (WINAPI* pEnumFontFamiliesExW)(HDC hdc, LPLOGFONTW lpLogfont, pFONTE
 
 typedef HGDIOBJ(WINAPI* pSelectObject)(HDC hdc, HGDIOBJ h);
 
+typedef HGDIOBJ(WINAPI* pGetCurrentObject)(HDC hdc, UINT type);
+
+typedef BOOL(WINAPI* pDeleteObject)(HGDIOBJ ho);
+
 typedef int(WINAPI* pGetObjectA)(HANDLE h, int c, LPVOID pv);
 
 typedef int(WINAPI* pGetObjectW)(HANDLE h, int c, LPVOID pv);
@@ -40,6 +44,10 @@ typedef int(WINAPI* pGetObjectW)(HANDLE h, int c, LPVOID pv);
 typedef int(WINAPI* pGetTextFaceA)(HDC hdc, int c, LPSTR lpName);
 
 typedef int(WINAPI* pGetTextFaceW)(HDC hdc, int c, LPWSTR lpName);
+
+typedef int(WINAPI* pGetTextCharset)(HDC hdc);
+
+typedef int(WINAPI* pGetTextCharsetInfo)(HDC hdc, LPFONTSIGNATURE lpSig, DWORD dwFlags);
 
 typedef BOOL(WINAPI* pGetTextMetricsA)(HDC hdc, LPTEXTMETRICA lptm);
 

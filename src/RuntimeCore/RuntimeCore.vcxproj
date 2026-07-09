@@ -21,6 +21,7 @@
   <ItemGroup>
     <ClInclude Include="base\Mem.h" />
     <ClInclude Include="base\Str.h" />
+    <ClInclude Include="font\font_patcher.h" />
     <ClInclude Include="hook\Hook.h" />
     <ClInclude Include="hook\Hook_API.h" />
     <ClInclude Include="hook\Hook_API_DEF.h" />
@@ -44,6 +45,7 @@
   <ItemGroup>
     <ClCompile Include="base\Mem.cpp" />
     <ClCompile Include="base\Str.cpp" />
+    <ClCompile Include="font\font_patcher.cpp" />
     <ClCompile Include="hook\Hook.cpp" />
     <ClCompile Include="hook\Hook_API.cpp" />
     <ClCompile Include="hook\LocaleEmulatorSupport.cpp" />

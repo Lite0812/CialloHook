@@ -2,6 +2,7 @@
 #include "Hook.h"
 #include "Hook_API_DEF.h"
 #include "CustomPakVFS.h"
+#include "../font/font_patcher.h"
 
 #if __has_include("../../CialloHook/config/build_options.h")
 #include "../../CialloHook/config/build_options.h"
@@ -58,6 +59,7 @@
 #include <cstdio>
 #include <cstdarg>
 #include <cstring>
+#include <cwctype>
 #include <intrin.h>
 #include <share.h>
 #include <shlobj.h>
@@ -688,6 +690,8 @@ namespace Rut
 		CIALLOHOOK_STUB_FONT_HOOK0(HookGetObjectW)
 		CIALLOHOOK_STUB_FONT_HOOK0(HookGetTextFaceA)
 		CIALLOHOOK_STUB_FONT_HOOK0(HookGetTextFaceW)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookGetTextCharset)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookGetTextCharsetInfo)
 		CIALLOHOOK_STUB_FONT_HOOK0(HookGetTextMetricsA)
 		CIALLOHOOK_STUB_FONT_HOOK0(HookGetTextMetricsW)
 		CIALLOHOOK_STUB_FONT_HOOK0(HookGetCharABCWidthsA)
@@ -716,6 +720,14 @@ namespace Rut
 		CIALLOHOOK_STUB_FONT_HOOK1(HookEnumFontFamiliesW, bool)
 		CIALLOHOOK_STUB_FONT_HOOK0(HookChooseFontA)
 		CIALLOHOOK_STUB_FONT_HOOK0(HookChooseFontW)
+		void SetFontSelectObjectTrackedOnly(bool) {}
+		void SetWideFontCreationOverrideEnabled(bool) {}
+		void SetFontVirtualGlyphIndexOptions(bool, bool) {}
+		void SetFontDataPatchEnabled(bool) {}
+		void SetFontTablePatchOptions(bool, bool) {}
+		void SetFontEngineDataCompatOptions(bool, bool) {}
+		CIALLOHOOK_STUB_FONT_HOOK0(HookSelectObject)
+		CIALLOHOOK_STUB_FONT_HOOK0(HookGetCurrentObject)
 		CIALLOHOOK_STUB_FONT_HOOK0(HookGetCharWidthFloatA)
 		CIALLOHOOK_STUB_FONT_HOOK0(HookGetCharWidthFloatW)
 		CIALLOHOOK_STUB_FONT_HOOK0(HookGetCharWidthI)
@@ -855,6 +867,14 @@ namespace Rut
 		void SetDirectoryRedirectRules(const wchar_t* const*, const wchar_t* const*, size_t, bool) {}
 		void SetSyntheticFilePrefixSizeRule(const wchar_t*, uint64_t, bool) {}
 		void ClearSyntheticFileRules() {}
+		void ClearEngineFileCompatRules() {}
+		void AddEngineHideFileRule(const wchar_t*, bool, bool, bool) {}
+		void AddEngineDxLibFontCacheRule(const wchar_t*) {}
+		void AddEngineVirtualFileRule(const wchar_t*, const wchar_t*, bool, bool) {}
+		void AddEnginePatchedTextFileRule(const wchar_t*, const wchar_t*, const wchar_t*, bool, bool) {}
+		void AddEngineMemoryFileRule(const wchar_t*, const uint8_t*, size_t, bool, bool) {}
+		void SetEngineWindowsFontsRedirectFile(const wchar_t*) {}
+		void SetEngineFileCompatLogEnabled(bool) {}
 		void SetCustomPakVFS(bool, const wchar_t* const*, size_t, bool) {}
 		void SetCustomPakReadMode(int) {}
 		bool TryGetCustomPakDiskCachePath(const wchar_t*, std::wstring&) { return false; }

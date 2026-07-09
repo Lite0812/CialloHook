@@ -200,7 +200,7 @@ FEATURES: list[Feature] = [
     Feature("CIALLOHOOK_FEATURE_RIO_SHIINA", "RioShiina", "RioShiina 资源覆盖、WARC 解包、注册表/DVD 辅助。"),
     Feature("CIALLOHOOK_FEATURE_BINARY_PATCH", "二进制补丁", "预入口/运行时二进制补丁和硬件断点触发。"),
     Feature("CIALLOHOOK_FEATURE_CODECRYPT_PATCH", "Release 代码加密补丁", "编译后加密 .lpksc 代码段；体积影响小，但更容易触发误报。"),
-    Feature("CIALLOHOOK_FEATURE_ENGINE_CACHE", "引擎缓存/Waffle", "MED / MAJIRO 字体缓存清理，以及 Waffle 文本崩溃修复。"),
+    Feature("CIALLOHOOK_FEATURE_ENGINE_CACHE", "引擎兼容/Waffle", "EngineCompat 引擎兼容层，以及 Waffle 文本崩溃修复。"),
     Feature("CIALLOHOOK_FEATURE_KRKR_PATCH", "Krkr Patch", "KRKR 补丁、Bootstrap 绕过和 Cxdec StorageMedia 桥接。"),
     Feature("CIALLOHOOK_FEATURE_PROXY_EXPORTS", "winmm/version 代理导出", "需要把 DLL 改名为 winmm.dll 或 version.dll 代理加载时启用；普通注入/Launcher 可关闭以减小 DLL。"),
 ]
@@ -273,10 +273,14 @@ FONT_HOOKS = [
     "hookEnumFontFamiliesExW",
     "hookCreateFontIndirectExA",
     "hookCreateFontIndirectExW",
+    "hookSelectObject",
+    "hookGetCurrentObject",
     "hookGetObjectA",
     "hookGetObjectW",
     "hookGetTextFaceA",
     "hookGetTextFaceW",
+    "hookGetTextCharset",
+    "hookGetTextCharsetInfo",
     "hookGetTextMetricsA",
     "hookGetTextMetricsW",
     "hookGetCharABCWidthsA",
@@ -388,8 +392,8 @@ TEXT_HOOKS = [
 FONT_HOOK_DEFAULTS = {name: True for name in FONT_HOOKS}
 FONT_HOOK_DEFAULTS.update(
     {
-        "hookCreateFontW": False,
-        "hookCreateFontIndirectW": False,
+        "hookCreateFontW": True,
+        "hookCreateFontIndirectW": True,
         "hookGdipCreateFontFromHFONT": False,
     }
 )
@@ -413,6 +417,10 @@ FIELDS: list[Field] = [
     Field("font_spoof_from", "SpoofFromCharset", "hexint", "0x80", "font.spoofFromCharset"),
     Field("font_spoof_to", "SpoofToCharset", "hexint", "0x01", "font.spoofToCharset"),
     Field("font_ui_enable", "启用 UI 字体 Hook", "bool", True, "font.enableUIFontHook"),
+    Field("font_risk_policy", "风险策略", "choice", "auto", "font.riskPolicy", options=("off", "auto", "safe", "verbose")),
+    Field("font_engine_profile", "字体引擎 Profile", "choice", "auto", "font.fontEngineProfile", options=("auto", "none", "sensitive", "tinkerbell", "cyberworks", "advhd", "dxlib", "med", "majiro", "softpal", "mirai", "artemis", "artemis_legacy", "krkr", "escude")),
+    Field("font_glyph_compat", "Glyph 兼容", "choice", "tracked", "font.glyphCompat", options=("off", "tracked", "all")),
+    Field("font_data_patch", "字体数据 Patch", "choice", "full", "font.fontDataPatch", options=("off", "basic", "full")),
     Field("font_unlock", "解锁字体枚举", "bool", False, "font.unlockFontSelection"),
     Field("font_verbose", "字体 Hook 详细日志", "bool", False, "font.fontHookVerboseLog"),
     Field("font_cnjp_enable", "启用日繁/异体字映射", "bool", False, "font.enableCnJpMap"),
@@ -507,8 +515,12 @@ FIELDS: list[Field] = [
     Field("rio_process_reg", "处理注册表资源", "bool", True, "rioShiina.processReg"),
     Field("rio_process_dvd", "处理 DVD 资源", "bool", False, "rioShiina.processDvd"),
     Field("rio_spec_dvd_size", "指定 DVD 文件大小", "uint64text", "0", "rioShiina.specDvdFileSize"),
-    Field("engine_cache_med", "清理 MED 缓存", "bool", False, "engineCache.med"),
-    Field("engine_cache_majiro", "清理 MAJIRO 缓存", "bool", False, "engineCache.majiro"),
+    Field("engine_compat_enable", "启用引擎兼容层", "bool", True, "engineCompat.enable"),
+    Field("engine_compat_mode", "引擎兼容模式", "choice", "auto", "engineCompat.mode", options=("off", "safe", "auto", "aggressive")),
+    Field("engine_compat_force", "强制引擎", "choice", "auto", "engineCompat.forceEngine", options=("auto", "tinkerbell", "cyberworks", "advhd", "dxlib", "med", "majiro", "softpal", "mirai", "artemis", "artemis_legacy", "krkr", "escude")),
+    Field("engine_compat_feature_set", "引擎特性集", "choice", "all", "engineCompat.featureSet", options=("off", "all")),
+    Field("engine_compat_runtime_patch", "运行时补丁", "choice", "safe", "engineCompat.runtimePatch", options=("off", "safe", "aggressive")),
+    Field("engine_compat_log", "引擎兼容日志", "bool", False, "engineCompat.enableLog"),
     Field("krkr_patch_enable", "启用 KrkrPatch", "bool", False, "enginePatches.enableKrkrPatch"),
     Field("krkr_patch_verbose", "KrkrPatch 详细日志", "bool", False, "enginePatches.krkrPatchVerboseLog"),
     Field("krkr_bootstrap_bypass", "启用 KRKR Bootstrap/Cxdec 校验绕过", "bool", False, "enginePatches.krkrBootstrapBypass"),
@@ -575,6 +587,10 @@ FIELD_HELP: dict[str, str] = {
     "font_spoof_from": "被替换的原始字符集。",
     "font_spoof_to": "替换后的目标字符集。",
     "font_ui_enable": "控制 UI/现代字体链路 Hook：DWrite、D2D、GDI+、ChooseFont 以及 late-load 补钩；关闭后保留普通 GDI 字体创建/度量 Hook。",
+    "font_risk_policy": "off 关闭引擎风险降级；auto/safe 自动按引擎降级；verbose 额外输出安装/跳过原因。",
+    "font_engine_profile": "auto 未知不降级；sensitive/tinkerbell/cyberworks 跳过 W/IW；advhd 保留 W/IW。",
+    "font_glyph_compat": "off 关闭虚拟 glyph index；tracked 仅替换字体启用；all 全局启用。",
+    "font_data_patch": "off 关闭；basic 只补 codepage range；full 同时 patch name/cmap/checksum。",
     "font_unlock": "字体枚举时不过滤字体/字符集，可看到更多字体。",
     "font_verbose": "记录每次字体 API 命中，日志量较大。",
     "font_cnjp_enable": "读取映射文件，在字形查询/宽度/绘制阶段做字形映射。",
@@ -669,12 +685,16 @@ FIELD_HELP: dict[str, str] = {
     "rio_process_reg": "处理封包中的注册表资源。",
     "rio_process_dvd": "处理 DVD 资源。",
     "rio_spec_dvd_size": "手动指定 DVD 文件大小，0 表示自动。",
-    "engine_cache_med": "清理/绕过 MED 字体缓存。",
-    "engine_cache_majiro": "清理/绕过 MAJIRO 字体缓存。",
     "waffle_patch_enable": "启用 Waffle 文本相关兼容补丁。",
+    "engine_compat_enable": "启用独立引擎兼容层，自动识别引擎并接入字体风险策略/缓存隐藏。",
+    "engine_compat_mode": "off 关闭；safe/auto 保守识别；aggressive 允许 x86 运行时扫描类补丁参与。",
+    "engine_compat_force": "强制指定引擎 profile，用于样本验证或自动检测失败时覆盖。",
+    "engine_compat_feature_set": "off 关闭所有引擎特性；all 启用缓存/虚拟字体/表 patch 主路径。",
+    "engine_compat_runtime_patch": "off 关闭二进制/运行时补丁；safe 只启用安全补丁；aggressive 允许 x86 内存扫描类补丁。",
+    "engine_compat_log": "输出引擎检测理由和文件兼容规则。",
     "krkr_patch_enable": "启用 KRKR 补丁链处理。",
     "krkr_patch_verbose": "输出 KRKR 文件流详细日志。",
-    "krkr_bootstrap_bypass": "krkrz / cxdec 校验绕过；开启后 hook LoadLibraryExW，并在加载 appdata\\local\\temp 下的临时 DLL 前应用 Fuck_Cxdec_Check 风格 x86 文件补丁。",
+    "krkr_bootstrap_bypass": "krkrz / cxdec 校验绕过；开启后 hook LoadLibraryExW，并在加载 appdata\\local\\temp 下的临时 DLL 前应用 x86 文件校验绕过补丁。",
     "krkr_cxdec_patch_bridge": "启用 KRKR/Cxdec StorageMedia 补丁桥接，让 cxdec 场景也能命中补丁目录 / xp3 / CustomPak；.sig 等验证敏感资源直接交给原始 cxdec media，避免补丁层影响校验。",
     "binary_enable": "启用 .1337 二进制补丁。",
     "binary_log": "输出二进制补丁日志。",
@@ -1113,10 +1133,72 @@ def write_overrides(detail: dict[str, Any], tables: dict[str, list[list[str]]], 
     launcher_lines: list[str] = []
     has_feature = lambda key: feature_enabled(features, key)
 
+    skip_app_fields = {
+        "font_risk_policy",
+        "font_glyph_compat",
+        "font_data_patch",
+        "engine_compat_feature_set",
+        "engine_compat_runtime_patch",
+    }
     for field in FIELDS:
-        if field.path.startswith("launcher."):
+        if field.path.startswith("launcher.") or field.key in skip_app_fields:
             continue
         app_lines.append(f"\t\tsettings.{field.path} = {detail_cpp_value(field, detail)};")
+
+    font_risk_policy = str(detail["font_risk_policy"]).strip().lower()
+    font_risk_auto_downgrade = font_risk_policy not in {"off", "none", "manual"}
+    font_engine_compat_mode = font_risk_policy not in {"off", "none", "false", "0"}
+    font_risk_verbose_log = font_risk_policy in {"verbose", "debug"}
+    app_lines.extend([
+        f"\t\tsettings.font.fontEngineCompatMode = {cpp_bool(font_engine_compat_mode)};",
+        f"\t\tsettings.font.fontRiskAutoDowngrade = {cpp_bool(font_risk_auto_downgrade)};",
+        f"\t\tsettings.font.fontRiskPolicyVerboseLog = {cpp_bool(font_risk_verbose_log)};",
+        f"\t\tsettings.font.compatSkipWideFontCreationOnSensitiveEngine = {cpp_bool(font_risk_auto_downgrade)};",
+        f"\t\tsettings.font.compatSelectObjectTrackedOnly = {cpp_bool(font_risk_auto_downgrade)};",
+    ])
+
+    glyph_compat = str(detail["font_glyph_compat"]).strip().lower()
+    enable_virtual_glyph_index = glyph_compat not in {"off", "false", "0"}
+    virtual_glyph_tracked_only = glyph_compat not in {"all", "global"}
+    app_lines.extend([
+        f"\t\tsettings.font.enableVirtualGlyphIndex = {cpp_bool(enable_virtual_glyph_index)};",
+        f"\t\tsettings.font.virtualGlyphIndexForTrackedFontsOnly = {cpp_bool(virtual_glyph_tracked_only)};",
+    ])
+
+    font_data_patch = str(detail["font_data_patch"]).strip().lower()
+    enable_font_data_patch = font_data_patch not in {"off", "false", "0"}
+    enable_font_name_table_patch = font_data_patch in {"full", "name", "all"}
+    enable_font_cmap_table_patch = font_data_patch in {"full", "cmap", "all"}
+    app_lines.extend([
+        f"\t\tsettings.font.enableFontDataPatch = {cpp_bool(enable_font_data_patch)};",
+        f"\t\tsettings.font.enableFontNameTablePatch = {cpp_bool(enable_font_name_table_patch)};",
+        f"\t\tsettings.font.enableFontCmapTablePatch = {cpp_bool(enable_font_cmap_table_patch)};",
+    ])
+
+    engine_features_enabled = str(detail["engine_compat_feature_set"]).strip().lower() not in {"off", "none", "false", "0"}
+    for attr in [
+        "enableTinkerBell",
+        "enableCyberworks",
+        "enableAdvHD",
+        "enableDxLibFontCache",
+        "enableMedFontCache",
+        "enableMajiroFontCache",
+        "enableSoftpalFont",
+        "enableMiraiFontData",
+        "enableArtemisFont",
+        "enableKrkrFont",
+        "enableEscudeFontConfig",
+    ]:
+        app_lines.append(f"\t\tsettings.engineCompat.{attr} = {cpp_bool(engine_features_enabled)};")
+
+    runtime_patch = str(detail["engine_compat_runtime_patch"]).strip().lower()
+    runtime_patch_enabled = runtime_patch not in {"off", "none", "false", "0"}
+    artemis_aggressive_cache_scan = runtime_patch in {"aggressive", "full"}
+    app_lines.extend([
+        f"\t\tsettings.engineCompat.artemisAggressiveCacheScan = {cpp_bool(artemis_aggressive_cache_scan)};",
+        f"\t\tsettings.engineCompat.krkrMapPrerenderedFontPatch = {cpp_bool(runtime_patch_enabled)};",
+        f"\t\tsettings.engineCompat.softpalPalDllShim = {cpp_bool(runtime_patch_enabled)};",
+    ])
     for table in TABLES:
         if table.path.startswith("launcher."):
             continue
@@ -1323,6 +1405,10 @@ def build_ciallohook_ini_text(detail: dict[str, Any], tables: dict[str, list[lis
             ("CnJpMapJson", "font_cnjp_json"),
             ("CnJpMapReadEncoding", "font_cnjp_read_encoding"),
             ("EnableUIFontHook", "font_ui_enable"),
+            ("RiskPolicy", "font_risk_policy"),
+            ("FontEngineProfile", "font_engine_profile"),
+            ("GlyphCompat", "font_glyph_compat"),
+            ("FontDataPatch", "font_data_patch"),
             ("UnlockFontSelection", "font_unlock"),
             ("FontHookVerboseLog", "font_verbose"),
             ("FontHeight", "font_height"),
@@ -1500,10 +1586,17 @@ def build_ciallohook_ini_text(detail: dict[str, Any], tables: dict[str, list[lis
 
     if has_feature("CIALLOHOOK_FEATURE_ENGINE_CACHE"):
         append_section(lines, "GLOBAL")
+        append_kv(lines, "EnableWafflePatch", ini_value_for_field(detail, "waffle_patch_enable"))
+
+    if has_feature("CIALLOHOOK_FEATURE_ENGINE_CACHE"):
+        append_section(lines, "EngineCompat")
         for ini_key, detail_key in [
-            ("MED", "engine_cache_med"),
-            ("MAJIRO", "engine_cache_majiro"),
-            ("EnableWafflePatch", "waffle_patch_enable"),
+            ("Enable", "engine_compat_enable"),
+            ("Mode", "engine_compat_mode"),
+            ("ForceEngine", "engine_compat_force"),
+            ("FeatureSet", "engine_compat_feature_set"),
+            ("RuntimePatch", "engine_compat_runtime_patch"),
+            ("EnableLog", "engine_compat_log"),
         ]:
             append_kv(lines, ini_key, ini_value_for_field(detail, detail_key))
 
@@ -1650,10 +1743,25 @@ def parse_ini_values(text: str) -> dict[str, dict[str, str]]:
     return values
 
 
-def merge_ini_preserving_comments(base_text: str, desired_text: str) -> str:
+def merge_ini_preserving_comments(base_text: str, desired_text: str, default_text: str = "") -> str:
     desired = parse_ini_values(desired_text)
+    defaults = parse_ini_values(default_text) if default_text else {}
     if not base_text.strip():
-        return desired_text
+        if not defaults:
+            return desired_text
+        lines: list[str] = ["# Generated by tools/build_gui.py", "# UTF-8", ""]
+        for section, section_values in desired.items():
+            filtered_values = {
+                key: value
+                for key, value in section_values.items()
+                if defaults.get(section, {}).get(key) != value
+            }
+            if not filtered_values:
+                continue
+            append_section(lines, section)
+            for key, value in filtered_values.items():
+                append_kv(lines, key, value)
+        return "\n".join(lines).rstrip() + "\n"
 
     lines = base_text.splitlines()
     output: list[str] = []
@@ -1707,16 +1815,21 @@ def merge_ini_preserving_comments(base_text: str, desired_text: str) -> str:
             heading_index -= 1
         return lines_to_scan[heading_index:]
 
+    def should_write_missing(section: str, key: str, value: str) -> bool:
+        repeatable_match = repeatable_key_pattern.match(key)
+        if repeatable_match and repeatable_match.group(1) in repeatable_prefixes.get(section, set()):
+            return True
+        if key in template_keys.get(section, set()):
+            return False
+        return defaults.get(section, {}).get(key) != value
+
     def flush_missing(section: str) -> None:
         if not section or section not in desired:
             return
-        prefixes = repeatable_prefixes.get(section, set())
         for key, value in desired[section].items():
-            if key not in seen[section]:
-                repeatable_match = repeatable_key_pattern.match(key)
-                if repeatable_match and repeatable_match.group(1) in prefixes:
-                    output.append(f"{key} = {value}")
-                    seen[section].add(key)
+            if key not in seen[section] and should_write_missing(section, key, value):
+                output.append(f"{key} = {value}")
+                seen[section].add(key)
 
     for line in lines:
         section_match = section_pattern.match(line)
@@ -1745,7 +1858,9 @@ def merge_ini_preserving_comments(base_text: str, desired_text: str) -> str:
             key = commented_value_match.group(2).strip()
             output.append(line)
             if key in desired[current_section] and key not in seen[current_section]:
-                output.append(f"{key} = {desired[current_section][key]}")
+                value = desired[current_section][key]
+                if defaults.get(current_section, {}).get(key) != value:
+                    output.append(f"{key} = {value}")
                 seen[current_section].add(key)
             continue
 
@@ -1769,10 +1884,17 @@ def merge_ini_preserving_comments(base_text: str, desired_text: str) -> str:
     for section, section_values in desired.items():
         if section in existing_sections:
             continue
+        filtered_values = {
+            key: value
+            for key, value in section_values.items()
+            if defaults.get(section, {}).get(key) != value
+        }
+        if not filtered_values:
+            continue
         if output and output[-1] != "":
             output.append("")
         output.append(f"[{section}]")
-        for key, value in section_values.items():
+        for key, value in filtered_values.items():
             output.append(f"{key} = {value}")
 
     return "\n".join(output).rstrip() + "\n"
@@ -1789,6 +1911,9 @@ def read_ini_base(output_path: Path, template_path: Path) -> str:
 def write_ini_files(state: dict[str, Any]) -> list[Path]:
     hook_text = build_ciallohook_ini_text(state["detail"], state["tables"], state["features"])
     launcher_text = build_launcher_ini_text(state["detail"], state["tables"], state["features"])
+    default_state = make_default_state()
+    default_hook_text = build_ciallohook_ini_text(default_state["detail"], default_state["tables"], default_state["features"])
+    default_launcher_text = build_launcher_ini_text(default_state["detail"], default_state["tables"], default_state["features"])
     written_paths: list[Path] = []
     for platform in build_platforms(state["platform"]):
         paths = output_ini_paths_for_platform(state, platform)
@@ -1803,10 +1928,10 @@ def write_ini_files(state: dict[str, Any]) -> list[Path]:
                     paths[name].unlink()
         for name in hook_ini_names:
             base = read_ini_base(paths[name], ROOT / "src" / "CialloHook" / "config" / "CialloHook.ini")
-            paths[name].write_text(merge_ini_preserving_comments(base, hook_text), encoding="utf-8")
+            paths[name].write_text(merge_ini_preserving_comments(base, hook_text, default_hook_text), encoding="utf-8")
             written_paths.append(paths[name])
         launcher_base = read_ini_base(paths["CialloLauncher.ini"], ROOT / "src" / "CialloLauncher" / "CialloLauncher.ini")
-        paths["CialloLauncher.ini"].write_text(merge_ini_preserving_comments(launcher_base, launcher_text), encoding="utf-8")
+        paths["CialloLauncher.ini"].write_text(merge_ini_preserving_comments(launcher_base, launcher_text, default_launcher_text), encoding="utf-8")
         written_paths.append(paths["CialloLauncher.ini"])
     return written_paths
 
@@ -1939,6 +2064,25 @@ class TableEditor(QWidget):
             raise ValueError("译文后存在多余内容")
         return left, right
 
+    @classmethod
+    def parse_txt_table_line(cls, line: str, width: int) -> list[str]:
+        values: list[str] = []
+        index = 0
+        while index < len(line):
+            while index < len(line) and line[index] == "\t":
+                index += 1
+            value, index = cls.read_quoted_txt_value(line, index)
+            values.append(value)
+            while index < len(line) and line[index] == "\t":
+                index += 1
+            if index < len(line) and line[index] not in {'"', '“'}:
+                raise ValueError("多列表格需要使用制表符分隔每个带引号的单元格")
+        if len(values) > width:
+            raise ValueError(f"列数过多，应为 {width} 列")
+        while len(values) < width:
+            values.append("")
+        return values
+
     def export_txt_rules(self) -> None:
         path, _ = QFileDialog.getSaveFileName(self, f"导出 {self.spec.label}", f"{self.spec.key}.txt", "文本文件 (*.txt);;所有文件 (*)")
         if not path:
@@ -1947,11 +2091,18 @@ class TableEditor(QWidget):
         for row in self.value():
             if len(row) < 2:
                 continue
-            left = self.escape_txt_rule_value(row[0], '"')
-            right = self.escape_txt_rule_value(row[1], "“")
-            lines.append(f'"{left}":“{right}”')
+            if len(self.spec.columns) == 2:
+                left = self.escape_txt_rule_value(row[0], '"')
+                right = self.escape_txt_rule_value(row[1], "“")
+                lines.append(f'"{left}":“{right}”')
+            else:
+                cells: list[str] = []
+                for column in range(len(self.spec.columns)):
+                    value = row[column] if column < len(row) else ""
+                    cells.append(f'"{self.escape_txt_rule_value(value, chr(34))}"')
+                lines.append("\t".join(cells))
         Path(path).write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
-        QMessageBox.information(self, "导出完成", f"已导出 {len(lines)} 条规则。")
+        QMessageBox.information(self, "导出完成", f"已导出 {len(lines)} 条记录。")
 
     def import_txt_rules(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, f"导入 {self.spec.label}", "", "文本文件 (*.txt);;所有文件 (*)")
@@ -1965,15 +2116,19 @@ class TableEditor(QWidget):
                 if not line.strip():
                     continue
                 try:
-                    left, right = self.parse_txt_rule_line(line.strip())
-                    row = [""] * len(self.spec.columns)
-                    row[0] = left
-                    row[1] = right
+                    if len(self.spec.columns) == 2:
+                        left, right = self.parse_txt_rule_line(line.strip())
+                        row = [""] * len(self.spec.columns)
+                        row[0] = left
+                        row[1] = right
+                    else:
+                        row = self.parse_txt_table_line(line.rstrip(), len(self.spec.columns))
                     rows.append(row)
                 except ValueError as exc:
                     errors.append(f"第 {line_number} 行: {exc}")
             if errors:
-                QMessageBox.warning(self, "导入失败", "TXT 格式应为：\"原文\":“译文”\n\n" + "\n".join(errors[:10]))
+                message = "TXT 格式应为：\"原文\":“译文”" if len(self.spec.columns) == 2 else "TXT 格式应为：\"第1列\"\\t\"第2列\"\\t\"第3列\""
+                QMessageBox.warning(self, "导入失败", message + "\n\n" + "\n".join(errors[:10]))
                 return
             if self.value():
                 answer = QMessageBox.question(self, "确认导入", "导入会替换当前表格内容，是否继续？")
@@ -2160,7 +2315,7 @@ class BuildGui(QMainWindow):
     def make_detail_tab(self) -> None:
         self.detail_groups: list[tuple[str, list[str], list[str], tuple[str, ...]]] = [
             ("基础", ["load_mode", "debug_enable", "debug_file", "debug_console", "startup_attach_mode", "startup_delay_ms", "startup_wait_gui", "startup_window_gate"], [], ()),
-            ("字体", ["font_charset", "font_name", "font_name_override", "font_charset_spoof", "font_spoof_from", "font_spoof_to", "font_ui_enable", "font_unlock", "font_verbose", "font_cnjp_enable", "font_cnjp_verbose", "font_cnjp_json", "font_cnjp_read_encoding", "font_height", "font_width", "font_weight", "font_scale", "font_spacing_scale", "font_glyph_aspect", "font_glyph_offset_x", "font_glyph_offset_y", "font_metrics_left", "font_metrics_right", "font_metrics_top", "font_metrics_bottom"], ["font_skip_fonts", "font_redirect_rules"], ("CIALLOHOOK_FEATURE_FONT",)),
+            ("字体", ["font_charset", "font_name", "font_name_override", "font_charset_spoof", "font_spoof_from", "font_spoof_to", "font_ui_enable", "font_risk_policy", "font_engine_profile", "font_glyph_compat", "font_data_patch", "font_unlock", "font_verbose", "font_cnjp_enable", "font_cnjp_verbose", "font_cnjp_json", "font_cnjp_read_encoding", "font_height", "font_width", "font_weight", "font_scale", "font_spacing_scale", "font_glyph_aspect", "font_glyph_offset_x", "font_glyph_offset_y", "font_metrics_left", "font_metrics_right", "font_metrics_top", "font_metrics_bottom"], ["font_skip_fonts", "font_redirect_rules"], ("CIALLOHOOK_FEATURE_FONT",)),
             ("字体 API", [f"font_{name}" for name in FONT_HOOKS], [], ("CIALLOHOOK_FEATURE_FONT",)),
             ("文本", ["text_encoding", "text_read_encoding", "text_write_encoding", "text_verbose"], ["text_rules"], ("CIALLOHOOK_FEATURE_TEXT",)),
             ("文本 API", [f"text_{name}" for name in TEXT_HOOKS], [], ("CIALLOHOOK_FEATURE_TEXT",)),
@@ -2178,7 +2333,7 @@ class BuildGui(QMainWindow):
             ("Siglus 秘钥提取", ["siglus_enable", "siglus_gameexe", "siglus_output", "siglus_message", "siglus_debug"], [], ("CIALLOHOOK_FEATURE_SIGLUS_KEY_EXTRACT",)),
             ("Alice System3.x 补丁", ["alice_enable", "alice_log", "alice_exists", "alice_max_size"], ["alice_patch_folders"], ("CIALLOHOOK_FEATURE_ALICE_SYSTEM3X",)),
             ("RioShiina 补丁", ["rio_enable", "rio_mode", "rio_extract_dir", "rio_skip_invalid", "rio_log", "rio_process_reg", "rio_process_dvd", "rio_spec_dvd_size"], ["rio_patch_names", "rio_archives"], ("CIALLOHOOK_FEATURE_RIO_SHIINA",)),
-            ("引擎缓存/Waffle", ["engine_cache_med", "engine_cache_majiro", "waffle_patch_enable"], [], ("CIALLOHOOK_FEATURE_ENGINE_CACHE",)),
+            ("引擎兼容/Waffle", ["engine_compat_enable", "engine_compat_mode", "engine_compat_force", "engine_compat_feature_set", "engine_compat_runtime_patch", "engine_compat_log", "waffle_patch_enable"], [], ("CIALLOHOOK_FEATURE_ENGINE_CACHE",)),
             ("Krkr 补丁", ["krkr_patch_enable", "krkr_patch_verbose", "krkr_bootstrap_bypass", "krkr_cxdec_patch_bridge"], ["krkr_patch_names"], ("CIALLOHOOK_FEATURE_KRKR_PATCH",)),
             ("二进制补丁", ["binary_enable", "binary_log", "binary_verify_old", "binary_fail_missing", "binary_fail_write", "binary_prefer_pak", "binary_hwbp_enable", "binary_hwbp_module", "binary_hwbp_rva"], ["binary_patch_files"], ("CIALLOHOOK_FEATURE_BINARY_PATCH",)),
             ("启动器", ["launcher_target", "launcher_debug"], ["launcher_target_dlls"], ()),

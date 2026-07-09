@@ -98,7 +98,7 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalOptions>/ignore:4099 %(AdditionalOptions)</AdditionalOptions>
       <AdditionalLibraryDirectories>..\..\third\detours\lib.X86;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>detours.lib;bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>detours.lib;bcrypt.lib;psapi.lib;shlwapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <ImageHasSafeExceptionHandlers Condition="'$(Platform)'=='Win32'">false</ImageHasSafeExceptionHandlers>
       <ModuleDefinitionFile Condition="'$(CialloHookFeatureProxyExports)'!='false'">entry\version.def</ModuleDefinitionFile>
     </Link>
@@ -130,7 +130,7 @@
       <RandomizedBaseAddress>false</RandomizedBaseAddress>
       <AdditionalOptions>/ignore:4099 /PDBALTPATH:%_PDB% %(AdditionalOptions)</AdditionalOptions>
       <AdditionalLibraryDirectories>..\..\third\detours\lib.X86;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>detours.lib;bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>detours.lib;bcrypt.lib;psapi.lib;shlwapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <ImageHasSafeExceptionHandlers Condition="'$(Platform)'=='Win32'">false</ImageHasSafeExceptionHandlers>
       <ModuleDefinitionFile Condition="'$(CialloHookFeatureProxyExports)'!='false'">entry\version.def</ModuleDefinitionFile>
     </Link>
@@ -149,7 +149,7 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalOptions>/ignore:4099 %(AdditionalOptions)</AdditionalOptions>
       <AdditionalLibraryDirectories>..\..\third\detours\lib.X64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>detours.lib;bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>detours.lib;bcrypt.lib;psapi.lib;shlwapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <ImageHasSafeExceptionHandlers Condition="'$(Platform)'=='Win32'">false</ImageHasSafeExceptionHandlers>
       <ModuleDefinitionFile Condition="'$(CialloHookFeatureProxyExports)'!='false'">entry\version.def</ModuleDefinitionFile>
     </Link>
@@ -165,7 +165,7 @@
       <RuntimeTypeInfo>false</RuntimeTypeInfo>
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>NDEBUG;_CONSOLE;CIALLOHOOK_FEATURE_RUNTIME_INIT=$(CialloHookFeatureRuntimeInit);%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp17</LanguageStandard>
       <AdditionalOptions>/utf-8 /Gw %(AdditionalOptions)</AdditionalOptions>
@@ -180,7 +180,7 @@
       <MapFileName>$(OutDir)$(TargetName).map</MapFileName>
       <AdditionalOptions>/ignore:4099 /PDBALTPATH:%_PDB% %(AdditionalOptions)</AdditionalOptions>
       <AdditionalLibraryDirectories>..\..\third\detours\lib.X64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>detours.lib;bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>detours.lib;bcrypt.lib;psapi.lib;shlwapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <ImageHasSafeExceptionHandlers Condition="'$(Platform)'=='Win32'">false</ImageHasSafeExceptionHandlers>
       <ModuleDefinitionFile Condition="'$(CialloHookFeatureProxyExports)'!='false'">entry\version.def</ModuleDefinitionFile>
     </Link>
@@ -190,6 +190,18 @@
     <ClCompile Include="core\hook_manager.cpp" />
     <ClCompile Include="entry\dllmain.cpp" />
     <ClCompile Include="hooks\binary_patch_1337.cpp" Condition="'$(CialloHookFeatureBinaryPatch)'!='false'" />
+    <ClCompile Include="hooks\font_engines\engine_compat.cpp" />
+    <ClCompile Include="hooks\font_engines\engine_compat_artemis.cpp" />
+    <ClCompile Include="hooks\font_engines\engine_compat_artemis_legacy.cpp" />
+    <ClCompile Include="hooks\font_engines\engine_compat_detect.cpp" />
+    <ClCompile Include="hooks\font_engines\engine_compat_dxlib.cpp" />
+    <ClCompile Include="hooks\font_engines\engine_compat_escude.cpp" />
+    <ClCompile Include="hooks\font_engines\engine_compat_file.cpp" />
+    <ClCompile Include="hooks\font_engines\engine_compat_krkr.cpp" />
+    <ClCompile Include="hooks\font_engines\engine_compat_majiro.cpp" />
+    <ClCompile Include="hooks\font_engines\engine_compat_mirai.cpp" />
+    <ClCompile Include="hooks\font_engines\engine_compat_softpal.cpp" />
+    <ClCompile Include="hooks\font_engines\font_hook_policy.cpp" />
     <ClCompile Include="hooks\hook_modules.cpp" />
     <ClCompile Include="hooks\alice_system3x_hooks.cpp" Condition="'$(CialloHookFeatureAliceSystem3x)'!='false'" />
     <ClCompile Include="hooks\krkr_plugin_bridge.cpp" Condition="'$(CialloHookFeatureKrkrPatch)'!='false'" />
@@ -211,6 +223,9 @@
     <ClInclude Include="config\settings.h" />
     <ClInclude Include="core\hook_manager.h" />
     <ClInclude Include="hooks\binary_patch_1337.h" />
+    <ClInclude Include="hooks\font_engines\engine_compat.h" />
+    <ClInclude Include="hooks\font_engines\engine_compat_file.h" />
+    <ClInclude Include="hooks\font_engines\font_hook_policy.h" />
     <ClInclude Include="hooks\hook_modules.h" />
     <ClInclude Include="hooks\alice_system3x_hooks.h" />
     <ClInclude Include="hooks\krkr_plugin_bridge.h" />
