@@ -114,11 +114,6 @@ namespace AliceSystem3xHooks
             {
                 configured = filePatchSettings.patchFolders;
             }
-            if (configured.empty())
-            {
-                configured.push_back(L"patch");
-            }
-
             for (auto it = configured.rbegin(); it != configured.rend(); ++it)
             {
                 std::wstring folder = Rut::StrX::Trim(*it);

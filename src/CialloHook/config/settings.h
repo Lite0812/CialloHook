@@ -120,6 +120,9 @@ namespace CialloHook
 		int metricsOffsetRight = 0;
 		int metricsOffsetTop = 0;
 		int metricsOffsetBottom = 0;
+		int fontAscentPermille = 0;
+		int fontDescentPermille = 0;
+		int fontLineSpacing = 0;
 	};
 
 	struct TextReplaceSettings
@@ -315,7 +318,7 @@ namespace CialloHook
 	struct AliceSystem3xSettings
 	{
 		bool enable = false;
-		std::vector<std::wstring> patchFolders = { L"patch" };
+		std::vector<std::wstring> patchFolders = { L"unencrypted" };
 		bool enableLog = false;
 		bool hookExistsCheck = false;
 		uint32_t maxFileSize = 268435456;

@@ -53,6 +53,9 @@
 		static int sg_iMetricsOffsetRight = 0;
 		static int sg_iMetricsOffsetTop = 0;
 		static int sg_iMetricsOffsetBottom = 0;
+		static int sg_iFontAscentPermille = 0;
+		static int sg_iFontDescentPermille = 0;
+		static int sg_iFontLineSpacing = 0;
 		static thread_local int sg_fontCreateNesting = 0;
 		static thread_local int sg_wideFontCreateHookNesting = 0;
 		static thread_local int sg_hdcFontReplacementNesting = 0;
@@ -545,6 +548,33 @@
 				|| type == OBJ_METADC
 				|| type == OBJ_ENHMETADC;
 		}
+		static int ScalePermilleToPixels(int em, int permille)
+		{
+			long long value = (long long)em * permille;
+			value += value >= 0 ? 500 : -500;
+			value /= 1000;
+			return (int)(std::max)((long long)INT_MIN, (std::min)((long long)INT_MAX, value));
+		}
+		static void ApplyVerticalMetricsToTextMetricsA(LPTEXTMETRICA lptm)
+		{
+			if (!lptm || (sg_iFontAscentPermille == 0 && sg_iFontDescentPermille == 0 && sg_iFontLineSpacing == 0)) return;
+			int em = (std::max)(1, (int)lptm->tmHeight - (int)lptm->tmInternalLeading);
+			if (sg_iFontAscentPermille != 0) lptm->tmAscent = (LONG)ClampToNonNegative(ScalePermilleToPixels(em, sg_iFontAscentPermille));
+			if (sg_iFontDescentPermille != 0) lptm->tmDescent = (LONG)ClampToNonNegative(-ScalePermilleToPixels(em, sg_iFontDescentPermille));
+			int lineSpacing = ScalePermilleToPixels(em, sg_iFontLineSpacing);
+			lptm->tmExternalLeading = (LONG)ClampToNonNegative(lineSpacing);
+			lptm->tmHeight = (LONG)(std::max)(1, ClampToNonNegative((int)lptm->tmAscent + (int)lptm->tmDescent + lineSpacing));
+		}
+		static void ApplyVerticalMetricsToTextMetricsW(LPTEXTMETRICW lptm)
+		{
+			if (!lptm || (sg_iFontAscentPermille == 0 && sg_iFontDescentPermille == 0 && sg_iFontLineSpacing == 0)) return;
+			int em = (std::max)(1, (int)lptm->tmHeight - (int)lptm->tmInternalLeading);
+			if (sg_iFontAscentPermille != 0) lptm->tmAscent = (LONG)ClampToNonNegative(ScalePermilleToPixels(em, sg_iFontAscentPermille));
+			if (sg_iFontDescentPermille != 0) lptm->tmDescent = (LONG)ClampToNonNegative(-ScalePermilleToPixels(em, sg_iFontDescentPermille));
+			int lineSpacing = ScalePermilleToPixels(em, sg_iFontLineSpacing);
+			lptm->tmExternalLeading = (LONG)ClampToNonNegative(lineSpacing);
+			lptm->tmHeight = (LONG)(std::max)(1, ClampToNonNegative((int)lptm->tmAscent + (int)lptm->tmDescent + lineSpacing));
+		}
 		static void ApplyMetricsOffsetToTextMetricsA(LPTEXTMETRICA lptm)
 		{
 			if (!lptm || (sg_iMetricsOffsetTop == 0 && sg_iMetricsOffsetBottom == 0))
@@ -677,7 +707,7 @@
 		}
 		static void ClearReplacementFontCache();
 		static void RegisterCreatedReplacementFont(HFONT createdFont, const LOGFONTW& sourceLogFont);
-		static void SetFontAdjustments(const uint32_t uiCharSet, bool enableCharsetSpoof, uint32_t spoofFromCharSet, uint32_t spoofToCharSet, int iHeight, int iWidth, int iWeight, float fScale, float fSpacingScale, float fGlyphAspectRatio, int iGlyphOffsetX, int iGlyphOffsetY, int iMetricsOffsetLeft, int iMetricsOffsetRight, int iMetricsOffsetTop, int iMetricsOffsetBottom)
+		static void SetFontAdjustments(const uint32_t uiCharSet, bool enableCharsetSpoof, uint32_t spoofFromCharSet, uint32_t spoofToCharSet, int iHeight, int iWidth, int iWeight, float fScale, float fSpacingScale, float fGlyphAspectRatio, int iGlyphOffsetX, int iGlyphOffsetY, int iMetricsOffsetLeft, int iMetricsOffsetRight, int iMetricsOffsetTop, int iMetricsOffsetBottom, int iFontAscentPermille, int iFontDescentPermille, int iFontLineSpacing)
 		{
 			bool cacheInvalidated = sg_dwCharSet != uiCharSet
 				|| sg_enableCharsetSpoof != enableCharsetSpoof
@@ -694,7 +724,10 @@
 				|| sg_iMetricsOffsetLeft != iMetricsOffsetLeft
 				|| sg_iMetricsOffsetRight != iMetricsOffsetRight
 				|| sg_iMetricsOffsetTop != iMetricsOffsetTop
-				|| sg_iMetricsOffsetBottom != iMetricsOffsetBottom;
+				|| sg_iMetricsOffsetBottom != iMetricsOffsetBottom
+				|| sg_iFontAscentPermille != iFontAscentPermille
+				|| sg_iFontDescentPermille != iFontDescentPermille
+				|| sg_iFontLineSpacing != iFontLineSpacing;
 			sg_dwCharSet = uiCharSet;
 			sg_enableCharsetSpoof = enableCharsetSpoof;
 			sg_dwSpoofFromCharSet = spoofFromCharSet;
@@ -711,6 +744,9 @@
 			sg_iMetricsOffsetRight = iMetricsOffsetRight;
 			sg_iMetricsOffsetTop = iMetricsOffsetTop;
 			sg_iMetricsOffsetBottom = iMetricsOffsetBottom;
+			sg_iFontAscentPermille = iFontAscentPermille;
+			sg_iFontDescentPermille = iFontDescentPermille;
+			sg_iFontLineSpacing = iFontLineSpacing;
 			if (cacheInvalidated)
 			{
 				ClearReplacementFontCache();
@@ -821,10 +857,10 @@
 		}
 
 
-		bool HookCreateFontA(const uint32_t uiCharSet, bool enableCharsetSpoof, uint32_t spoofFromCharSet, uint32_t spoofToCharSet, const char* cpFontName, int iHeight, int iWidth, int iWeight, float fScale, float fSpacingScale, float fGlyphAspectRatio, int iGlyphOffsetX, int iGlyphOffsetY, int iMetricsOffsetLeft, int iMetricsOffsetRight, int iMetricsOffsetTop, int iMetricsOffsetBottom)
+		bool HookCreateFontA(const uint32_t uiCharSet, bool enableCharsetSpoof, uint32_t spoofFromCharSet, uint32_t spoofToCharSet, const char* cpFontName, int iHeight, int iWidth, int iWeight, float fScale, float fSpacingScale, float fGlyphAspectRatio, int iGlyphOffsetX, int iGlyphOffsetY, int iMetricsOffsetLeft, int iMetricsOffsetRight, int iMetricsOffsetTop, int iMetricsOffsetBottom, int iFontAscentPermille, int iFontDescentPermille, int iFontLineSpacing)
 		{
 			sg_lpFontName = cpFontName;
-			SetFontAdjustments(uiCharSet, enableCharsetSpoof, spoofFromCharSet, spoofToCharSet, iHeight, iWidth, iWeight, fScale, fSpacingScale, fGlyphAspectRatio, iGlyphOffsetX, iGlyphOffsetY, iMetricsOffsetLeft, iMetricsOffsetRight, iMetricsOffsetTop, iMetricsOffsetBottom);
+			SetFontAdjustments(uiCharSet, enableCharsetSpoof, spoofFromCharSet, spoofToCharSet, iHeight, iWidth, iWeight, fScale, fSpacingScale, fGlyphAspectRatio, iGlyphOffsetX, iGlyphOffsetY, iMetricsOffsetLeft, iMetricsOffsetRight, iMetricsOffsetTop, iMetricsOffsetBottom, iFontAscentPermille, iFontDescentPermille, iFontLineSpacing);
 			return !TryDetourAttach(&rawCreateFontA, newCreateFontA);
 		}
 		//*********END Hook CreateFontA*********
@@ -873,7 +909,7 @@
 			{
 				strcpy_s(local.lfFaceName, forcedFaceName.c_str());
 			}
-			else
+			else if (sg_lpFontName && sg_lpFontName[0] != '\0')
 			{
 				strcpy_s(local.lfFaceName, sg_lpFontName);
 			}
@@ -892,10 +928,10 @@
 		}
 
 
-		bool HookCreateFontIndirectA(const uint32_t uiCharSet, bool enableCharsetSpoof, uint32_t spoofFromCharSet, uint32_t spoofToCharSet, const char* cpFontName, int iHeight, int iWidth, int iWeight, float fScale, float fSpacingScale, float fGlyphAspectRatio, int iGlyphOffsetX, int iGlyphOffsetY, int iMetricsOffsetLeft, int iMetricsOffsetRight, int iMetricsOffsetTop, int iMetricsOffsetBottom)
+		bool HookCreateFontIndirectA(const uint32_t uiCharSet, bool enableCharsetSpoof, uint32_t spoofFromCharSet, uint32_t spoofToCharSet, const char* cpFontName, int iHeight, int iWidth, int iWeight, float fScale, float fSpacingScale, float fGlyphAspectRatio, int iGlyphOffsetX, int iGlyphOffsetY, int iMetricsOffsetLeft, int iMetricsOffsetRight, int iMetricsOffsetTop, int iMetricsOffsetBottom, int iFontAscentPermille, int iFontDescentPermille, int iFontLineSpacing)
 		{
 			sg_lpFontName = cpFontName;
-			SetFontAdjustments(uiCharSet, enableCharsetSpoof, spoofFromCharSet, spoofToCharSet, iHeight, iWidth, iWeight, fScale, fSpacingScale, fGlyphAspectRatio, iGlyphOffsetX, iGlyphOffsetY, iMetricsOffsetLeft, iMetricsOffsetRight, iMetricsOffsetTop, iMetricsOffsetBottom);
+			SetFontAdjustments(uiCharSet, enableCharsetSpoof, spoofFromCharSet, spoofToCharSet, iHeight, iWidth, iWeight, fScale, fSpacingScale, fGlyphAspectRatio, iGlyphOffsetX, iGlyphOffsetY, iMetricsOffsetLeft, iMetricsOffsetRight, iMetricsOffsetTop, iMetricsOffsetBottom, iFontAscentPermille, iFontDescentPermille, iFontLineSpacing);
 			return !TryDetourAttach(&rawCreateFontIndirectA, newCreateFontIndirectA);
 		}
 		//*********END Hook CreateFontIndirectA*********
@@ -988,14 +1024,14 @@
 		}
 
 
-		bool HookCreateFontW(const uint32_t uiCharSet, bool enableCharsetSpoof, uint32_t spoofFromCharSet, uint32_t spoofToCharSet, const wchar_t* wpFontName, int iHeight, int iWidth, int iWeight, float fScale, float fSpacingScale, float fGlyphAspectRatio, int iGlyphOffsetX, int iGlyphOffsetY, int iMetricsOffsetLeft, int iMetricsOffsetRight, int iMetricsOffsetTop, int iMetricsOffsetBottom)
+		bool HookCreateFontW(const uint32_t uiCharSet, bool enableCharsetSpoof, uint32_t spoofFromCharSet, uint32_t spoofToCharSet, const wchar_t* wpFontName, int iHeight, int iWidth, int iWeight, float fScale, float fSpacingScale, float fGlyphAspectRatio, int iGlyphOffsetX, int iGlyphOffsetY, int iMetricsOffsetLeft, int iMetricsOffsetRight, int iMetricsOffsetTop, int iMetricsOffsetBottom, int iFontAscentPermille, int iFontDescentPermille, int iFontLineSpacing)
 		{
 			if (sg_lpFontNameW != wpFontName)
 			{
 				ClearReplacementFontCache();
 			}
 			sg_lpFontNameW = wpFontName;
-			SetFontAdjustments(uiCharSet, enableCharsetSpoof, spoofFromCharSet, spoofToCharSet, iHeight, iWidth, iWeight, fScale, fSpacingScale, fGlyphAspectRatio, iGlyphOffsetX, iGlyphOffsetY, iMetricsOffsetLeft, iMetricsOffsetRight, iMetricsOffsetTop, iMetricsOffsetBottom);
+			SetFontAdjustments(uiCharSet, enableCharsetSpoof, spoofFromCharSet, spoofToCharSet, iHeight, iWidth, iWeight, fScale, fSpacingScale, fGlyphAspectRatio, iGlyphOffsetX, iGlyphOffsetY, iMetricsOffsetLeft, iMetricsOffsetRight, iMetricsOffsetTop, iMetricsOffsetBottom, iFontAscentPermille, iFontDescentPermille, iFontLineSpacing);
 			return !TryDetourAttach(&rawCreateFontW, newCreateFontW);
 		}
 		//*********END Hook CreateFontW*******
@@ -1019,14 +1055,11 @@
 			{
 				return rawCreateFontIndirectW(lplf);
 			}
-			if (local.lfFaceName[0] == L'\0')
-			{
-				return rawCreateFontIndirectW(lplf);
-			}
 			LOGFONTW sourceLogFont = local;
 			bool skipOverride = false;
 			wchar_t forcedFaceName[LF_FACESIZE] = {};
-			bool hasForcedFaceName = TryGetForcedFontNameWForRequest(local.lfFaceName, forcedFaceName, skipOverride);
+			bool hasForcedFaceName = local.lfFaceName[0] != L'\0'
+				&& TryGetForcedFontNameWForRequest(local.lfFaceName, forcedFaceName, skipOverride);
 			if (skipOverride)
 			{
 				return rawCreateFontIndirectW(lplf);
@@ -1079,14 +1112,14 @@
 		}
 
 
-		bool HookCreateFontIndirectW(const uint32_t uiCharSet, bool enableCharsetSpoof, uint32_t spoofFromCharSet, uint32_t spoofToCharSet, const wchar_t* wpFontName, int iHeight, int iWidth, int iWeight, float fScale, float fSpacingScale, float fGlyphAspectRatio, int iGlyphOffsetX, int iGlyphOffsetY, int iMetricsOffsetLeft, int iMetricsOffsetRight, int iMetricsOffsetTop, int iMetricsOffsetBottom)
+		bool HookCreateFontIndirectW(const uint32_t uiCharSet, bool enableCharsetSpoof, uint32_t spoofFromCharSet, uint32_t spoofToCharSet, const wchar_t* wpFontName, int iHeight, int iWidth, int iWeight, float fScale, float fSpacingScale, float fGlyphAspectRatio, int iGlyphOffsetX, int iGlyphOffsetY, int iMetricsOffsetLeft, int iMetricsOffsetRight, int iMetricsOffsetTop, int iMetricsOffsetBottom, int iFontAscentPermille, int iFontDescentPermille, int iFontLineSpacing)
 		{
 			if (sg_lpFontNameW != wpFontName)
 			{
 				ClearReplacementFontCache();
 			}
 			sg_lpFontNameW = wpFontName;
-			SetFontAdjustments(uiCharSet, enableCharsetSpoof, spoofFromCharSet, spoofToCharSet, iHeight, iWidth, iWeight, fScale, fSpacingScale, fGlyphAspectRatio, iGlyphOffsetX, iGlyphOffsetY, iMetricsOffsetLeft, iMetricsOffsetRight, iMetricsOffsetTop, iMetricsOffsetBottom);
+			SetFontAdjustments(uiCharSet, enableCharsetSpoof, spoofFromCharSet, spoofToCharSet, iHeight, iWidth, iWeight, fScale, fSpacingScale, fGlyphAspectRatio, iGlyphOffsetX, iGlyphOffsetY, iMetricsOffsetLeft, iMetricsOffsetRight, iMetricsOffsetTop, iMetricsOffsetBottom, iFontAscentPermille, iFontDescentPermille, iFontLineSpacing);
 			return !TryDetourAttach(&rawCreateFontIndirectW, newCreateFontIndirectW);
 		}
 		//*********END Hook CreateFontIndirectW*********
@@ -1851,7 +1884,8 @@
 
 		static void PatchWholeFontDataBuffer(PVOID pvBuffer, DWORD cjBuffer, DWORD bytesReturned, BYTE effectiveCharSet)
 		{
-			if (!sg_enableFontDataPatch || !pvBuffer || cjBuffer == 0 || bytesReturned == 0 || bytesReturned == GDI_ERROR || bytesReturned > cjBuffer)
+			if ((!sg_enableFontDataPatch && sg_iFontAscentPermille == 0 && sg_iFontDescentPermille == 0 && sg_iFontLineSpacing == 0)
+				|| !pvBuffer || cjBuffer == 0 || bytesReturned == 0 || bytesReturned == GDI_ERROR || bytesReturned > cjBuffer)
 			{
 				return;
 			}
@@ -1860,7 +1894,11 @@
 			{
 				return;
 			}
-			FontPatcher::PatchOS2CodePageRangeForCharset(fontData, bytesReturned, effectiveCharSet);
+			if (sg_enableFontDataPatch) FontPatcher::PatchOS2CodePageRangeForCharset(fontData, bytesReturned, effectiveCharSet);
+			if (sg_iFontAscentPermille != 0 || sg_iFontDescentPermille != 0 || sg_iFontLineSpacing != 0)
+			{
+				FontPatcher::PatchVerticalMetrics(fontData, bytesReturned, sg_iFontAscentPermille, sg_iFontDescentPermille, sg_iFontLineSpacing);
+			}
 			if (sg_enableFontNameTablePatch)
 			{
 				wchar_t forcedFaceName[LF_FACESIZE] = {};
@@ -1879,6 +1917,44 @@
 			}
 		}
 
+		static void WriteBigEndianWord(BYTE* p, int value)
+		{
+			p[0] = (BYTE)((value >> 8) & 0xff);
+			p[1] = (BYTE)(value & 0xff);
+		}
+		static void PatchTableWord(DWORD fieldOffset, int value, DWORD dwOffset, BYTE* buffer, DWORD bufferSize)
+		{
+			BYTE word[2];
+			WriteBigEndianWord(word, value);
+			for (DWORD i = 0; i < 2; ++i)
+			{
+				DWORD absolute = fieldOffset + i;
+				if (absolute >= dwOffset && absolute - dwOffset < bufferSize) buffer[absolute - dwOffset] = word[i];
+			}
+		}
+		static void PatchVerticalTableData(int em, DWORD dwTable, DWORD dwOffset, PVOID pvBuffer, DWORD cjBuffer, DWORD bytesReturned)
+		{
+			if (!pvBuffer || cjBuffer == 0 || bytesReturned == 0 || bytesReturned == GDI_ERROR
+				|| (sg_iFontAscentPermille == 0 && sg_iFontDescentPermille == 0 && sg_iFontLineSpacing == 0)) return;
+			if (em <= 0) return;
+			BYTE* buffer = (BYTE*)pvBuffer;
+			DWORD size = (std::min)(cjBuffer, bytesReturned);
+			int ascent = ScalePermilleToPixels(em, sg_iFontAscentPermille);
+			int descent = ScalePermilleToPixels(em, sg_iFontDescentPermille);
+			int lineGap = ScalePermilleToPixels(em, sg_iFontLineSpacing);
+			if (dwTable == FontTableTag('h', 'h', 'e', 'a'))
+			{
+				if (sg_iFontAscentPermille != 0) PatchTableWord(4, ascent, dwOffset, buffer, size);
+				if (sg_iFontDescentPermille != 0) PatchTableWord(6, descent, dwOffset, buffer, size);
+				if (sg_iFontLineSpacing != 0) PatchTableWord(8, lineGap, dwOffset, buffer, size);
+			}
+			else if (dwTable == FontTableTag('O', 'S', '/', '2'))
+			{
+				if (sg_iFontAscentPermille != 0) { PatchTableWord(68, ascent, dwOffset, buffer, size); PatchTableWord(74, ascent, dwOffset, buffer, size); }
+				if (sg_iFontDescentPermille != 0) { PatchTableWord(70, descent, dwOffset, buffer, size); PatchTableWord(76, -descent, dwOffset, buffer, size); }
+				if (sg_iFontLineSpacing != 0) PatchTableWord(72, lineGap, dwOffset, buffer, size);
+			}
+		}
 		static void PatchOs2FontDataBuffer(DWORD dwOffset, PVOID pvBuffer, DWORD cjBuffer, DWORD bytesReturned, BYTE effectiveCharSet)
 		{
 			if (!sg_enableFontDataPatch || !pvBuffer || cjBuffer == 0 || bytesReturned == 0 || bytesReturned == GDI_ERROR)
@@ -2318,6 +2394,8 @@
 			RestoreHdcFont(hdc, hOld, hNew);
 			if (ret)
 			{
+				lptm->tmCharSet = ResolveOverrideCharSet(lptm->tmCharSet);
+				ApplyVerticalMetricsToTextMetricsA(lptm);
 				ApplyMetricsOffsetToTextMetricsA(lptm);
 				ApplyGlyphOffsetToTextMetricsA(lptm);
 			}
@@ -2339,6 +2417,7 @@
 			RestoreHdcFont(hdc, hOld, hNew);
 			if (ret)
 			{
+				ApplyVerticalMetricsToTextMetricsW(lptm);
 				ApplyMetricsOffsetToTextMetricsW(lptm);
 				ApplyGlyphOffsetToTextMetricsW(lptm);
 			}
@@ -2688,8 +2767,15 @@
 			RestoreHdcFont(hdc, hOld, hNew);
 			if (ret != 0 && lpotm)
 			{
+				ApplyVerticalMetricsToTextMetricsA(&lpotm->otmTextMetrics);
 				ApplyMetricsOffsetToTextMetricsA(&lpotm->otmTextMetrics);
 				ApplyGlyphOffsetToTextMetricsA(&lpotm->otmTextMetrics);
+				lpotm->otmAscent = lpotm->otmTextMetrics.tmAscent;
+				lpotm->otmDescent = lpotm->otmTextMetrics.tmDescent;
+				lpotm->otmLineGap = lpotm->otmTextMetrics.tmExternalLeading;
+				lpotm->otmMacAscent = lpotm->otmAscent;
+				lpotm->otmMacDescent = -(LONG)lpotm->otmDescent;
+				lpotm->otmMacLineGap = lpotm->otmLineGap;
 			}
 			return ret;
 		}
@@ -2709,8 +2795,15 @@
 			RestoreHdcFont(hdc, hOld, hNew);
 			if (ret != 0 && lpotm)
 			{
+				ApplyVerticalMetricsToTextMetricsW(&lpotm->otmTextMetrics);
 				ApplyMetricsOffsetToTextMetricsW(&lpotm->otmTextMetrics);
 				ApplyGlyphOffsetToTextMetricsW(&lpotm->otmTextMetrics);
+				lpotm->otmAscent = lpotm->otmTextMetrics.tmAscent;
+				lpotm->otmDescent = lpotm->otmTextMetrics.tmDescent;
+				lpotm->otmLineGap = lpotm->otmTextMetrics.tmExternalLeading;
+				lpotm->otmMacAscent = lpotm->otmAscent;
+				lpotm->otmMacDescent = -(LONG)lpotm->otmDescent;
+				lpotm->otmMacLineGap = lpotm->otmLineGap;
 			}
 			return ret;
 		}
@@ -3100,6 +3193,15 @@
 		}
 
 
+		static int AdjustTextExtentWidth(int width, int characterCount)
+		{
+			if (characterCount <= 0) return 0;
+			double adjusted = width * (double)sg_fFontSpacingScale
+				+ (double)characterCount * (sg_iMetricsOffsetLeft + sg_iMetricsOffsetRight);
+			if (adjusted <= 0.0) return 0;
+			if (adjusted >= INT_MAX) return INT_MAX;
+			return (int)adjusted;
+		}
 		BOOL WINAPI newGetTextExtentPointI_SehImpl(HDC hdc, LPWORD pgiIn, int cgi, LPSIZE pSize)
 {
 			HFONT hOld = nullptr;
@@ -3114,6 +3216,7 @@
 			}
 			BOOL ret = rawGetTextExtentPointI(hdc, useGlyphs, cgi, pSize);
 			RestoreHdcFont(hdc, hOld, hNew);
+			if (ret && pSize && cgi >= 0) pSize->cx = AdjustTextExtentWidth(pSize->cx, cgi);
 			return ret;
 		}
 
@@ -3139,6 +3242,14 @@
 			}
 			BOOL ret = rawGetTextExtentExPointI(hdc, useGlyphs, cwchString, nMaxExtent, lpnFit, lpnDx, lpSize);
 			RestoreHdcFont(hdc, hOld, hNew);
+			if (ret && cwchString >= 0)
+			{
+				if (lpSize) lpSize->cx = AdjustTextExtentWidth(lpSize->cx, cwchString);
+				if (lpnDx)
+				{
+					for (int i = 0; i < cwchString; ++i) lpnDx[i] = AdjustTextExtentWidth(lpnDx[i], i + 1);
+				}
+			}
 			return ret;
 		}
 
@@ -3181,6 +3292,16 @@
 					hNew = nullptr;
 				}
 			}
+			int unitsPerEm = 0;
+			if ((dwTable == FontTableTag('h', 'h', 'e', 'a') || dwTable == FontTableTag('O', 'S', '/', '2'))
+				&& (sg_iFontAscentPermille != 0 || sg_iFontDescentPermille != 0 || sg_iFontLineSpacing != 0))
+			{
+				BYTE head[20] = {};
+				if (rawGetFontData(hdc, FontTableTag('h', 'e', 'a', 'd'), 0, head, sizeof(head)) >= sizeof(head))
+				{
+					unitsPerEm = ((int)head[18] << 8) | head[19];
+				}
+			}
 			DWORD ret = rawGetFontData(hdc, dwTable, dwOffset, pvBuffer, cjBuffer);
 			RestoreHdcFont(hdc, hOld, hNew);
 			if (ret != GDI_ERROR)
@@ -3192,6 +3313,11 @@
 				else if (dwTable == FontTableTag('O', 'S', '/', '2'))
 				{
 					PatchOs2FontDataBuffer(dwOffset, pvBuffer, cjBuffer, ret, effectiveCharSet);
+					PatchVerticalTableData(unitsPerEm, dwTable, dwOffset, pvBuffer, cjBuffer, ret);
+				}
+				else if (dwTable == FontTableTag('h', 'h', 'e', 'a'))
+				{
+					PatchVerticalTableData(unitsPerEm, dwTable, dwOffset, pvBuffer, cjBuffer, ret);
 				}
 			}
 			return ret;

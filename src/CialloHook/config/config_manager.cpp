@@ -684,6 +684,17 @@ namespace CialloHook
 			settings.font.metricsOffsetRight = GetIntOrDefault(context, fontSection, L"MetricsOffsetRight", 0);
 			settings.font.metricsOffsetTop = GetIntOrDefault(context, fontSection, L"MetricsOffsetTop", 0);
 			settings.font.metricsOffsetBottom = GetIntOrDefault(context, fontSection, L"MetricsOffsetBottom", 0);
+			settings.font.fontAscentPermille = GetIntOrDefault(context, fontSection, L"FontAscentPermille", 0);
+			if (settings.font.fontAscentPermille != 0)
+			{
+				settings.font.fontAscentPermille = (std::max)(100, (std::min)(2000, settings.font.fontAscentPermille));
+			}
+			settings.font.fontDescentPermille = GetIntOrDefault(context, fontSection, L"FontDescentPermille", 0);
+			if (settings.font.fontDescentPermille != 0)
+			{
+				settings.font.fontDescentPermille = (std::max)(-2000, (std::min)(-1, settings.font.fontDescentPermille));
+			}
+			settings.font.fontLineSpacing = (std::max)(-2000, (std::min)(2000, GetIntOrDefault(context, fontSection, L"FontLineSpacing", 0)));
 
 			settings.textReplace.rules.clear();
 			settings.textReplace.encoding = GetUIntOrDefault(context, L"TextReplace", L"Encoding", 0);
@@ -1009,7 +1020,7 @@ namespace CialloHook
 					settings.aliceSystem3x.patchFolders.end());
 				if (settings.aliceSystem3x.patchFolders.empty() && !context.ini.Has(L"AliceSystem3x", L"PatchFolderCount"))
 				{
-					settings.aliceSystem3x.patchFolders.push_back(L"patch");
+					settings.aliceSystem3x.patchFolders.push_back(L"unencrypted");
 				}
 				settings.aliceSystem3x.enableLog = GetBoolOrDefault(context, L"AliceSystem3x", L"EnableLog", false);
 				settings.aliceSystem3x.hookExistsCheck = GetBoolOrDefault(context, L"AliceSystem3x", L"HookExistsCheck", false);

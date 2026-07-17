@@ -3,6 +3,7 @@
  * CRC32C, CRC8, 格式化输出, 进度条, Buffer, 随机数, 路径处理
  */
 #include "litepak.h"
+#include "litepak_internal.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -27,10 +28,17 @@
  * ============================================================================ */
 
 static uint32_t crc32c_table[256];
-static int crc32c_table_init = 0;
 
-static void make_crc32c_table(void) {
-    if (crc32c_table_init) return;
+#ifdef _WIN32
+static INIT_ONCE crc32c_init_once = INIT_ONCE_STATIC_INIT;
+
+static BOOL CALLBACK make_crc32c_table_once(PINIT_ONCE once, PVOID parameter, PVOID* context) {
+    (void)once;
+    (void)parameter;
+    (void)context;
+#else
+static void make_crc32c_table_once(void) {
+#endif
     for (int i = 0; i < 256; i++) {
         uint32_t crc = (uint32_t)i;
         for (int j = 0; j < 8; j++) {
@@ -41,11 +49,21 @@ static void make_crc32c_table(void) {
         }
         crc32c_table[i] = crc;
     }
-    crc32c_table_init = 1;
+#ifdef _WIN32
+    return TRUE;
+#endif
 }
 
 uint32_t litepak_crc32c(const uint8_t* data, size_t len, uint32_t seed) {
-    make_crc32c_table();
+#ifdef _WIN32
+    InitOnceExecuteOnce(&crc32c_init_once, make_crc32c_table_once, NULL, NULL);
+#else
+    static int initialized = 0;
+    if (!initialized) {
+        make_crc32c_table_once();
+        initialized = 1;
+    }
+#endif
     uint32_t crc = seed ^ 0xFFFFFFFF;
     for (size_t i = 0; i < len; i++)
         crc = crc32c_table[(crc ^ data[i]) & 0xFF] ^ (crc >> 8);
@@ -324,6 +342,17 @@ void buffer_init(buffer_t* buf) {
 
 void buffer_free(buffer_t* buf) {
     if (buf->data) {
+        free(buf->data);
+        buf->data = NULL;
+    }
+    buf->len = 0;
+    buf->cap = 0;
+    buf->failed = false;
+}
+
+void buffer_secure_free(buffer_t* buf) {
+    if (buf->data) {
+        litepak_secure_bzero(buf->data, buf->cap);
         free(buf->data);
         buf->data = NULL;
     }

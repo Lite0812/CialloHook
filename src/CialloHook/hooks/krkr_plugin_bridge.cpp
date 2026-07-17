@@ -362,28 +362,28 @@ namespace CialloHook
 				return true;
 			}
 
-			static std::pair<std::vector<std::wstring>, std::vector<std::wstring>> ListGalPatchTargets()
+			static std::pair<std::vector<std::wstring>, std::vector<std::wstring>> ListConfiguredGalPatchTargets()
 			{
 				std::vector<std::wstring> patchDirs;
 				std::vector<std::wstring> patchArcs;
 
-				std::wstring basePath = sg_gameDir;
-				if (!basePath.empty() && basePath.back() != L'\\' && basePath.back() != L'/')
+				for (const std::wstring& folderSpec : sg_patchFolders)
 				{
-					basePath += L"\\";
+					std::wstring patchDir = JoinGamePath(folderSpec);
+					if (!IsExistingDirectory(patchDir))
+					{
+						continue;
+					}
+					if (patchDir.back() != L'\\' && patchDir.back() != L'/')
+					{
+						patchDir += L"\\";
+					}
+					patchDirs.emplace_back(std::move(patchDir));
 				}
 
-				static constexpr int kPatchCount = 9;
-				for (int num = kPatchCount; num > 0; --num)
+				for (const std::wstring& archiveSpec : sg_patchArchives)
 				{
-					std::wstring patchPrefix = basePath + L"unencrypted" + (num == 1 ? L"" : std::to_wstring(num));
-					std::wstring patchDir = patchPrefix + L"\\";
-					if (IsExistingDirectory(patchDir))
-					{
-						patchDirs.emplace_back(std::move(patchDir));
-					}
-
-					std::wstring patchArc = patchPrefix + L".xp3";
+					std::wstring patchArc = JoinGamePath(archiveSpec);
 					if (IsExistingRegularFile(patchArc))
 					{
 						patchArcs.emplace_back(std::move(patchArc));
@@ -426,7 +426,7 @@ namespace CialloHook
 					return false;
 				}
 
-				auto [patchDirs, patchArcs] = ListGalPatchTargets();
+				auto [patchDirs, patchArcs] = ListConfiguredGalPatchTargets();
 				for (const std::wstring& patchDir : patchDirs)
 				{
 					std::wstring candidate = patchDir + patchName;
@@ -483,7 +483,7 @@ namespace CialloHook
 					return { rawName, L"" };
 				}
 
-				static const auto kTargets = ListGalPatchTargets();
+				static const auto kTargets = ListConfiguredGalPatchTargets();
 				const auto& patchDirs = kTargets.first;
 				const auto& patchArcs = kTargets.second;
 

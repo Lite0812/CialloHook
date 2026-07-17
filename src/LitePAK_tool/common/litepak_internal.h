@@ -11,6 +11,8 @@ extern "C" {
 #endif
 
 void litepak_secure_bzero(void* p, size_t n);
+void buffer_secure_free(buffer_t* buf);
+#define buffer_free_sensitive buffer_secure_free
 int litepak_constant_time_eq(const uint8_t* a, const uint8_t* b, size_t n);
 
 #ifdef LITEPAK_ENABLE_PRIVATE_SIGNING

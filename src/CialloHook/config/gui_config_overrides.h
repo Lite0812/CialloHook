@@ -21,7 +21,7 @@ namespace CialloHook
 		settings.startupTiming.waitForGuiReady = false;
 		settings.startupTiming.enableStartupWindowGate = false;
 		settings.font.charset = 0;
-		settings.font.font = L"";
+		settings.font.font = L"SimHei";
 		settings.font.fontNameOverride = L"";
 		settings.font.enableCharsetSpoof = true;
 		settings.font.spoofFromCharset = 128;
@@ -39,6 +39,9 @@ namespace CialloHook
 		settings.font.fontWeight = 0;
 		settings.font.fontScale = 1.000f;
 		settings.font.fontSpacingScale = 1.000f;
+		settings.font.fontAscentPermille = 0;
+		settings.font.fontDescentPermille = 0;
+		settings.font.fontLineSpacing = 0;
 		settings.font.glyphAspectRatio = 1.000f;
 		settings.font.glyphOffsetX = 0;
 		settings.font.glyphOffsetY = 0;
@@ -126,10 +129,10 @@ namespace CialloHook
 		settings.engineCompat.mode = L"auto";
 		settings.engineCompat.forceEngine = L"auto";
 		settings.engineCompat.enableLog = false;
-		settings.enginePatches.enableKrkrPatch = true;
+		settings.enginePatches.enableKrkrPatch = false;
 		settings.enginePatches.krkrPatchVerboseLog = false;
-		settings.enginePatches.krkrBootstrapBypass = true;
-		settings.enginePatches.enableKrkrCxdecPatchBridge = true;
+		settings.enginePatches.krkrBootstrapBypass = false;
+		settings.enginePatches.enableKrkrCxdecPatchBridge = false;
 		settings.enginePatches.enableWafflePatch = false;
 		settings.binaryPatch.enable = false;
 		settings.binaryPatch.enableLog = false;
@@ -265,8 +268,8 @@ namespace CialloHook
 		settings.font.enableVirtualGlyphIndex = true;
 		settings.font.virtualGlyphIndexForTrackedFontsOnly = true;
 		settings.font.enableFontDataPatch = true;
-		settings.font.enableFontNameTablePatch = false;
-		settings.font.enableFontCmapTablePatch = false;
+		settings.font.enableFontNameTablePatch = true;
+		settings.font.enableFontCmapTablePatch = true;
 		settings.engineCompat.enableTinkerBell = true;
 		settings.engineCompat.enableCyberworks = true;
 		settings.engineCompat.enableAdvHD = true;
@@ -286,16 +289,16 @@ namespace CialloHook
 		settings.textReplace.rules = {};
 		settings.windowTitle.rules = {};
 		settings.filePatch.patchFolders = { L"patch" };
-		settings.filePatch.customPakFiles = { L"patch.lpk" };
+		settings.filePatch.customPakFiles = { L"patch.cpk" };
 		settings.fileSpoof.spoofFiles = {};
 		settings.fileSpoof.spoofDirectories = {};
 		settings.directoryRedirect.rules = {};
 		settings.registry.files = {};
 		settings.registryBootstrap.rules = {};
-		settings.aliceSystem3x.patchFolders = { L"patch" };
+		settings.aliceSystem3x.patchFolders = { L"unencrypted" };
 		settings.rioShiina.patchNames = { L"unencrypted" };
 		settings.rioShiina.archivesToExtract = {};
-		settings.enginePatches.krkrPatchNames = { L"magalumina_cn" };
+		settings.enginePatches.krkrPatchNames = { L"unencrypted" };
 		settings.binaryPatch.patchFiles = {};
 	}
 
@@ -310,7 +313,7 @@ namespace CialloHook
 		config.filePatchEnable = true;
 		config.patchFolders = { L"patch" };
 		config.customPakEnable = true;
-		config.customPakFiles = { L"patch.lpk" };
+		config.customPakFiles = { L"patch.cpk" };
 		config.startupMessage.enable = false;
 		config.startupMessage.title = L"CialloHook";
 		config.startupMessage.body = L"";

@@ -5,11 +5,14 @@
     <CialloHookFeatureBinaryPatch>true</CialloHookFeatureBinaryPatch>
     <CialloHookFeatureAliceSystem3x>true</CialloHookFeatureAliceSystem3x>
     <CialloHookFeatureRioShiina>true</CialloHookFeatureRioShiina>
-    <CialloHookFeatureCustomPak>true</CialloHookFeatureCustomPak>
+    <CialloHookFeatureCustomPakCpk>true</CialloHookFeatureCustomPakCpk>
+    <CialloHookFeatureCustomPakXp3>true</CialloHookFeatureCustomPakXp3>
+    <CialloHookFeatureCustomPakLpk>true</CialloHookFeatureCustomPakLpk>
     <CialloHookFeatureCodeCryptPatch>true</CialloHookFeatureCodeCryptPatch>
     <CialloHookFeatureRuntimeInit>true</CialloHookFeatureRuntimeInit>
     <CialloHookFeatureEngineCache>true</CialloHookFeatureEngineCache>
     <CialloHookFeatureKrkrPatch>true</CialloHookFeatureKrkrPatch>
     <CialloHookFeatureProxyExports>true</CialloHookFeatureProxyExports>
+    <CialloHookFeatureCustomPak>true</CialloHookFeatureCustomPak>
   </PropertyGroup>
 </Project>

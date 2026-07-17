@@ -233,13 +233,19 @@ MetricsOffsetLeft = 1    ; 左侧度量补偿
 MetricsOffsetRight = -1  ; 右侧度量补偿
 MetricsOffsetTop = 1     ; 顶部度量补偿
 MetricsOffsetBottom = -1 ; 底部度量补偿
+FontAscentPermille = 0   ; 上行高度占 em 的千分比，0=保留字体原值
+FontDescentPermille = 0  ; 下行高度占 em 的千分比，须为负数，0=保留字体原值
+FontLineSpacing = 0      ; 独立行距占 em 的千分比，0=不额外调整
 ```
 
 说明：
 
 - `FontScale` 保留各处相对大小关系，推荐优先使用
 - `FontHeight` / `FontWidth` 非 0 时优先于 `FontScale`，适合需要固定大小的场景
-- 度量补偿适合微调字间距过紧或过松的情况
+- 左右度量补偿用于字宽与间距微调；顶部/底部补偿是像素级垂直度量补偿，不用于模拟行距
+- `FontAscentPermille` 范围为 `100..2000` 或 `0`，`FontDescentPermille` 范围为 `-2000..-1` 或 `0`
+- `FontLineSpacing` 范围为 `-2000..2000`，独立设置 external leading 并计入总行高
+- 三项垂直配置默认均为 `0`，此时保留字体原始垂直指标
 
 ### 6. 字符集伪装
 

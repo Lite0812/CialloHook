@@ -1,6 +1,9 @@
 #include "CustomPakVFS.h"
 #include "Hook_API.h"
+#include "../../CialloHook/config/build_options.h"
+#if CIALLOHOOK_FEATURE_CUSTOM_PAK_LPK
 #include "litepak.h"
+#endif
 
 #include <Windows.h>
 #include <array>
@@ -29,7 +32,9 @@ namespace Rut
 			};
 			static constexpr uint8_t kMagic[] = { 0x43,0x69,0x61,0x6C,0x6C,0x6F,0x50,0x41,0x4B };
 			static constexpr uint8_t kXp3Magic[] = { 0x58,0x50,0x33,0x0D,0x0A,0x20,0x0A,0x1A,0x8B,0x67,0x01 };
-				static constexpr uint8_t kLitePakMagic[] = { 'L','i','t','e','P','A','K' };
+#if CIALLOHOOK_FEATURE_CUSTOM_PAK_LPK
+			static constexpr uint8_t kLitePakMagic[] = { 'L','i','t','e','P','A','K' };
+#endif
 			static constexpr uint16_t kVersion = 4;
 			static constexpr uint8_t kModeRaw = 0;
 			static constexpr uint8_t kModeZlib = 1;
@@ -413,6 +418,7 @@ namespace Rut
 
 			static std::wstring ToPosixPath(const std::wstring& path);
 
+#if CIALLOHOOK_FEATURE_CUSTOM_PAK_LPK
 			static bool LitePakHashRelPath(const std::wstring& relativePath, std::array<uint8_t, 16>& out)
 			{
 				std::wstring normalizedPath = ToPosixPath(relativePath);
@@ -424,6 +430,7 @@ namespace Rut
 				litepak_path_hash_bytes(utf8.c_str(), out.data());
 				return true;
 			}
+#endif
 
 			static std::wstring GetGameDir()
 			{
@@ -838,13 +845,21 @@ namespace Rut
 				LitePak
 			};
 
-			struct LitePakHandleDeleter
+#if CIALLOHOOK_FEATURE_CUSTOM_PAK_LPK
+			struct LitePakTokenDeleter
 			{
-				void operator()(litepak_vfs_handle_t* handle) const
+				void operator()(litepak_vfs_token_t* token) const
 				{
-					litepak_vfs_close(handle);
+					if (token)
+					{
+						litepak_vfs_close(*token);
+						SecureZeroMemory(token, sizeof(*token));
+						delete token;
+					}
 				}
 			};
+
+#endif
 
 			struct PakArchive
 			{
@@ -853,7 +868,9 @@ namespace Rut
 				PakArchiveFormat format = PakArchiveFormat::CustomPak;
 				std::unordered_map<Hash16, PakEntry, Hash16Hasher> hashedEntries;
 				std::unordered_map<std::wstring, PakEntry> pathEntries;
-				std::shared_ptr<litepak_vfs_handle_t> litePakHandle;
+#if CIALLOHOOK_FEATURE_CUSTOM_PAK_LPK
+				std::shared_ptr<litepak_vfs_token_t> litePakToken;
+#endif
 				bool indexLoaded = false;
 				bool indexLoadAttempted = false;
 			};
@@ -1312,47 +1329,36 @@ namespace Rut
 			}
 
 
-			static bool LoadLitePakEntries(PakArchive& archive, litepak_vfs_handle_t* rawHandle, const std::wstring& manifestPath)
+#if CIALLOHOOK_FEATURE_CUSTOM_PAK_LPK
+			static bool LoadLitePakEntries(PakArchive& archive, const litepak_vfs_token_t& token, const std::wstring& manifestPath)
 			{
-				if (!rawHandle)
-				{
-					return false;
-				}
-				archive.litePakHandle.reset(rawHandle, LitePakHandleDeleter());
+				archive.litePakToken.reset(new litepak_vfs_token_t(token), LitePakTokenDeleter());
 				size_t count = 0;
-				if (litepak_vfs_get_entry_count(rawHandle, &count) != 0)
+				if (litepak_vfs_get_visible_count(token, &count) != 0)
 				{
+					archive.litePakToken.reset();
 					return false;
 				}
 				for (size_t i = 0; i < count; ++i)
 				{
-					litepak_vfs_entry_info_t info = {};
-					if (litepak_vfs_get_entry(rawHandle, i, &info) != 0)
+					litepak_vfs_visible_entry_t info = {};
+					if (litepak_vfs_get_visible_entry(token, i, &info) != 0 || !info.path || info.path[0] == '\0')
 					{
 						continue;
 					}
-					if (info.flags == ENTRY_KEY_PAYLOAD)
+					PakEntry entry = {};
+					entry.flags = ENTRY_FILE;
+					entry.origSize = info.original_size;
+					entry.storedSize = info.original_size;
+					entry.pathKey = NormalizeXp3EntryPath(Utf8ToWide(info.path));
+					if (!entry.pathKey.empty() && LitePakHashRelPath(entry.pathKey, entry.hash.bytes))
 					{
-						continue;
-					}
-					PakEntry e = {};
-					memcpy(e.hash.bytes.data(), info.hash_bytes, e.hash.bytes.size());
-					e.flags = info.flags;
-					e.origSize = info.original_size;
-					e.storedSize = info.original_size;
-					archive.hashedEntries[e.hash] = e;
-					if (info.rel_path && info.rel_path[0] != '\0')
-					{
-						e.pathKey = NormalizeXp3EntryPath(Utf8ToWide(info.rel_path));
-						if (!e.pathKey.empty())
-						{
-							archive.pathEntries[e.pathKey] = e;
-						}
+						archive.pathEntries[entry.pathKey] = entry;
 					}
 				}
 				archive.format = PakArchiveFormat::LitePak;
-				LogCustomPakInfo(L"LitePAK loaded: %s entries=%u named=%u manifest=%s", archive.path.c_str(), (uint32_t)archive.hashedEntries.size(), (uint32_t)archive.pathEntries.size(), manifestPath.empty() ? L"" : manifestPath.c_str());
-				return !archive.hashedEntries.empty();
+				LogCustomPakInfo(L"LitePAK loaded: %s visible=%u manifest=%s", archive.path.c_str(), (uint32_t)archive.pathEntries.size(), manifestPath.empty() ? L"" : manifestPath.c_str());
+				return true;
 			}
 
 			static bool LoadLitePakIndex(PakArchive& archive)
@@ -1360,26 +1366,28 @@ namespace Rut
 				std::string pakUtf8 = WideToUtf8(archive.path);
 				std::wstring manifestPath = FindLitePakManifestPath(archive.path);
 				std::string manifestUtf8 = WideToUtf8(manifestPath);
-				litepak_vfs_handle_t* handle = nullptr;
-				if (pakUtf8.empty() || litepak_vfs_open_path(pakUtf8.c_str(), manifestUtf8.empty() ? nullptr : manifestUtf8.c_str(), &handle) != 0)
+				litepak_vfs_token_t token = {};
+				if (pakUtf8.empty() || litepak_vfs_open_path(pakUtf8.c_str(), manifestUtf8.empty() ? nullptr : manifestUtf8.c_str(), &token) != 0)
 				{
 					LogCustomPakWarn(L"Load LitePAK failed: %s", archive.path.c_str());
 					return false;
 				}
-				return LoadLitePakEntries(archive, handle, manifestPath);
+				return LoadLitePakEntries(archive, token, manifestPath);
 			}
 
 			static bool LoadLitePakIndexFromMemory(PakArchive& archive, const uint8_t* data, size_t size)
 			{
 				std::string tagUtf8 = WideToUtf8(archive.path);
-				litepak_vfs_handle_t* handle = nullptr;
-				if (litepak_vfs_open_memory(data, size, tagUtf8.empty() ? "<memory.lpk>" : tagUtf8.c_str(), nullptr, &handle) != 0)
+				litepak_vfs_token_t token = {};
+				if (litepak_vfs_open_memory(data, size, tagUtf8.empty() ? "<memory.lpk>" : tagUtf8.c_str(), nullptr, &token) != 0)
 				{
 					LogCustomPakWarn(L"Load memory LitePAK failed: %s", archive.path.c_str());
 					return false;
 				}
-				return LoadLitePakEntries(archive, handle, std::wstring());
+				return LoadLitePakEntries(archive, token, std::wstring());
 			}
+
+#endif
 
 			static bool LoadArchiveIndex(PakArchive& archive)
 			{
@@ -1400,18 +1408,24 @@ namespace Rut
 					LogCustomPakWarn(L"Read header failed: %s", pakPath.c_str());
 					return false;
 				}
+#if CIALLOHOOK_FEATURE_CUSTOM_PAK_CPK
 				if (memcmp(header.data(), kMagic, sizeof(kMagic)) == 0)
 				{
 					return LoadCustomPakIndex(archive, fs, header);
 				}
+#endif
+#if CIALLOHOOK_FEATURE_CUSTOM_PAK_XP3
 				if (memcmp(header.data(), kXp3Magic, sizeof(kXp3Magic)) == 0)
 				{
 					return LoadXp3Index(archive, fs, header);
 				}
+#endif
+#if CIALLOHOOK_FEATURE_CUSTOM_PAK_LPK
 				if (memcmp(header.data(), kLitePakMagic, sizeof(kLitePakMagic)) == 0)
 				{
 					return LoadLitePakIndex(archive);
 				}
+#endif
 				LogCustomPakWarn(L"Unsupported archive magic: %s", pakPath.c_str());
 				return false;
 			}
@@ -1606,18 +1620,24 @@ namespace Rut
 				{
 					return false;
 				}
+#if CIALLOHOOK_FEATURE_CUSTOM_PAK_CPK
 				if (size >= sizeof(kMagic) && memcmp(data, kMagic, sizeof(kMagic)) == 0)
 				{
 					return LoadCustomPakIndexFromMemory(archive, data, size);
 				}
+#endif
+#if CIALLOHOOK_FEATURE_CUSTOM_PAK_XP3
 				if (size >= sizeof(kXp3Magic) && memcmp(data, kXp3Magic, sizeof(kXp3Magic)) == 0)
 				{
 					return LoadXp3IndexFromMemory(archive, data, size);
 				}
+#endif
+#if CIALLOHOOK_FEATURE_CUSTOM_PAK_LPK
 				if (size >= sizeof(kLitePakMagic) && memcmp(data, kLitePakMagic, sizeof(kLitePakMagic)) == 0)
 				{
 					return LoadLitePakIndexFromMemory(archive, data, size);
 				}
+#endif
 				LogCustomPakWarn(L"Unsupported memory archive magic: %s size=%llu", archive.path.c_str(), (unsigned long long)size);
 				return false;
 			}
@@ -1651,25 +1671,47 @@ namespace Rut
 					LogCustomPakWarn(L"Entry size overflow: archive=%s stored=%llu orig=%llu", archive.path.c_str(), (unsigned long long)entry.storedSize, (unsigned long long)entry.origSize);
 					return false;
 				}
+#if CIALLOHOOK_FEATURE_CUSTOM_PAK_LPK
 				if (archive.format == PakArchiveFormat::LitePak)
 				{
-					if (!archive.litePakHandle)
+					if (!archive.litePakToken)
 					{
 						LogCustomPakWarn(L"LitePAK handle missing: archive=%s", archive.path.c_str());
 						return false;
 					}
-					uint8_t* bytes = nullptr;
-					size_t byteCount = 0;
-					int rc = litepak_vfs_read_file_by_hash(archive.litePakHandle.get(), entry.hash.bytes.data(), &bytes, &byteCount);
+					litepak_vfs_read_token_t request = {};
+					uint64_t requestSize = 0;
+					int rc = litepak_vfs_begin_read(*archive.litePakToken, entry.hash.bytes.data(), &request, &requestSize);
 					if (rc != 0)
 					{
-						LogCustomPakWarn(L"Read LitePAK entry failed: archive=%s rc=%d", archive.path.c_str(), rc);
+						LogCustomPakWarn(L"Begin LitePAK entry read failed: archive=%s rc=%d size=%llu", archive.path.c_str(), rc, (unsigned long long)requestSize);
 						return false;
 					}
-					raw.assign(bytes, bytes + byteCount);
-					litepak_vfs_free_bytes(bytes);
-					return raw.size() == static_cast<size_t>(entry.origSize);
+					if (requestSize > static_cast<uint64_t>(SIZE_MAX))
+					{
+						size_t discarded = 0;
+						litepak_vfs_read_into(request, nullptr, 0, &discarded);
+						SecureZeroMemory(&request, sizeof(request));
+						return false;
+					}
+					raw.resize(static_cast<size_t>(requestSize));
+					size_t byteCount = 0;
+					rc = litepak_vfs_read_into(request, raw.data(), raw.size(), &byteCount);
+					SecureZeroMemory(&request, sizeof(request));
+					if (rc != 0 || byteCount != raw.size())
+					{
+						LogCustomPakWarn(L"Read LitePAK entry failed: archive=%s rc=%d size=%llu expected=%llu", archive.path.c_str(), rc, (unsigned long long)byteCount, (unsigned long long)entry.origSize);
+						if (!raw.empty())
+						{
+							SecureZeroMemory(raw.data(), raw.size());
+						}
+						std::vector<uint8_t>().swap(raw);
+						return false;
+					}
+					return true;
 				}
+
+#endif
 
 				std::ifstream fs(archive.path, std::ios::binary);
 				if (!fs.good())
@@ -1809,25 +1851,46 @@ namespace Rut
 					return false;
 				}
 
+#if CIALLOHOOK_FEATURE_CUSTOM_PAK_LPK
 				if (archive.format == PakArchiveFormat::LitePak)
 				{
-					if (!archive.litePakHandle)
+					if (!archive.litePakToken)
 					{
 						LogCustomPakWarn(L"Memory LitePAK handle missing: archive=%s", archive.path.c_str());
 						return false;
 					}
-					uint8_t* bytes = nullptr;
-					size_t byteCount = 0;
-					int rc = litepak_vfs_read_file_by_hash(archive.litePakHandle.get(), entry.hash.bytes.data(), &bytes, &byteCount);
+					litepak_vfs_read_token_t request = {};
+					uint64_t requestSize = 0;
+					int rc = litepak_vfs_begin_read(*archive.litePakToken, entry.hash.bytes.data(), &request, &requestSize);
 					if (rc != 0)
 					{
-						LogCustomPakWarn(L"Read memory LitePAK entry failed: archive=%s rc=%d", archive.path.c_str(), rc);
+						LogCustomPakWarn(L"Begin memory LitePAK entry read failed: archive=%s rc=%d size=%llu", archive.path.c_str(), rc, (unsigned long long)requestSize);
 						return false;
 					}
-					raw.assign(bytes, bytes + byteCount);
-					litepak_vfs_free_bytes(bytes);
-					return raw.size() == static_cast<size_t>(entry.origSize);
+					if (requestSize > static_cast<uint64_t>(SIZE_MAX))
+					{
+						size_t discarded = 0;
+						litepak_vfs_read_into(request, nullptr, 0, &discarded);
+						SecureZeroMemory(&request, sizeof(request));
+						return false;
+					}
+					raw.resize(static_cast<size_t>(requestSize));
+					size_t byteCount = 0;
+					rc = litepak_vfs_read_into(request, raw.data(), raw.size(), &byteCount);
+					SecureZeroMemory(&request, sizeof(request));
+					if (rc != 0 || byteCount != raw.size())
+					{
+						LogCustomPakWarn(L"Read memory LitePAK entry failed: archive=%s rc=%d size=%llu expected=%llu", archive.path.c_str(), rc, (unsigned long long)byteCount, (unsigned long long)entry.origSize);
+						if (!raw.empty())
+						{
+							SecureZeroMemory(raw.data(), raw.size());
+						}
+						std::vector<uint8_t>().swap(raw);
+						return false;
+					}
+					return true;
 				}
+#endif
 
 				if (archive.format == PakArchiveFormat::Xp3)
 				{
@@ -1956,6 +2019,7 @@ namespace Rut
 			static bool BuildArchiveEntryHash(const PakArchive& archive, const std::wstring& relativePath, Hash16& out)
 			{
 				std::array<uint8_t, 16> hash = {};
+#if CIALLOHOOK_FEATURE_CUSTOM_PAK_LPK
 				if (archive.format == PakArchiveFormat::LitePak)
 				{
 					if (!LitePakHashRelPath(relativePath, hash))
@@ -1967,20 +2031,24 @@ namespace Rut
 				{
 					hash = HashRelPath(relativePath);
 				}
+#else
+				hash = HashRelPath(relativePath);
+#endif
 				out.bytes = hash;
 				return true;
 			}
 
 			static bool ReadArchiveEntryRawByHash(PakArchive& archive, const std::wstring& relativePath, const Hash16& key, std::vector<uint8_t>& raw)
 			{
+#if CIALLOHOOK_FEATURE_CUSTOM_PAK_LPK
 				if (archive.format == PakArchiveFormat::LitePak)
 				{
-					if (!archive.litePakHandle)
+					if (!archive.litePakToken)
 					{
 						return false;
 					}
 					uint64_t entrySize = 0;
-					if (litepak_vfs_query_file_by_hash(archive.litePakHandle.get(), key.bytes.data(), &entrySize) != 0)
+					if (litepak_vfs_query_file_by_hash(*archive.litePakToken, key.bytes.data(), &entrySize) != 0)
 					{
 						return false;
 					}
@@ -1991,6 +2059,7 @@ namespace Rut
 					entry.storedSize = entrySize;
 					return ReadEntryRaw(archive, entry, raw);
 				}
+#endif
 
 				const PakEntry* entry = FindArchiveEntry(archive, relativePath, key);
 				return entry && ReadEntryRaw(archive, *entry, raw);
@@ -1998,14 +2067,15 @@ namespace Rut
 
 			static bool ReadArchiveEntryRawFromMemoryByHash(const PakArchive& archive, const std::wstring& relativePath, const Hash16& key, const uint8_t* data, size_t size, std::vector<uint8_t>& raw)
 			{
+#if CIALLOHOOK_FEATURE_CUSTOM_PAK_LPK
 				if (archive.format == PakArchiveFormat::LitePak)
 				{
-					if (!archive.litePakHandle)
+					if (!archive.litePakToken)
 					{
 						return false;
 					}
 					uint64_t entrySize = 0;
-					if (litepak_vfs_query_file_by_hash(archive.litePakHandle.get(), key.bytes.data(), &entrySize) != 0)
+					if (litepak_vfs_query_file_by_hash(*archive.litePakToken, key.bytes.data(), &entrySize) != 0)
 					{
 						return false;
 					}
@@ -2016,6 +2086,7 @@ namespace Rut
 					entry.storedSize = entrySize;
 					return ReadEntryRawFromMemory(archive, entry, data, size, raw);
 				}
+#endif
 
 				const PakEntry* entry = FindArchiveEntry(archive, relativePath, key);
 				return entry && ReadEntryRawFromMemory(archive, *entry, data, size, raw);
@@ -2184,10 +2255,12 @@ namespace Rut
 				{
 					return archive.pathLower + L"|xp3|" + NormalizeXp3EntryPath(relativePath);
 				}
+#if CIALLOHOOK_FEATURE_CUSTOM_PAK_LPK
 				if (archive.format == PakArchiveFormat::LitePak)
 				{
 					return archive.pathLower + L"|lpk|" + ToLowerCopyW(relativePath);
 				}
+#endif
 				return archive.pathLower + L"|cpk|" + HashHex(hash);
 			}
 
@@ -2545,20 +2618,22 @@ namespace Rut
 				{
 					continue;
 				}
+#if CIALLOHOOK_FEATURE_CUSTOM_PAK_LPK
 				if (archive.format == PakArchiveFormat::LitePak)
 				{
-					if (!archive.litePakHandle)
+					if (!archive.litePakToken)
 					{
 						continue;
 					}
 					uint64_t entrySize = 0;
-					if (litepak_vfs_query_file_by_hash(archive.litePakHandle.get(), key.bytes.data(), &entrySize) == 0)
+					if (litepak_vfs_query_file_by_hash(*archive.litePakToken, key.bytes.data(), &entrySize) == 0)
 					{
 						outSize = entrySize;
 						return true;
 					}
 					continue;
 				}
+#endif
 				const PakEntry* entry = FindArchiveEntry(archive, relativePath, key);
 				if (entry)
 				{

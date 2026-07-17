@@ -49,34 +49,34 @@
     <ClCompile Include="hook\Hook.cpp" />
     <ClCompile Include="hook\Hook_API.cpp" />
     <ClCompile Include="hook\LocaleEmulatorSupport.cpp" />
-    <ClCompile Include="io\CustomPakVFS.cpp" Condition="'$(CialloHookFeatureCustomPak)'!='false'" />
-    <ClCompile Include="io\CustomPakVFSStub.cpp" Condition="'$(CialloHookFeatureCustomPak)'=='false'" />
-    <ClCompile Include="..\LitePAK_tool\unpack\litepak_unpack.c" Condition="'$(CialloHookFeatureCustomPak)'!='false'" />
-    <ClCompile Include="..\LitePAK_tool\common\litepak_format.c" Condition="'$(CialloHookFeatureCustomPak)'!='false'" />
-    <ClCompile Include="..\LitePAK_tool\common\litepak_crypto.c" Condition="'$(CialloHookFeatureCustomPak)'!='false'" />
-    <ClCompile Include="..\LitePAK_tool\common\litepak_prng.c" Condition="'$(CialloHookFeatureCustomPak)'!='false'" />
-    <ClCompile Include="..\LitePAK_tool\common\litepak_compress.c" Condition="'$(CialloHookFeatureCustomPak)'!='false'" />
-    <ClCompile Include="..\LitePAK_tool\common\litepak_utils.c" Condition="'$(CialloHookFeatureCustomPak)'!='false'" />
-    <ClCompile Include="..\LitePAK_tool\common\litepak_secure.c" Condition="'$(CialloHookFeatureCustomPak)'!='false'" />
-    <ClCompile Include="..\LitePAK_tool\common\litepak_codecrypt.c" Condition="'$(CialloHookFeatureCustomPak)'!='false'" />
-    <ClCompile Include="..\LitePAK_tool\common\litepak_data_protect.c" Condition="'$(CialloHookFeatureCustomPak)'!='false'" />
-    <ClCompile Include="..\LitePAK_tool\common\litepak_material_core.c" Condition="'$(CialloHookFeatureCustomPak)'!='false'" />
-    <ClCompile Include="..\LitePAK_tool\common\litepak_material_table_a.c" Condition="'$(CialloHookFeatureCustomPak)'!='false'" />
-    <ClCompile Include="..\LitePAK_tool\common\litepak_material_table_b.c" Condition="'$(CialloHookFeatureCustomPak)'!='false'" />
-    <ClCompile Include="..\LitePAK_tool\common\litepak_material_table_c.c" Condition="'$(CialloHookFeatureCustomPak)'!='false'" />
-    <ClCompile Include="..\LitePAK_tool\common\litepak_personal.c" Condition="'$(CialloHookFeatureCustomPak)'!='false'" />
-    <ClCompile Include="..\LitePAK_tool\common\litepak_wb_vm.c" Condition="'$(CialloHookFeatureCustomPak)'!='false'" />
-    <ClCompile Include="..\LitePAK_tool\common\litepak_wb_bytecode.c" Condition="'$(CialloHookFeatureCustomPak)'!='false'" />
-    <ClCompile Include="..\LitePAK_tool\common\blake2b.c" Condition="'$(CialloHookFeatureCustomPak)'!='false'" />
-    <ClCompile Include="..\LitePAK_tool\common\aes_gcm.c" Condition="'$(CialloHookFeatureCustomPak)'!='false'" />
-    <ClCompile Include="..\LitePAK_tool\common\ed25519.c" Condition="'$(CialloHookFeatureCustomPak)'!='false'" />
+    <ClCompile Include="io\CustomPakVFS.cpp" Condition="'$(CialloHookFeatureCustomPakCpk)'!='false' or '$(CialloHookFeatureCustomPakXp3)'!='false' or '$(CialloHookFeatureCustomPakLpk)'!='false'" />
+    <ClCompile Include="io\CustomPakVFSStub.cpp" Condition="'$(CialloHookFeatureCustomPakCpk)'=='false' and '$(CialloHookFeatureCustomPakXp3)'=='false' and '$(CialloHookFeatureCustomPakLpk)'=='false'" />
+    <ClCompile Include="..\LitePAK_tool\unpack\litepak_unpack.c" Condition="'$(CialloHookFeatureCustomPakLpk)'!='false'" />
+    <ClCompile Include="..\LitePAK_tool\common\litepak_format.c" Condition="'$(CialloHookFeatureCustomPakLpk)'!='false'" />
+    <ClCompile Include="..\LitePAK_tool\common\litepak_crypto.c" Condition="'$(CialloHookFeatureCustomPakLpk)'!='false'" />
+    <ClCompile Include="..\LitePAK_tool\common\litepak_prng.c" Condition="'$(CialloHookFeatureCustomPakLpk)'!='false'" />
+    <ClCompile Include="..\LitePAK_tool\common\litepak_compress.c" Condition="'$(CialloHookFeatureCustomPakLpk)'!='false'" />
+    <ClCompile Include="..\LitePAK_tool\common\litepak_utils.c" Condition="'$(CialloHookFeatureCustomPakLpk)'!='false'" />
+    <ClCompile Include="..\LitePAK_tool\common\litepak_secure.c" Condition="'$(CialloHookFeatureCustomPakLpk)'!='false'" />
+    <ClCompile Include="..\LitePAK_tool\common\litepak_codecrypt.c" Condition="'$(CialloHookFeatureCustomPakLpk)'!='false'" />
+    <ClCompile Include="..\LitePAK_tool\common\litepak_data_protect.c" Condition="'$(CialloHookFeatureCustomPakLpk)'!='false'" />
+    <ClCompile Include="..\LitePAK_tool\common\litepak_material_core.c" Condition="'$(CialloHookFeatureCustomPakLpk)'!='false'" />
+    <ClCompile Include="..\LitePAK_tool\common\litepak_material_table_a.c" Condition="'$(CialloHookFeatureCustomPakLpk)'!='false'" />
+    <ClCompile Include="..\LitePAK_tool\common\litepak_material_table_b.c" Condition="'$(CialloHookFeatureCustomPakLpk)'!='false'" />
+    <ClCompile Include="..\LitePAK_tool\common\litepak_material_table_c.c" Condition="'$(CialloHookFeatureCustomPakLpk)'!='false'" />
+    <ClCompile Include="..\LitePAK_tool\common\litepak_personal.c" Condition="'$(CialloHookFeatureCustomPakLpk)'!='false'" />
+    <ClCompile Include="..\LitePAK_tool\common\litepak_wb_vm.c" Condition="'$(CialloHookFeatureCustomPakLpk)'!='false'" />
+    <ClCompile Include="..\LitePAK_tool\common\litepak_wb_bytecode.c" Condition="'$(CialloHookFeatureCustomPakLpk)'!='false'" />
+    <ClCompile Include="..\LitePAK_tool\common\blake2b.c" Condition="'$(CialloHookFeatureCustomPakLpk)'!='false'" />
+    <ClCompile Include="..\LitePAK_tool\common\aes_gcm.c" Condition="'$(CialloHookFeatureCustomPakLpk)'!='false'" />
+    <ClCompile Include="..\LitePAK_tool\common\ed25519.c" Condition="'$(CialloHookFeatureCustomPakLpk)'!='false'" />
     <ClCompile Include="io\File.cpp" />
     <ClCompile Include="io\File_Enum.cpp" />
     <ClCompile Include="io\INI.cpp" />
     <ClCompile Include="io\INI_Value.cpp" />
-    <ClCompile Include="..\..\third\lzma\LzmaDec.c" Condition="'$(CialloHookFeatureCustomPak)'!='false'" />
+    <ClCompile Include="..\..\third\lzma\LzmaDec.c" Condition="'$(CialloHookFeatureCustomPakCpk)'!='false' or '$(CialloHookFeatureCustomPakLpk)'!='false'" />
     <ClCompile Include="..\..\third\miniz\miniz.c" Condition="'$(CialloHookFeatureCustomPak)'!='false' or '$(CialloHookFeatureEngineCache)'!='false' or '$(CialloHookFeatureKrkrPatch)'!='false'" />
-    <ClCompile Include="..\..\third\zstd\zstddeclib.c" Condition="'$(CialloHookFeatureCustomPak)'!='false'" />
+    <ClCompile Include="..\..\third\zstd\zstddeclib.c" Condition="'$(CialloHookFeatureCustomPakCpk)'!='false' or '$(CialloHookFeatureCustomPakLpk)'!='false'" />
   </ItemGroup>
   <ItemGroup>
     <MASM Include="..\LitePAK_tool\unpack\litepak_secure_core_x86.asm" Condition="'$(Platform)'=='Win32' and '$(CialloHookFeatureCustomPak)'!='false'" />
@@ -120,7 +120,11 @@
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <Import Project="..\CialloHook\config\build_options.props" Condition="exists('..\CialloHook\config\build_options.props')" />
   <PropertyGroup>
-    <CialloHookFeatureCustomPak Condition="'$(CialloHookFeatureCustomPak)'==''">true</CialloHookFeatureCustomPak>
+    <CialloHookFeatureCustomPakCpk Condition="'$(CialloHookFeatureCustomPakCpk)'==''">true</CialloHookFeatureCustomPakCpk>
+    <CialloHookFeatureCustomPakXp3 Condition="'$(CialloHookFeatureCustomPakXp3)'==''">true</CialloHookFeatureCustomPakXp3>
+    <CialloHookFeatureCustomPakLpk Condition="'$(CialloHookFeatureCustomPakLpk)'==''">true</CialloHookFeatureCustomPakLpk>
+    <CialloHookFeatureCustomPak Condition="'$(CialloHookFeatureCustomPak)'=='' and ('$(CialloHookFeatureCustomPakCpk)'!='false' or '$(CialloHookFeatureCustomPakXp3)'!='false' or '$(CialloHookFeatureCustomPakLpk)'!='false')">true</CialloHookFeatureCustomPak>
+    <CialloHookFeatureCustomPak Condition="'$(CialloHookFeatureCustomPak)'==''">false</CialloHookFeatureCustomPak>
     <CialloHookFeatureKrkrPatch Condition="'$(CialloHookFeatureKrkrPatch)'==''">true</CialloHookFeatureKrkrPatch>
     <LitePakCodeCryptSignature Condition="'$(LitePakCodeCryptSignature)'==''">0</LitePakCodeCryptSignature>
   </PropertyGroup>

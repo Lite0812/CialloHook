@@ -188,7 +188,9 @@ FEATURES: list[Feature] = [
     Feature("CIALLOHOOK_FEATURE_WINDOW_TITLE", "窗口标题", "窗口标题替换和启动窗口门控。"),
     Feature("CIALLOHOOK_FEATURE_SCREEN_CAPTURE_PROTECTION", "防截图/录屏", "基于 SetWindowDisplayAffinity 的截图保护。"),
     Feature("CIALLOHOOK_FEATURE_FILE_PATCH", "文件补丁/VFS", "补丁目录、自定义封包、文件伪装、目录重定向。"),
-    Feature("CIALLOHOOK_FEATURE_CUSTOM_PAK", "CustomPak/自定义封包", "cpk/lpk/xp3 封包读取、LitePAK 解包和压缩解码支持。"),
+    Feature("CIALLOHOOK_FEATURE_CUSTOM_PAK_CPK", "CPK 运行时封包读取", "启用 CialloPAK（.cpk）运行时读取支持。"),
+    Feature("CIALLOHOOK_FEATURE_CUSTOM_PAK_XP3", "XP3 运行时封包读取", "启用 XP3（.xp3）运行时读取支持。"),
+    Feature("CIALLOHOOK_FEATURE_CUSTOM_PAK_LPK", "LPK 运行时封包读取", "启用 LitePAK（.lpk）运行时读取和压缩解码支持。"),
     Feature("CIALLOHOOK_FEATURE_REGISTRY", "虚拟注册表", "进程内 .reg 虚拟注册表。"),
     Feature("CIALLOHOOK_FEATURE_REGISTRY_BOOTSTRAP", "注册表临时引导", "启动时写真实注册表，退出时回滚。"),
     Feature("CIALLOHOOK_FEATURE_CODEPAGE", "代码页转换", "MultiByteToWideChar / WideCharToMultiByte 代码页重定向。", True),
@@ -214,7 +216,9 @@ SOURCE_ITEM_PROPS = {
     "CIALLOHOOK_FEATURE_BINARY_PATCH": "CialloHookFeatureBinaryPatch",
     "CIALLOHOOK_FEATURE_ALICE_SYSTEM3X": "CialloHookFeatureAliceSystem3x",
     "CIALLOHOOK_FEATURE_RIO_SHIINA": "CialloHookFeatureRioShiina",
-    "CIALLOHOOK_FEATURE_CUSTOM_PAK": "CialloHookFeatureCustomPak",
+    "CIALLOHOOK_FEATURE_CUSTOM_PAK_CPK": "CialloHookFeatureCustomPakCpk",
+    "CIALLOHOOK_FEATURE_CUSTOM_PAK_XP3": "CialloHookFeatureCustomPakXp3",
+    "CIALLOHOOK_FEATURE_CUSTOM_PAK_LPK": "CialloHookFeatureCustomPakLpk",
     "CIALLOHOOK_FEATURE_CODECRYPT_PATCH": "CialloHookFeatureCodeCryptPatch",
     "CIALLOHOOK_FEATURE_RUNTIME_INIT": "CialloHookFeatureRuntimeInit",
     "CIALLOHOOK_FEATURE_ENGINE_CACHE": "CialloHookFeatureEngineCache",
@@ -224,8 +228,14 @@ SOURCE_ITEM_PROPS = {
 
 FEATURE_LABELS = {feature.key: feature.label for feature in FEATURES}
 
+CUSTOM_PAK_FEATURES = (
+    "CIALLOHOOK_FEATURE_CUSTOM_PAK_CPK",
+    "CIALLOHOOK_FEATURE_CUSTOM_PAK_XP3",
+    "CIALLOHOOK_FEATURE_CUSTOM_PAK_LPK",
+)
+
 FEATURE_DEPENDENCIES: dict[str, tuple[str, ...]] = {
-    "CIALLOHOOK_FEATURE_CUSTOM_PAK": ("CIALLOHOOK_FEATURE_FILE_PATCH",),
+    feature: ("CIALLOHOOK_FEATURE_FILE_PATCH",) for feature in CUSTOM_PAK_FEATURES
 }
 
 FEATURE_DEPENDENTS: dict[str, tuple[str, ...]] = {}
@@ -432,6 +442,9 @@ FIELDS: list[Field] = [
     Field("font_weight", "字重", "int", 0, "font.fontWeight", 0, 1000),
     Field("font_scale", "字号缩放", "float", 1.0, "font.fontScale", 0.05, 8.0),
     Field("font_spacing_scale", "字符间距缩放", "float", 1.0, "font.fontSpacingScale", 0.05, 8.0),
+    Field("font_ascent_permille", "字体上升度量（em 千分比）", "int", 0, "font.fontAscentPermille", 0, 2000),
+    Field("font_descent_permille", "字体下降度量（em 千分比）", "int", 0, "font.fontDescentPermille", -2000, 0),
+    Field("font_line_spacing", "行距调整（em 千分比）", "int", 0, "font.fontLineSpacing", -2000, 2000),
     Field("font_glyph_aspect", "字形宽高比", "float", 1.0, "font.glyphAspectRatio", 0.05, 8.0),
     Field("font_glyph_offset_x", "字形 X 偏移", "int", 0, "font.glyphOffsetX", -4096, 4096),
     Field("font_glyph_offset_y", "字形 Y 偏移", "int", 0, "font.glyphOffsetY", -4096, 4096),
@@ -558,7 +571,7 @@ TABLES: list[TableSpec] = [
     TableSpec("dir_redirect_rules", "目录重定向规则", ("原目录", "目标目录"), (), "directoryRedirect.rules", "pair_list"),
     TableSpec("registry_files", "虚拟注册表文件", ("REG 文件",), (), "registry.files", "wstring_list"),
     TableSpec("registry_bootstrap_rules", "真实注册表引导规则", ("根", "Key", "ValueName", "类型", "数据"), (), "registryBootstrap.rules", "registry_rules"),
-    TableSpec("alice_patch_folders", "Alice 补丁目录", ("目录",), (("patch",),), "aliceSystem3x.patchFolders", "wstring_list"),
+    TableSpec("alice_patch_folders", "Alice 补丁目录", ("目录",), (("unencrypted",),), "aliceSystem3x.patchFolders", "wstring_list"),
     TableSpec("rio_patch_names", "Rio 补丁名", ("补丁名",), (("unencrypted",),), "rioShiina.patchNames", "wstring_list"),
     TableSpec("rio_archives", "Rio 待解包归档", ("归档名",), (), "rioShiina.archivesToExtract", "wstring_list"),
     TableSpec("krkr_patch_names", "KrkrPatch 名称", ("补丁名",), (("unencrypted",),), "enginePatches.krkrPatchNames", "wstring_list"),
@@ -602,6 +615,9 @@ FIELD_HELP: dict[str, str] = {
     "font_weight": "0 不改，400 正常，700 粗体。",
     "font_scale": "字体缩放倍数；FontHeight 不为 0 时通常无效。",
     "font_spacing_scale": "只调整字符间距，不直接拉伸字形。",
+    "font_ascent_permille": "字体上升度量，单位为 em 千分比；0 保留原值。GUI 可输入 0..2000，配置端会将 1..99 归零并钳制。",
+    "font_descent_permille": "字体下降度量，单位为 em 千分比；0 保留原值，非零值应为负数。",
+    "font_line_spacing": "行距调整，单位为 em 千分比；0 不调整，且独立于 MetricsOffsetTop/Bottom。",
     "font_glyph_aspect": "字形宽高比，>1 更宽，<1 更窄。",
     "font_glyph_offset_x": "字形左右平移，左负右正。",
     "font_glyph_offset_y": "字形上下平移，上正下负。",
@@ -792,6 +808,7 @@ def build_platforms(platform: str) -> list[str]:
 
 def normalize_feature_dependencies(features: dict[str, bool]) -> dict[str, bool]:
     normalized = dict(features)
+    normalized["CIALLOHOOK_FEATURE_CUSTOM_PAK"] = any(normalized.get(key, False) for key in CUSTOM_PAK_FEATURES)
     changed = True
     while changed:
         changed = False
@@ -907,14 +924,20 @@ def coerce_field_value(field: Field, value: str) -> Any:
 
 def load_state() -> dict[str, Any]:
     state = make_default_state()
+    legacy_custom_pak: bool | None = None
+    explicit_custom_pak_features: set[str] = set()
     defines = read_defines()
     if defines:
         state["profile"] = from_cpp_wide_literal(defines.get("CIALLOHOOK_BUILD_PROFILE_NAME"), "Default")
         state["source"] = "builtin" if defines.get("CIALLOHOOK_CONFIG_SOURCE_BUILTIN", "0") == "1" else "ini"
         state["ini_override"] = from_cpp_wide_literal(defines.get("CIALLOHOOK_CONFIG_INI_OVERRIDE"), "")
+        if "CIALLOHOOK_FEATURE_CUSTOM_PAK" in defines:
+            legacy_custom_pak = defines["CIALLOHOOK_FEATURE_CUSTOM_PAK"].strip() != "0"
         for feature in FEATURES:
             if feature.key in defines:
                 state["features"][feature.key] = defines[feature.key].strip() != "0"
+                if feature.key in CUSTOM_PAK_FEATURES:
+                    explicit_custom_pak_features.add(feature.key)
 
     if STATE_PATH.exists():
         parser = configparser.ConfigParser()
@@ -927,9 +950,13 @@ def load_state() -> dict[str, Any]:
             if parser.has_option("构建", "show_help"):
                 state["show_help"] = parser.getboolean("构建", "show_help")
         if parser.has_section("功能"):
+            if parser.has_option("功能", "CIALLOHOOK_FEATURE_CUSTOM_PAK"):
+                legacy_custom_pak = parser.getboolean("功能", "CIALLOHOOK_FEATURE_CUSTOM_PAK")
             for feature in FEATURES:
                 if parser.has_option("功能", feature.key):
                     state["features"][feature.key] = parser.getboolean("功能", feature.key)
+                    if feature.key in CUSTOM_PAK_FEATURES:
+                        explicit_custom_pak_features.add(feature.key)
         if parser.has_section("细节"):
             for field in FIELDS:
                 if parser.has_option("细节", field.key):
@@ -942,6 +969,11 @@ def load_state() -> dict[str, Any]:
                     if option.startswith("row_"):
                         rows.append(decode_row(parser.get(section, option), len(table.columns)))
                 state["tables"][table.key] = rows
+    if legacy_custom_pak is not None:
+        for feature_key in CUSTOM_PAK_FEATURES:
+            if feature_key not in explicit_custom_pak_features:
+                state["features"][feature_key] = legacy_custom_pak
+    state["features"] = normalize_feature_dependencies(state["features"])
     if state["platform"] == LEGACY_PLATFORM_ALL:
         state["platform"] = PLATFORM_ALL
     state["theme"] = normalize_theme(str(state.get("theme", THEME_SYSTEM)))
@@ -1110,6 +1142,7 @@ def write_options(state: dict[str, Any], feature_values: dict[str, bool]) -> Non
     ]
     for feature in FEATURES:
         lines.append(f"#define {feature.key} {1 if feature_values.get(feature.key, True) else 0}")
+    lines.append(f"#define CIALLOHOOK_FEATURE_CUSTOM_PAK {1 if any(feature_values.get(key, False) for key in CUSTOM_PAK_FEATURES) else 0}")
     for feature_key, enabled in HIDDEN_FORCED_FEATURES.items():
         lines.append(f"#define {feature_key} {1 if enabled else 0}")
     OPTIONS_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -1124,6 +1157,8 @@ def write_props(feature_values: dict[str, bool]) -> None:
     ]
     for feature_key, prop_name in SOURCE_ITEM_PROPS.items():
         lines.append(f"    <{prop_name}>{'true' if feature_values.get(feature_key, True) else 'false'}</{prop_name}>")
+    custom_pak_enabled = any(feature_values.get(key, False) for key in CUSTOM_PAK_FEATURES)
+    lines.append(f"    <CialloHookFeatureCustomPak>{'true' if custom_pak_enabled else 'false'}</CialloHookFeatureCustomPak>")
     lines.extend(["  </PropertyGroup>", "</Project>"])
     PROPS_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -1415,6 +1450,9 @@ def build_ciallohook_ini_text(detail: dict[str, Any], tables: dict[str, list[lis
             ("FontWidth", "font_width"),
             ("FontScale", "font_scale"),
             ("FontSpacingScale", "font_spacing_scale"),
+            ("FontAscentPermille", "font_ascent_permille"),
+            ("FontDescentPermille", "font_descent_permille"),
+            ("FontLineSpacing", "font_line_spacing"),
             ("FontWeight", "font_weight"),
             ("GlyphAspectRatio", "font_glyph_aspect"),
             ("GlyphOffsetX", "font_glyph_offset_x"),
@@ -2827,13 +2865,18 @@ class BuildGui(QMainWindow):
         self.current_process_kind = ""
         self.set_busy(False)
 
+    def is_feature_checked(self, key: str) -> bool:
+        if key == "CIALLOHOOK_FEATURE_CUSTOM_PAK":
+            return any(self.checkboxes[feature].isChecked() for feature in CUSTOM_PAK_FEATURES)
+        return self.checkboxes[key].isChecked()
+
     def refresh_detail_visibility(self) -> None:
         if not hasattr(self, "detail_pages"):
             return
         first_visible = -1
         for item_index, detail_page in enumerate(self.detail_pages):
             required_features = detail_page[1]
-            visible = all(self.checkboxes[key].isChecked() for key in required_features)
+            visible = all(self.is_feature_checked(key) for key in required_features)
             item = self.detail_nav.item(item_index)
             item.setHidden(not visible)
             if visible and first_visible < 0:
@@ -3153,7 +3196,8 @@ class BuildGui(QMainWindow):
         return state
 
     def collect_features(self) -> dict[str, bool]:
-        return {key: cb.isChecked() for key, cb in self.checkboxes.items()}
+        features = {key: cb.isChecked() for key, cb in self.checkboxes.items()}
+        return normalize_feature_dependencies(features)
 
     def save_all(self) -> None:
         try:
@@ -3307,7 +3351,7 @@ class BuildGui(QMainWindow):
             "CIALLOHOOK_FEATURE_SCREEN_CAPTURE_PROTECTION",
             "CIALLOHOOK_FEATURE_SIGLUS_KEY_EXTRACT",
             "CIALLOHOOK_FEATURE_RIO_SHIINA",
-            "CIALLOHOOK_FEATURE_CUSTOM_PAK",
+            *CUSTOM_PAK_FEATURES,
             "CIALLOHOOK_FEATURE_CODECRYPT_PATCH",
             "CIALLOHOOK_FEATURE_KRKR_PATCH",
             "CIALLOHOOK_FEATURE_PROXY_EXPORTS",
@@ -3518,4 +3562,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

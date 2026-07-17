@@ -426,30 +426,39 @@ int litepak_verify_trailer_sig(const uint8_t* trailer_data, size_t len,
  * 函数声明 - VFS只读接口
  * ============================================================================ */
 
-typedef struct litepak_vfs_handle litepak_vfs_handle_t;
+typedef struct {
+    uint64_t id;
+    uint64_t authenticator;
+} litepak_vfs_token_t;
 
 typedef struct {
-    uint8_t  hash_bytes[LITEPAK_PATH_HASH_SIZE];
-    uint8_t  flags;
+    uint64_t id;
+    uint64_t authenticator;
+} litepak_vfs_read_token_t;
+
+typedef struct {
+    const char* path;
     uint64_t original_size;
-    const char* rel_path;
-} litepak_vfs_entry_info_t;
+} litepak_vfs_visible_entry_t;
 
 int litepak_vfs_open_path(const char* pak_path, const char* manifest_path,
-                          litepak_vfs_handle_t** out_handle);
+                          litepak_vfs_token_t* out_token);
 int litepak_vfs_open_memory(const void* data, size_t size, const char* archive_tag,
-                            const char* manifest_path, litepak_vfs_handle_t** out_handle);
-void litepak_vfs_close(litepak_vfs_handle_t* handle);
-int litepak_vfs_get_entry_count(litepak_vfs_handle_t* handle, size_t* out_count);
-int litepak_vfs_get_entry(litepak_vfs_handle_t* handle, size_t index,
-                          litepak_vfs_entry_info_t* out_info);
-int litepak_vfs_read_file_by_hash(litepak_vfs_handle_t* handle,
-                                  const uint8_t hash[LITEPAK_PATH_HASH_SIZE],
-                                  uint8_t** out_data, size_t* out_size);
-int litepak_vfs_query_file_by_hash(litepak_vfs_handle_t* handle,
+                            const char* manifest_path, litepak_vfs_token_t* out_token);
+void litepak_vfs_close(litepak_vfs_token_t token);
+int litepak_vfs_get_visible_count(litepak_vfs_token_t token, size_t* out_count);
+int litepak_vfs_get_visible_entry(litepak_vfs_token_t token, size_t visible_index,
+                                  litepak_vfs_visible_entry_t* out_entry);
+int litepak_vfs_begin_read(litepak_vfs_token_t token,
+                           const uint8_t hash[LITEPAK_PATH_HASH_SIZE],
+                           litepak_vfs_read_token_t* out_request,
+                           uint64_t* out_size);
+int litepak_vfs_read_into(litepak_vfs_read_token_t request,
+                          uint8_t* destination, size_t capacity,
+                          size_t* out_size);
+int litepak_vfs_query_file_by_hash(litepak_vfs_token_t token,
                                    const uint8_t hash[LITEPAK_PATH_HASH_SIZE],
                                    uint64_t* out_size);
-void litepak_vfs_free_bytes(uint8_t* data);
 
 /* ============================================================================
  * 函数声明 - 高层操作

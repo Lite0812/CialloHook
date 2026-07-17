@@ -56,6 +56,7 @@
   <Import Project="..\CialloHook\config\build_options.props" Condition="exists('..\CialloHook\config\build_options.props')" />
   <PropertyGroup>
     <CialloHookFeatureCustomPak Condition="'$(CialloHookFeatureCustomPak)'==''">true</CialloHookFeatureCustomPak>
+    <CialloHookFeatureCodeCryptPatch Condition="'$(CialloHookFeatureCodeCryptPatch)'==''">true</CialloHookFeatureCodeCryptPatch>
   </PropertyGroup>
   <ImportGroup Label="ExtensionSettings">
   </ImportGroup>
@@ -194,7 +195,7 @@
       <Project>{458b082f-937b-4cab-9405-68b4df3af90f}</Project>
     </ProjectReference>
   </ItemGroup>
-  <ItemDefinitionGroup Condition="'$(Configuration)'=='Release' and '$(CialloHookFeatureCustomPak)'!='false'">
+  <ItemDefinitionGroup Condition="'$(Configuration)'=='Release' and '$(CialloHookFeatureCodeCryptPatch)'!='false'">
     <PostBuildEvent>
       <Command>python "$(ProjectDir)..\LitePAK_tool\tools\litepak_codecrypt_patch.py" "$(TargetPath)"</Command>
       <Message>Encrypting RuntimeCore protected code section...</Message>

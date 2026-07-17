@@ -1,4 +1,4 @@
-﻿#include "font_patcher.h"
+#include "font_patcher.h"
 #include <windows.h>
 #include <algorithm>
 #include <cwctype>
@@ -928,37 +928,45 @@ namespace FontPatcher {
         int unitsPerEm = ReadU16BE(data + headOffset + 18);
         if (unitsPerEm <= 0) return false;
 
-        int ascPermille = ClampIntLocal(ascentPermille, 100, 2000);
-        int descPermille = ClampIntLocal(descentPermille, -2000, -1);
-        int gapPermille = ClampIntLocal(lineGapPermille, -2000, 2000);
-
-        int ascent = ClampS16(ScalePermilleToDesignUnits(unitsPerEm, ascPermille));
-        int descent = ClampS16(ScalePermilleToDesignUnits(unitsPerEm, descPermille));
-        int lineGap = ClampS16(ScalePermilleToDesignUnits(unitsPerEm, gapPermille));
+        int ascent = ascentPermille == 0 ? 0 : ClampS16(ScalePermilleToDesignUnits(unitsPerEm, ClampIntLocal(ascentPermille, 100, 2000)));
+        int descent = descentPermille == 0 ? 0 : ClampS16(ScalePermilleToDesignUnits(unitsPerEm, ClampIntLocal(descentPermille, -2000, -1)));
+        int lineGap = lineGapPermille == 0 ? 0 : ClampS16(ScalePermilleToDesignUnits(unitsPerEm, ClampIntLocal(lineGapPermille, -2000, 2000)));
         bool changed = false;
 
         size_t hheaOffset = 0;
         size_t hheaLength = 0;
         if (FindSfntTableAt(data, size, fontOffset, 0x68686561, &hheaOffset, &hheaLength) && hheaLength >= 10) { // 'hhea'
             BYTE* hhea = data + hheaOffset;
-            WriteU16BE(hhea + 4, (WORD)(SHORT)ascent);
-            WriteU16BE(hhea + 6, (WORD)(SHORT)descent);
-            WriteU16BE(hhea + 8, (WORD)(SHORT)lineGap);
-            UpdateTableChecksumAt(data, size, fontOffset, 0x68686561);
-            changed = true;
+            if (ascentPermille != 0) WriteU16BE(hhea + 4, (WORD)(SHORT)ascent);
+            if (descentPermille != 0) WriteU16BE(hhea + 6, (WORD)(SHORT)descent);
+            if (lineGapPermille != 0) WriteU16BE(hhea + 8, (WORD)(SHORT)lineGap);
+            if (ascentPermille != 0 || descentPermille != 0 || lineGapPermille != 0)
+            {
+                UpdateTableChecksumAt(data, size, fontOffset, 0x68686561);
+                changed = true;
+            }
         }
 
         size_t os2Offset = 0;
         size_t os2Length = 0;
         if (FindSfntTableAt(data, size, fontOffset, 0x4F532F32, &os2Offset, &os2Length) && os2Length >= 78) { // 'OS/2'
             BYTE* os2 = data + os2Offset;
-            WriteU16BE(os2 + 68, (WORD)(SHORT)ascent);          // sTypoAscender
-            WriteU16BE(os2 + 70, (WORD)(SHORT)descent);         // sTypoDescender
-            WriteU16BE(os2 + 72, (WORD)(SHORT)lineGap);         // sTypoLineGap
-            WriteU16BE(os2 + 74, ClampU16(ascent));             // usWinAscent
-            WriteU16BE(os2 + 76, ClampU16(-descent));           // usWinDescent
-            UpdateTableChecksumAt(data, size, fontOffset, 0x4F532F32);
-            changed = true;
+            if (ascentPermille != 0)
+            {
+                WriteU16BE(os2 + 68, (WORD)(SHORT)ascent);       // sTypoAscender
+                WriteU16BE(os2 + 74, ClampU16(ascent));          // usWinAscent
+            }
+            if (descentPermille != 0)
+            {
+                WriteU16BE(os2 + 70, (WORD)(SHORT)descent);      // sTypoDescender
+                WriteU16BE(os2 + 76, ClampU16(-descent));        // usWinDescent
+            }
+            if (lineGapPermille != 0) WriteU16BE(os2 + 72, (WORD)(SHORT)lineGap); // sTypoLineGap
+            if (ascentPermille != 0 || descentPermille != 0 || lineGapPermille != 0)
+            {
+                UpdateTableChecksumAt(data, size, fontOffset, 0x4F532F32);
+                changed = true;
+            }
         }
 
         if (changed) UpdateChecksumAdjustmentAt(data, size, fontOffset);

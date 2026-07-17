@@ -1499,9 +1499,10 @@ namespace CialloHook
 		void ApplyFontHooks(const FontSettings& settings, const EngineCompat::EngineCompatState* engineState)
 		{
 			const bool hasFontOverride = !IsBlankText(settings.font);
-			if (!hasFontOverride && !settings.enableCnJpMap)
+			const bool hasCharsetOverride = settings.charset != 0 || settings.enableCharsetSpoof;
+			if (!hasFontOverride && !settings.enableCnJpMap && !hasCharsetOverride)
 			{
-				CIALLOHOOK_VERBOSE_INFO_LOG(L"ApplyFontHooks: Font is empty and cn-jp map disabled, skip font hooks");
+				CIALLOHOOK_VERBOSE_INFO_LOG(L"ApplyFontHooks: font override, cn-jp map and charset override are disabled, skip font hooks");
 				return;
 			}
 
@@ -1600,9 +1601,10 @@ namespace CialloHook
 					resolvedRedirectRules[i].sourceFont.c_str(),
 					resolvedRedirectRules[i].targetFont.c_str());
 			}
-			CIALLOHOOK_VERBOSE_INFO_LOG(L"ApplyFontHooks: glyphOffset=(%d,%d) metricsOffset=(L%d,R%d,T%d,B%d)",
+			CIALLOHOOK_VERBOSE_INFO_LOG(L"ApplyFontHooks: glyphOffset=(%d,%d) metricsOffset=(L%d,R%d,T%d,B%d) vertical=(ascent=%d,descent=%d,line=%d)",
 				settings.glyphOffsetX, settings.glyphOffsetY,
-				settings.metricsOffsetLeft, settings.metricsOffsetRight, settings.metricsOffsetTop, settings.metricsOffsetBottom);
+				settings.metricsOffsetLeft, settings.metricsOffsetRight, settings.metricsOffsetTop, settings.metricsOffsetBottom,
+				settings.fontAscentPermille, settings.fontDescentPermille, settings.fontLineSpacing);
 			CIALLOHOOK_VERBOSE_INFO_LOG(L"ApplyFontHooks: GDI+ hooks draw=%d drawDriver=%d measure=%d measureRanges=%d measureDriver=%d lateLoad=%d",
 				settings.hookGdipDrawString ? 1 : 0,
 				settings.hookGdipDrawDriverString ? 1 : 0,
@@ -1669,22 +1671,22 @@ namespace CialloHook
 
 			if (settings.hookCreateFontA)
 			{
-				logHookAttach(L"HookCreateFontA", HookCreateFontA(settings.charset, settings.enableCharsetSpoof, settings.spoofFromCharset, settings.spoofToCharset, SaveStrOnHeap(fontNameA), settings.fontHeight, settings.fontWidth, settings.fontWeight, settings.fontScale, settings.fontSpacingScale, settings.glyphAspectRatio, settings.glyphOffsetX, settings.glyphOffsetY, settings.metricsOffsetLeft, settings.metricsOffsetRight, settings.metricsOffsetTop, settings.metricsOffsetBottom));
+				logHookAttach(L"HookCreateFontA", HookCreateFontA(settings.charset, settings.enableCharsetSpoof, settings.spoofFromCharset, settings.spoofToCharset, SaveStrOnHeap(fontNameA), settings.fontHeight, settings.fontWidth, settings.fontWeight, settings.fontScale, settings.fontSpacingScale, settings.glyphAspectRatio, settings.glyphOffsetX, settings.glyphOffsetY, settings.metricsOffsetLeft, settings.metricsOffsetRight, settings.metricsOffsetTop, settings.metricsOffsetBottom, settings.fontAscentPermille, settings.fontDescentPermille, settings.fontLineSpacing));
 			}
 
 			if (settings.hookCreateFontIndirectA)
 			{
-				logHookAttach(L"HookCreateFontIndirectA", HookCreateFontIndirectA(settings.charset, settings.enableCharsetSpoof, settings.spoofFromCharset, settings.spoofToCharset, SaveStrOnHeap(fontNameA), settings.fontHeight, settings.fontWidth, settings.fontWeight, settings.fontScale, settings.fontSpacingScale, settings.glyphAspectRatio, settings.glyphOffsetX, settings.glyphOffsetY, settings.metricsOffsetLeft, settings.metricsOffsetRight, settings.metricsOffsetTop, settings.metricsOffsetBottom));
+				logHookAttach(L"HookCreateFontIndirectA", HookCreateFontIndirectA(settings.charset, settings.enableCharsetSpoof, settings.spoofFromCharset, settings.spoofToCharset, SaveStrOnHeap(fontNameA), settings.fontHeight, settings.fontWidth, settings.fontWeight, settings.fontScale, settings.fontSpacingScale, settings.glyphAspectRatio, settings.glyphOffsetX, settings.glyphOffsetY, settings.metricsOffsetLeft, settings.metricsOffsetRight, settings.metricsOffsetTop, settings.metricsOffsetBottom, settings.fontAscentPermille, settings.fontDescentPermille, settings.fontLineSpacing));
 			}
 
 			if (fontInstallPlan.createFontW.install)
 			{
-				logHookAttach(L"HookCreateFontW", HookCreateFontW(settings.charset, settings.enableCharsetSpoof, settings.spoofFromCharset, settings.spoofToCharset, SaveWStrOnHeap(fontName), settings.fontHeight, settings.fontWidth, settings.fontWeight, settings.fontScale, settings.fontSpacingScale, settings.glyphAspectRatio, settings.glyphOffsetX, settings.glyphOffsetY, settings.metricsOffsetLeft, settings.metricsOffsetRight, settings.metricsOffsetTop, settings.metricsOffsetBottom));
+				logHookAttach(L"HookCreateFontW", HookCreateFontW(settings.charset, settings.enableCharsetSpoof, settings.spoofFromCharset, settings.spoofToCharset, SaveWStrOnHeap(fontName), settings.fontHeight, settings.fontWidth, settings.fontWeight, settings.fontScale, settings.fontSpacingScale, settings.glyphAspectRatio, settings.glyphOffsetX, settings.glyphOffsetY, settings.metricsOffsetLeft, settings.metricsOffsetRight, settings.metricsOffsetTop, settings.metricsOffsetBottom, settings.fontAscentPermille, settings.fontDescentPermille, settings.fontLineSpacing));
 			}
 
 			if (fontInstallPlan.createFontIndirectW.install)
 			{
-				logHookAttach(L"HookCreateFontIndirectW", HookCreateFontIndirectW(settings.charset, settings.enableCharsetSpoof, settings.spoofFromCharset, settings.spoofToCharset, SaveWStrOnHeap(fontName), settings.fontHeight, settings.fontWidth, settings.fontWeight, settings.fontScale, settings.fontSpacingScale, settings.glyphAspectRatio, settings.glyphOffsetX, settings.glyphOffsetY, settings.metricsOffsetLeft, settings.metricsOffsetRight, settings.metricsOffsetTop, settings.metricsOffsetBottom));
+				logHookAttach(L"HookCreateFontIndirectW", HookCreateFontIndirectW(settings.charset, settings.enableCharsetSpoof, settings.spoofFromCharset, settings.spoofToCharset, SaveWStrOnHeap(fontName), settings.fontHeight, settings.fontWidth, settings.fontWeight, settings.fontScale, settings.fontSpacingScale, settings.glyphAspectRatio, settings.glyphOffsetX, settings.glyphOffsetY, settings.metricsOffsetLeft, settings.metricsOffsetRight, settings.metricsOffsetTop, settings.metricsOffsetBottom, settings.fontAscentPermille, settings.fontDescentPermille, settings.fontLineSpacing));
 			}
 
 			if (settings.hookEnumFontFamiliesExA)

@@ -124,6 +124,9 @@ namespace CialloHook
 		settings.font.metricsOffsetRight = 0;
 		settings.font.metricsOffsetTop = 0;
 		settings.font.metricsOffsetBottom = 0;
+		settings.font.fontAscentPermille = 0;
+		settings.font.fontDescentPermille = 0;
+		settings.font.fontLineSpacing = 0;
 
 		// UI 字体 Hook：控制 DWrite / D2D / GDI+ / ChooseFont / late-load 等 UI/现代字体链路；关闭后保留普通 GDI 字体 Hook。
 		settings.font.enableUIFontHook = true;
@@ -377,7 +380,7 @@ namespace CialloHook
 		// ======================== [AliceSystem3x] Alice System3.x ALD 松散文件覆盖 ========================
 		settings.aliceSystem3x.enable = false;
 		settings.aliceSystem3x.patchFolders = {
-			L"patch",
+			L"unencrypted",
 		};
 		settings.aliceSystem3x.enableLog = false;
 		settings.aliceSystem3x.hookExistsCheck = false;

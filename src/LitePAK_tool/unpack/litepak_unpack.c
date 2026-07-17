@@ -9,6 +9,7 @@
 
 #ifdef _WIN32
 #include <direct.h>
+#include <bcrypt.h>
 #else
 #include <sys/stat.h>
 #endif
@@ -127,7 +128,7 @@ typedef struct {
     size_t mem_size;
 } litepak_read_source_t;
 
-struct litepak_vfs_handle {
+typedef struct litepak_vfs_handle {
     litepak_read_source_t source;
     char* pak_path;
     uint8_t* memory_copy;
@@ -142,7 +143,35 @@ struct litepak_vfs_handle {
     uint8_t key_material_signature[32];
     manifest_map_t manifest;
     int has_manifest;
-};
+} litepak_vfs_handle_t;
+
+typedef struct litepak_vfs_session {
+    uint64_t id;
+    uint64_t generation;
+    uint64_t nonce;
+    uint64_t request_sequence;
+    litepak_vfs_handle_t* handle;
+    struct litepak_vfs_session* next;
+} litepak_vfs_session_t;
+
+typedef struct litepak_vfs_read_request {
+    uint64_t id;
+    uint64_t nonce;
+    uint64_t sequence;
+    uint64_t session_id;
+    uint64_t session_generation;
+    uint8_t hash[LITEPAK_PATH_HASH_SIZE];
+    struct litepak_vfs_read_request* next;
+} litepak_vfs_read_request_t;
+
+#ifdef _WIN32
+static INIT_ONCE g_vfs_registry_once = INIT_ONCE_STATIC_INIT;
+static CRITICAL_SECTION g_vfs_registry_lock;
+static uint8_t g_vfs_process_secret[32];
+static uint64_t g_vfs_next_generation;
+static litepak_vfs_session_t* g_vfs_sessions;
+static litepak_vfs_read_request_t* g_vfs_read_requests;
+#endif
 
 static int load_core(const char* pak_path, int strict, litepak_header_t* header,
                      buffer_t* index_plain, index_meta_t* meta,
@@ -168,6 +197,10 @@ static int decode_entry_bytes_from_source(const litepak_read_source_t* source, c
                                           const uint32_t* chunk_refs, uint32_t chunk_ref_count,
                                           const master_key_ctx_t* pre_master_key, const master_key_ctx_t* full_master_key,
                                           chunk_plain_cache_t* cache, buffer_t* out_plain);
+static int litepak_vfs_read_internal_protected(litepak_vfs_handle_t* handle,
+                                               const uint8_t hash[LITEPAK_PATH_HASH_SIZE],
+                                               uint8_t* out_data, size_t out_capacity,
+                                               size_t* out_size);
 
 #ifdef _WIN32
 void __cdecl litepak_asm_xor32(const uint8_t* share_a, const uint8_t* share_b, uint8_t* out);
@@ -238,6 +271,7 @@ static int litepak_core_self_check_once(void) {
     static uint32_t fp_load_core_source;
     static uint32_t fp_read_chunk_source;
     static uint32_t fp_decode_entry_source;
+    static uint32_t fp_vfs_read_internal;
     static uint32_t fp_segmented_decrypt;
     const size_t window = 96;
 #ifdef _WIN32
@@ -274,6 +308,7 @@ static int litepak_core_self_check_once(void) {
         fp_load_core_source = fingerprint_function_window((const void*)load_core_from_source, window);
         fp_read_chunk_source = fingerprint_function_window((const void*)read_chunk_plain_from_source, window);
         fp_decode_entry_source = fingerprint_function_window((const void*)decode_entry_bytes_from_source, window);
+        fp_vfs_read_internal = fingerprint_function_window((const void*)litepak_vfs_read_internal_protected, window);
         fp_segmented_decrypt = fingerprint_function_window((const void*)litepak_segmented_decrypt, window);
         initialized = 1;
         return 0;
@@ -284,6 +319,7 @@ static int litepak_core_self_check_once(void) {
         fp_load_core_source != fingerprint_function_window((const void*)load_core_from_source, window) ||
         fp_read_chunk_source != fingerprint_function_window((const void*)read_chunk_plain_from_source, window) ||
         fp_decode_entry_source != fingerprint_function_window((const void*)decode_entry_bytes_from_source, window) ||
+        fp_vfs_read_internal != fingerprint_function_window((const void*)litepak_vfs_read_internal_protected, window) ||
         fp_segmented_decrypt != fingerprint_function_window((const void*)litepak_segmented_decrypt, window)) {
         fprintf(stderr, "litepak.dll self-check failed: runtime code fingerprint changed\n");
         return -1;
@@ -362,7 +398,7 @@ static void chunk_cache_init(chunk_plain_cache_t* cache) {
 static void chunk_cache_free(chunk_plain_cache_t* cache) {
     if (!cache) return;
     for (size_t i = 0; i < cache->count; i++)
-        buffer_free(&cache->items[i].plain);
+        buffer_secure_free(&cache->items[i].plain);
     free(cache->items);
 #ifdef _WIN32
     DeleteCriticalSection(&cache->lock);
@@ -425,7 +461,7 @@ static void chunk_cache_evict_one(chunk_plain_cache_t* cache) {
         }
     }
     cache->bytes -= cache->items[victim].plain.len;
-    buffer_free(&cache->items[victim].plain);
+    buffer_free_sensitive(&cache->items[victim].plain);
     if (victim + 1 < cache->count)
         memmove(&cache->items[victim], &cache->items[victim + 1], (cache->count - victim - 1) * sizeof(cache->items[0]));
     cache->count--;
@@ -464,7 +500,7 @@ static void chunk_cache_put(chunk_plain_cache_t* cache, const chunk_record_t* re
         cache->bytes += cache->items[cache->count].plain.len;
         cache->count++;
     } else {
-        buffer_free(&cache->items[cache->count].plain);
+        buffer_free_sensitive(&cache->items[cache->count].plain);
     }
     chunk_cache_unlock(cache);
 }
@@ -476,6 +512,25 @@ static void hash_bytes_to_hex_upper(const uint8_t* in16, char out33[33]) {
         out33[i * 2 + 1] = HEX[in16[i] & 0xF];
     }
     out33[32] = '\0';
+}
+
+static int hash_hex_to_bytes(const char* text, uint8_t out[16]) {
+    if (!text || strlen(text) != 32)
+        return -1;
+    for (size_t i = 0; i < 16; ++i) {
+        int hi = text[i * 2];
+        int lo = text[i * 2 + 1];
+        hi = (hi >= '0' && hi <= '9') ? hi - '0' :
+             (hi >= 'A' && hi <= 'F') ? hi - 'A' + 10 :
+             (hi >= 'a' && hi <= 'f') ? hi - 'a' + 10 : -1;
+        lo = (lo >= '0' && lo <= '9') ? lo - '0' :
+             (lo >= 'A' && lo <= 'F') ? lo - 'A' + 10 :
+             (lo >= 'a' && lo <= 'f') ? lo - 'a' + 10 : -1;
+        if (hi < 0 || lo < 0)
+            return -1;
+        out[i] = (uint8_t)((hi << 4) | lo);
+    }
+    return 0;
 }
 
 static int mkdir_one(const char* path) {
@@ -695,9 +750,9 @@ static int read_chunk_plain(const char* pak_path, const chunk_record_t* rec,
                 (unsigned long long)rec->original_size,
                 (unsigned)rec->chunk_kind);
         if (master_ready) litepak_secure_bzero(master, sizeof(master));
-        buffer_free(&enc);
-        buffer_free(&packed);
-        buffer_free(out_plain);
+        buffer_free_sensitive(&enc);
+        buffer_free_sensitive(&packed);
+        buffer_free_sensitive(out_plain);
         return -1;
     }
     if (rec->transform_flags & CHUNK_TRANSFORM_FEISTEL)
@@ -711,9 +766,9 @@ static int read_chunk_plain(const char* pak_path, const chunk_record_t* rec,
                 (unsigned long long)rec->original_size,
                 (unsigned)rec->chunk_kind);
         if (master_ready) litepak_secure_bzero(master, sizeof(master));
-        buffer_free(&enc);
-        buffer_free(&packed);
-        buffer_free(out_plain);
+        buffer_free_sensitive(&enc);
+        buffer_free_sensitive(&packed);
+        buffer_free_sensitive(out_plain);
         return -1;
     }
 
@@ -837,9 +892,7 @@ cleanup:
     if (fp) fclose(fp);
     litepak_secure_bzero(pre_raw, sizeof(pre_raw));
     litepak_secure_bzero(full_raw, sizeof(full_raw));
-    if (k9_bytes.data)
-        litepak_secure_bzero(k9_bytes.data, k9_bytes.len);
-    buffer_free(&k9_bytes);
+    buffer_free_sensitive(&k9_bytes);
     return rc;
 }
 
@@ -1161,10 +1214,10 @@ cleanup:
         free(tmp);
     }
     litepak_secure_bzero(idx_key, sizeof(idx_key));
-    buffer_free(&enc);
-    buffer_free(&payload);
+    buffer_secure_free(&enc);
+    buffer_secure_free(&payload);
     if (rc != 0)
-        buffer_free(out_plain);
+        buffer_secure_free(out_plain);
     return rc;
 }
 LITEPAK_PROTECTED_END
@@ -1236,7 +1289,8 @@ static int read_trailer_from_source(const litepak_read_source_t* source, const u
     return 1;
 }
 
-static int read_chunk_plain_from_source(const litepak_read_source_t* source, const chunk_record_t* rec,
+LITEPAK_PROTECTED_BEGIN
+static LITEPAK_PROTECTED_NOINLINE int read_chunk_plain_from_source(const litepak_read_source_t* source, const chunk_record_t* rec,
                                         const master_key_ctx_t* pre_master_key, const master_key_ctx_t* full_master_key,
                                         chunk_plain_cache_t* cache, buffer_t* out_plain) {
     buffer_t enc;
@@ -1267,20 +1321,22 @@ static int read_chunk_plain_from_source(const litepak_read_source_t* source, con
                                       rec->chunk_kind == CHUNK_KIND_K9, &packed) != 0) {
             litepak_secure_bzero(master, sizeof(master));
             buffer_free(&enc);
+            buffer_free_sensitive(&packed);
             return -1;
         }
     }
     if (litepak_decompress_chunk(packed.data, packed.len, (size_t)rec->original_size, out_plain) != 0) {
         if (master_ready) litepak_secure_bzero(master, sizeof(master));
         buffer_free(&enc);
-        buffer_free(&packed);
+        buffer_free_sensitive(&packed);
+        buffer_free_sensitive(out_plain);
         return -1;
     }
     if (out_plain->failed || out_plain->len != (size_t)rec->original_size) {
         if (master_ready) litepak_secure_bzero(master, sizeof(master));
         buffer_free(&enc);
-        buffer_free(&packed);
-        buffer_free(out_plain);
+        buffer_free_sensitive(&packed);
+        buffer_free_sensitive(out_plain);
         return -1;
     }
     if (rec->transform_flags & CHUNK_TRANSFORM_FEISTEL)
@@ -1290,8 +1346,8 @@ static int read_chunk_plain_from_source(const litepak_read_source_t* source, con
     if (litepak_crc32c(out_plain->data, out_plain->len, 0) != rec->chunk_crc32c) {
         if (master_ready) litepak_secure_bzero(master, sizeof(master));
         buffer_free(&enc);
-        buffer_free(&packed);
-        buffer_free(out_plain);
+        buffer_free_sensitive(&packed);
+        buffer_free_sensitive(out_plain);
         return -1;
     }
     {
@@ -1304,9 +1360,10 @@ static int read_chunk_plain_from_source(const litepak_read_source_t* source, con
     }
     if (master_ready) litepak_secure_bzero(master, sizeof(master));
     buffer_free(&enc);
-    buffer_free(&packed);
+    buffer_free_sensitive(&packed);
     return 0;
 }
+LITEPAK_PROTECTED_END
 
 static int decode_entry_bytes_from_source(const litepak_read_source_t* source, const entry_t* entry,
                                           const chunk_record_t* chunk_records, uint32_t chunk_record_count,
@@ -1319,32 +1376,32 @@ static int decode_entry_bytes_from_source(const litepak_read_source_t* source, c
         uint32_t ref_pos = entry->chunk_ref_start + i;
         uint32_t rec_index;
         if (ref_pos >= chunk_ref_count) {
-            buffer_free(out_plain);
+            buffer_free_sensitive(out_plain);
             return -1;
         }
         rec_index = chunk_refs[ref_pos];
         if (rec_index >= chunk_record_count) {
-            buffer_free(out_plain);
+            buffer_free_sensitive(out_plain);
             return -1;
         }
         if (read_chunk_plain_from_source(source, &chunk_records[rec_index], pre_master_key, full_master_key,
                                          cache, &chunk) != 0) {
-            buffer_free(out_plain);
+            buffer_free_sensitive(out_plain);
             return -1;
         }
         if (buffer_append(out_plain, chunk.data, chunk.len) != 0) {
-            buffer_free(&chunk);
-            buffer_free(out_plain);
+            buffer_free_sensitive(&chunk);
+            buffer_free_sensitive(out_plain);
             return -1;
         }
-        buffer_free(&chunk);
+        buffer_free_sensitive(&chunk);
     }
     if (out_plain->failed || out_plain->len != (size_t)entry->original_size) {
-        buffer_free(out_plain);
+        buffer_free_sensitive(out_plain);
         return -1;
     }
     if (litepak_crc32c(out_plain->data, out_plain->len, 0) != entry->file_crc32c) {
-        buffer_free(out_plain);
+        buffer_free_sensitive(out_plain);
         return -1;
     }
     return 0;
@@ -1397,9 +1454,7 @@ static int load_core_from_source(const litepak_read_source_t* source, int strict
 cleanup:
     litepak_secure_bzero(pre_raw, sizeof(pre_raw));
     litepak_secure_bzero(full_raw, sizeof(full_raw));
-    if (k9_bytes.data)
-        litepak_secure_bzero(k9_bytes.data, k9_bytes.len);
-    buffer_free(&k9_bytes);
+    buffer_free_sensitive(&k9_bytes);
     return rc;
 }
 
@@ -1415,6 +1470,132 @@ static const entry_t* find_entry_by_hash_vfs(const index_meta_t* meta, const uin
     }
     return NULL;
 }
+
+#ifdef _WIN32
+static BOOL CALLBACK litepak_vfs_registry_init(PINIT_ONCE once, PVOID parameter, PVOID* context) {
+    (void)once;
+    (void)parameter;
+    (void)context;
+    InitializeCriticalSection(&g_vfs_registry_lock);
+    if (BCryptGenRandom(NULL, g_vfs_process_secret, (ULONG)sizeof(g_vfs_process_secret),
+                        BCRYPT_USE_SYSTEM_PREFERRED_RNG) < 0)
+        return FALSE;
+    if (BCryptGenRandom(NULL, (PUCHAR)&g_vfs_next_generation,
+                        (ULONG)sizeof(g_vfs_next_generation),
+                        BCRYPT_USE_SYSTEM_PREFERRED_RNG) < 0)
+        return FALSE;
+    g_vfs_next_generation |= 1u;
+    return TRUE;
+}
+
+static int litepak_vfs_registry_ensure(void) {
+    return InitOnceExecuteOnce(&g_vfs_registry_once, litepak_vfs_registry_init, NULL, NULL) ? 0 : -1;
+}
+
+LITEPAK_PROTECTED_BEGIN
+static LITEPAK_PROTECTED_NOINLINE uint64_t litepak_vfs_token_tag_protected(const litepak_vfs_session_t* session) {
+    uint8_t input[32];
+    uint8_t output[16];
+    uint64_t domain = 0x31534E535346564Cull;
+    uint64_t tag;
+    memcpy(input, &session->id, 8);
+    memcpy(input + 8, &session->generation, 8);
+    memcpy(input + 16, &session->nonce, 8);
+    memcpy(input + 24, &domain, 8);
+    blake2b_full(input, sizeof(input), output, sizeof(output), g_vfs_process_secret,
+                 sizeof(g_vfs_process_secret), (const uint8_t*)"LiteVfsTokV1", 12);
+    memcpy(&tag, output, sizeof(tag));
+    litepak_secure_bzero(input, sizeof(input));
+    litepak_secure_bzero(output, sizeof(output));
+    return tag;
+}
+LITEPAK_PROTECTED_END
+
+static uint64_t litepak_vfs_token_tag(const litepak_vfs_session_t* session) {
+    if (litepak_codecrypt_ensure_decrypted() != 0)
+        return 0;
+    return litepak_vfs_token_tag_protected(session);
+}
+
+LITEPAK_PROTECTED_BEGIN
+static LITEPAK_PROTECTED_NOINLINE uint64_t litepak_vfs_request_tag_protected(
+    const litepak_vfs_read_request_t* request) {
+    uint8_t input[64];
+    uint8_t output[16];
+    uint64_t tag;
+    memcpy(input, &request->id, 8);
+    memcpy(input + 8, &request->nonce, 8);
+    memcpy(input + 16, &request->sequence, 8);
+    memcpy(input + 24, &request->session_id, 8);
+    memcpy(input + 32, &request->session_generation, 8);
+    memcpy(input + 40, request->hash, LITEPAK_PATH_HASH_SIZE);
+    memset(input + 56, 0x52, 8);
+    blake2b_full(input, sizeof(input), output, sizeof(output), g_vfs_process_secret,
+                 sizeof(g_vfs_process_secret), (const uint8_t*)"LiteReadV1", 10);
+    memcpy(&tag, output, sizeof(tag));
+    litepak_secure_bzero(input, sizeof(input));
+    litepak_secure_bzero(output, sizeof(output));
+    return tag;
+}
+LITEPAK_PROTECTED_END
+
+static uint64_t litepak_vfs_request_tag(const litepak_vfs_read_request_t* request) {
+    if (litepak_codecrypt_ensure_decrypted() != 0)
+        return 0;
+    return litepak_vfs_request_tag_protected(request);
+}
+
+LITEPAK_PROTECTED_BEGIN
+static LITEPAK_PROTECTED_NOINLINE litepak_vfs_session_t* litepak_vfs_find_session_locked_protected(
+    litepak_vfs_token_t token) {
+    litepak_vfs_session_t* session = g_vfs_sessions;
+    while (session) {
+        uint64_t expected = litepak_vfs_token_tag_protected(session);
+        if (session->id == token.id &&
+            litepak_constant_time_eq((const uint8_t*)&token.authenticator,
+                                     (const uint8_t*)&expected, sizeof(expected)))
+            return session;
+        session = session->next;
+    }
+    return NULL;
+}
+LITEPAK_PROTECTED_END
+
+static litepak_vfs_session_t* litepak_vfs_find_session_locked(litepak_vfs_token_t token) {
+    if (litepak_codecrypt_ensure_decrypted() != 0)
+        return NULL;
+    return litepak_vfs_find_session_locked_protected(token);
+}
+
+static int litepak_vfs_register_handle(litepak_vfs_handle_t* handle, litepak_vfs_token_t* out_token) {
+    litepak_vfs_session_t* session;
+    if (!handle || !out_token || litepak_vfs_registry_ensure() != 0)
+        return -1;
+    session = (litepak_vfs_session_t*)calloc(1, sizeof(*session));
+    if (!session)
+        return -1;
+    if (BCryptGenRandom(NULL, (PUCHAR)&session->id, (ULONG)sizeof(session->id),
+                        BCRYPT_USE_SYSTEM_PREFERRED_RNG) < 0 ||
+        BCryptGenRandom(NULL, (PUCHAR)&session->nonce, (ULONG)sizeof(session->nonce),
+                        BCRYPT_USE_SYSTEM_PREFERRED_RNG) < 0) {
+        litepak_secure_bzero(session, sizeof(*session));
+        free(session);
+        return -1;
+    }
+    session->id |= 1u;
+    EnterCriticalSection(&g_vfs_registry_lock);
+    session->generation = g_vfs_next_generation++;
+    session->handle = handle;
+    session->next = g_vfs_sessions;
+    g_vfs_sessions = session;
+    out_token->id = session->id;
+    out_token->authenticator = litepak_vfs_token_tag(session);
+    LeaveCriticalSection(&g_vfs_registry_lock);
+    if (out_token->authenticator == 0)
+        return -1;
+    return 0;
+}
+#endif
 
 static int litepak_vfs_init_handle(litepak_vfs_handle_t* handle, const char* manifest_path) {
     if (!handle)
@@ -1440,12 +1621,14 @@ static int litepak_vfs_init_handle(litepak_vfs_handle_t* handle, const char* man
     return 0;
 }
 
+static void litepak_vfs_destroy_handle(litepak_vfs_handle_t* handle);
+
 int litepak_vfs_open_path(const char* pak_path, const char* manifest_path,
-                          litepak_vfs_handle_t** out_handle) {
+                          litepak_vfs_token_t* out_token) {
     litepak_vfs_handle_t* h;
-    if (!pak_path || !out_handle)
+    if (!pak_path || !out_token)
         return -1;
-    *out_handle = NULL;
+    memset(out_token, 0, sizeof(*out_token));
     h = (litepak_vfs_handle_t*)calloc(1, sizeof(*h));
     if (!h)
         return -1;
@@ -1456,20 +1639,21 @@ int litepak_vfs_open_path(const char* pak_path, const char* manifest_path,
     }
     h->source.memory_backed = 0;
     h->source.pak_path = h->pak_path;
-    if (litepak_vfs_init_handle(h, manifest_path) != 0) {
-        litepak_vfs_close(h);
+    if (litepak_vfs_init_handle(h, manifest_path) != 0 ||
+        litepak_vfs_register_handle(h, out_token) != 0) {
+        litepak_vfs_destroy_handle(h);
+        memset(out_token, 0, sizeof(*out_token));
         return -1;
     }
-    *out_handle = h;
     return 0;
 }
 
 int litepak_vfs_open_memory(const void* data, size_t size, const char* archive_tag,
-                            const char* manifest_path, litepak_vfs_handle_t** out_handle) {
+                            const char* manifest_path, litepak_vfs_token_t* out_token) {
     litepak_vfs_handle_t* h;
-    if (!data || size == 0 || !out_handle)
+    if (!data || size == 0 || !out_token)
         return -1;
-    *out_handle = NULL;
+    memset(out_token, 0, sizeof(*out_token));
     h = (litepak_vfs_handle_t*)calloc(1, sizeof(*h));
     if (!h)
         return -1;
@@ -1482,112 +1666,308 @@ int litepak_vfs_open_memory(const void* data, size_t size, const char* archive_t
     h->memory_size = size;
     h->pak_path = _strdup(archive_tag && archive_tag[0] ? archive_tag : "<memory.lpk>");
     if (!h->pak_path) {
-        litepak_vfs_close(h);
+        litepak_vfs_destroy_handle(h);
         return -1;
     }
     h->source.memory_backed = 1;
     h->source.pak_path = h->pak_path;
     h->source.mem_data = h->memory_copy;
     h->source.mem_size = h->memory_size;
-    if (litepak_vfs_init_handle(h, manifest_path) != 0) {
-        litepak_vfs_close(h);
+    if (litepak_vfs_init_handle(h, manifest_path) != 0 ||
+        litepak_vfs_register_handle(h, out_token) != 0) {
+        litepak_vfs_destroy_handle(h);
+        memset(out_token, 0, sizeof(*out_token));
         return -1;
     }
-    *out_handle = h;
     return 0;
 }
 
-void litepak_vfs_close(litepak_vfs_handle_t* handle) {
+static void litepak_vfs_destroy_handle(litepak_vfs_handle_t* handle) {
     if (!handle)
         return;
     master_key_ctx_clear(&handle->pre_master_key);
     master_key_ctx_clear(&handle->full_master_key);
     litepak_secure_bzero(handle->key_material_signature, sizeof(handle->key_material_signature));
     if (handle->cache_initialized)
-        if (handle->cache_initialized)
         chunk_cache_free(&handle->cache);
     manifest_map_free(&handle->manifest);
     litepak_free_index_meta(&handle->meta);
-    buffer_free(&handle->index_plain);
+    buffer_free_sensitive(&handle->index_plain);
     if (handle->memory_copy) {
         litepak_secure_bzero(handle->memory_copy, handle->memory_size);
         free(handle->memory_copy);
     }
     free(handle->pak_path);
+    litepak_secure_bzero(handle, sizeof(*handle));
     free(handle);
 }
 
-int litepak_vfs_get_entry_count(litepak_vfs_handle_t* handle, size_t* out_count) {
-    if (!handle || !out_count)
-        return -1;
-    *out_count = (size_t)handle->meta.entry_count;
-    return 0;
-}
-
-int litepak_vfs_get_entry(litepak_vfs_handle_t* handle, size_t index,
-                          litepak_vfs_entry_info_t* out_info) {
-    const entry_t* e;
-    char hash_hex[33];
-    if (!handle || !out_info || index >= handle->meta.entry_count)
-        return -1;
-    e = &handle->meta.entries[index];
-    memset(out_info, 0, sizeof(*out_info));
-    memcpy(out_info->hash_bytes, e->hash_bytes, LITEPAK_PATH_HASH_SIZE);
-    out_info->flags = e->flags;
-    out_info->original_size = e->original_size;
-    if (handle->has_manifest) {
-        hash_bytes_to_hex_upper(e->hash_bytes, hash_hex);
-        out_info->rel_path = manifest_map_find(&handle->manifest, hash_hex);
-    }
-    return 0;
-}
-
-int litepak_vfs_read_file_by_hash(litepak_vfs_handle_t* handle,
-                                  const uint8_t hash[LITEPAK_PATH_HASH_SIZE],
-                                  uint8_t** out_data, size_t* out_size) {
-    const entry_t* e;
-    buffer_t plain;
-    if (!handle || !hash || !out_data || !out_size)
-        return -1;
-    *out_data = NULL;
-    *out_size = 0;
-    e = find_entry_by_hash_vfs(&handle->meta, hash);
-    if (!e)
-        return 1;
-    if (decode_entry_bytes_from_source(&handle->source, e, handle->meta.chunk_records, handle->meta.chunk_record_count,
-                                       handle->meta.chunk_refs, handle->meta.chunk_ref_count,
-                                       &handle->pre_master_key, &handle->full_master_key,
-                                       &handle->cache, &plain) != 0)
-        return -1;
-    if (plain.len > 0) {
-        uint8_t* copy = (uint8_t*)malloc(plain.len);
-        if (!copy) {
-            buffer_free(&plain);
-            return -1;
+void litepak_vfs_close(litepak_vfs_token_t token) {
+    litepak_vfs_session_t** link;
+    litepak_vfs_session_t* session = NULL;
+    litepak_vfs_handle_t* handle = NULL;
+    if (litepak_vfs_registry_ensure() != 0)
+        return;
+    EnterCriticalSection(&g_vfs_registry_lock);
+    link = &g_vfs_sessions;
+    while (*link) {
+        if ((*link)->id == token.id) {
+            uint64_t expected = litepak_vfs_token_tag(*link);
+            if (litepak_constant_time_eq((const uint8_t*)&token.authenticator,
+                                         (const uint8_t*)&expected, sizeof(expected))) {
+                session = *link;
+                *link = session->next;
+                handle = session->handle;
+            }
+            break;
         }
-        memcpy(copy, plain.data, plain.len);
-        *out_data = copy;
+        link = &(*link)->next;
     }
-    *out_size = plain.len;
-    buffer_free(&plain);
+    if (session) {
+        litepak_vfs_read_request_t** request_link = &g_vfs_read_requests;
+        while (*request_link) {
+            litepak_vfs_read_request_t* request = *request_link;
+            if (request->session_id == session->id &&
+                request->session_generation == session->generation) {
+                *request_link = request->next;
+                litepak_secure_bzero(request, sizeof(*request));
+                free(request);
+                continue;
+            }
+            request_link = &request->next;
+        }
+    }
+    LeaveCriticalSection(&g_vfs_registry_lock);
+    if (session) {
+        litepak_secure_bzero(session, sizeof(*session));
+        free(session);
+        litepak_vfs_destroy_handle(handle);
+    }
+}
+
+static const entry_t* litepak_vfs_visible_manifest_entry(
+    const litepak_vfs_handle_t* handle, size_t visible_index, const char** out_path) {
+    size_t accepted = 0;
+    if (!handle || !handle->has_manifest)
+        return NULL;
+    for (size_t i = 0; i < handle->manifest.count; ++i) {
+        uint8_t hash[LITEPAK_PATH_HASH_SIZE];
+        const entry_t* entry;
+        manifest_entry_t* item = &handle->manifest.items[i];
+        litepak_path_hash_bytes(item->rel_path, hash);
+        entry = find_entry_by_hash_vfs(&handle->meta, hash);
+        if (!entry)
+            continue;
+        if (accepted++ == visible_index) {
+            if (out_path)
+                *out_path = item->rel_path;
+            return entry;
+        }
+    }
+    return NULL;
+}
+
+int litepak_vfs_get_visible_count(litepak_vfs_token_t token, size_t* out_count) {
+    litepak_vfs_session_t* session;
+    if (!out_count || litepak_vfs_registry_ensure() != 0)
+        return -1;
+    *out_count = 0;
+    EnterCriticalSection(&g_vfs_registry_lock);
+    session = litepak_vfs_find_session_locked(token);
+    if (session && session->handle->has_manifest) {
+        while (litepak_vfs_visible_manifest_entry(session->handle, *out_count, NULL))
+            ++*out_count;
+    }
+    LeaveCriticalSection(&g_vfs_registry_lock);
+    return session ? 0 : -1;
+}
+
+int litepak_vfs_get_visible_entry(litepak_vfs_token_t token, size_t visible_index,
+                                  litepak_vfs_visible_entry_t* out_entry) {
+    litepak_vfs_session_t* session;
+    int result = -1;
+    if (!out_entry || litepak_vfs_registry_ensure() != 0)
+        return -1;
+    memset(out_entry, 0, sizeof(*out_entry));
+    EnterCriticalSection(&g_vfs_registry_lock);
+    session = litepak_vfs_find_session_locked(token);
+    if (session) {
+        const entry_t* entry = litepak_vfs_visible_manifest_entry(
+            session->handle, visible_index, &out_entry->path);
+        if (entry) {
+            out_entry->original_size = entry->original_size;
+            result = 0;
+        }
+    }
+    LeaveCriticalSection(&g_vfs_registry_lock);
+    return result;
+}
+
+LITEPAK_PROTECTED_BEGIN
+static LITEPAK_PROTECTED_NOINLINE int litepak_vfs_read_internal_protected(
+    litepak_vfs_handle_t* handle, const uint8_t hash[LITEPAK_PATH_HASH_SIZE],
+    uint8_t* out_data, size_t out_capacity, size_t* out_size) {
+    const entry_t* entry = find_entry_by_hash_vfs(&handle->meta, hash);
+    size_t written = 0;
+    uint32_t file_crc = 0;
+    if (!entry)
+        return 1;
+    if (entry->original_size > out_capacity || (entry->original_size > 0 && !out_data))
+        return -1;
+    for (uint32_t i = 0; i < entry->chunk_count; ++i) {
+        uint32_t ref_pos = entry->chunk_ref_start + i;
+        uint32_t rec_index;
+        buffer_t chunk;
+        if (ref_pos >= handle->meta.chunk_ref_count)
+            goto fail;
+        rec_index = handle->meta.chunk_refs[ref_pos];
+        if (rec_index >= handle->meta.chunk_record_count)
+            goto fail;
+        if (read_chunk_plain_from_source(&handle->source, &handle->meta.chunk_records[rec_index],
+                                         &handle->pre_master_key, &handle->full_master_key,
+                                         &handle->cache, &chunk) != 0)
+            goto fail;
+        if (chunk.len > out_capacity - written) {
+            buffer_free_sensitive(&chunk);
+            goto fail;
+        }
+        if (chunk.len > 0)
+            memcpy(out_data + written, chunk.data, chunk.len);
+        file_crc = litepak_crc32c(chunk.data, chunk.len, file_crc);
+        written += chunk.len;
+        buffer_free_sensitive(&chunk);
+    }
+    if (written != (size_t)entry->original_size || file_crc != entry->file_crc32c)
+        goto fail;
+    *out_size = written;
+    return 0;
+fail:
+    if (written > 0)
+        litepak_secure_bzero(out_data, written);
+    *out_size = 0;
+    return -1;
+}
+LITEPAK_PROTECTED_END
+
+int litepak_vfs_begin_read(litepak_vfs_token_t token,
+                           const uint8_t hash[LITEPAK_PATH_HASH_SIZE],
+                           litepak_vfs_read_token_t* out_request,
+                           uint64_t* out_size) {
+    litepak_vfs_session_t* session;
+    litepak_vfs_read_request_t* request;
+    const entry_t* entry;
+    if (!hash || !out_request || !out_size || litepak_codecrypt_ensure_decrypted() != 0 ||
+        litepak_vfs_registry_ensure() != 0)
+        return -1;
+    memset(out_request, 0, sizeof(*out_request));
+    *out_size = 0;
+    request = (litepak_vfs_read_request_t*)calloc(1, sizeof(*request));
+    if (!request)
+        return -1;
+    EnterCriticalSection(&g_vfs_registry_lock);
+    session = litepak_vfs_find_session_locked(token);
+    entry = session ? find_entry_by_hash_vfs(&session->handle->meta, hash) : NULL;
+    if (!session || !entry ||
+        BCryptGenRandom(NULL, (PUCHAR)&request->id, (ULONG)sizeof(request->id),
+                        BCRYPT_USE_SYSTEM_PREFERRED_RNG) < 0 ||
+        BCryptGenRandom(NULL, (PUCHAR)&request->nonce, (ULONG)sizeof(request->nonce),
+                        BCRYPT_USE_SYSTEM_PREFERRED_RNG) < 0) {
+        LeaveCriticalSection(&g_vfs_registry_lock);
+        litepak_secure_bzero(request, sizeof(*request));
+        free(request);
+        return session && !entry ? 1 : -1;
+    }
+    request->id |= 1u;
+    request->sequence = ++session->request_sequence;
+    request->session_id = session->id;
+    request->session_generation = session->generation;
+    memcpy(request->hash, hash, sizeof(request->hash));
+    request->next = g_vfs_read_requests;
+    g_vfs_read_requests = request;
+    out_request->id = request->id;
+    out_request->authenticator = litepak_vfs_request_tag(request);
+    *out_size = entry->original_size;
+    if (out_request->authenticator == 0) {
+        g_vfs_read_requests = request->next;
+        litepak_secure_bzero(request, sizeof(*request));
+        free(request);
+        memset(out_request, 0, sizeof(*out_request));
+        *out_size = 0;
+        LeaveCriticalSection(&g_vfs_registry_lock);
+        return -1;
+    }
+    LeaveCriticalSection(&g_vfs_registry_lock);
     return 0;
 }
 
-int litepak_vfs_query_file_by_hash(litepak_vfs_handle_t* handle,
+LITEPAK_PROTECTED_BEGIN
+static LITEPAK_PROTECTED_NOINLINE int litepak_vfs_consume_request_locked_protected(
+    litepak_vfs_read_token_t token, litepak_vfs_session_t** out_session,
+    litepak_vfs_read_request_t** out_request) {
+    litepak_vfs_read_request_t** link = &g_vfs_read_requests;
+    while (*link) {
+        litepak_vfs_read_request_t* request = *link;
+        uint64_t expected = litepak_vfs_request_tag_protected(request);
+        if (request->id == token.id &&
+            litepak_constant_time_eq((const uint8_t*)&token.authenticator,
+                                     (const uint8_t*)&expected, sizeof(expected))) {
+            litepak_vfs_session_t* session = g_vfs_sessions;
+            while (session && (session->id != request->session_id ||
+                   session->generation != request->session_generation))
+                session = session->next;
+            *link = request->next;
+            request->next = NULL;
+            *out_session = session;
+            *out_request = request;
+            return session ? 0 : -1;
+        }
+        link = &request->next;
+    }
+    return -1;
+}
+LITEPAK_PROTECTED_END
+
+int litepak_vfs_read_into(litepak_vfs_read_token_t request_token,
+                          uint8_t* out_data, size_t out_capacity,
+                          size_t* out_size) {
+    litepak_vfs_session_t* session = NULL;
+    litepak_vfs_read_request_t* request = NULL;
+    int result;
+    if (!out_size || (!out_data && out_capacity != 0) ||
+        litepak_codecrypt_ensure_decrypted() != 0 || litepak_vfs_registry_ensure() != 0)
+        return -1;
+    *out_size = 0;
+    EnterCriticalSection(&g_vfs_registry_lock);
+    result = litepak_vfs_consume_request_locked_protected(request_token, &session, &request);
+    if (result == 0)
+        result = litepak_vfs_read_internal_protected(session->handle, request->hash,
+                                                     out_data, out_capacity, out_size);
+    if (request) {
+        litepak_secure_bzero(request, sizeof(*request));
+        free(request);
+    }
+    LeaveCriticalSection(&g_vfs_registry_lock);
+    return result;
+}
+
+int litepak_vfs_query_file_by_hash(litepak_vfs_token_t token,
                                    const uint8_t hash[LITEPAK_PATH_HASH_SIZE],
                                    uint64_t* out_size) {
-    const entry_t* e;
-    if (!handle || !hash || !out_size)
+    litepak_vfs_session_t* session;
+    const entry_t* entry;
+    int result = -1;
+    if (!hash || !out_size || litepak_vfs_registry_ensure() != 0)
         return -1;
-    e = find_entry_by_hash_vfs(&handle->meta, hash);
-    if (!e)
-        return 1;
-    *out_size = e->original_size;
-    return 0;
-}
-
-void litepak_vfs_free_bytes(uint8_t* data) {
-    free(data);
+    EnterCriticalSection(&g_vfs_registry_lock);
+    session = litepak_vfs_find_session_locked(token);
+    if (session) {
+        entry = find_entry_by_hash_vfs(&session->handle->meta, hash);
+        result = entry ? 0 : 1;
+        if (entry)
+            *out_size = entry->original_size;
+    }
+    LeaveCriticalSection(&g_vfs_registry_lock);
+    return result;
 }
 
 static void collect_v6_info_stats(const index_meta_t* meta, v6_info_stats_t* stats) {
@@ -1770,7 +2150,7 @@ cleanup:
     chunk_cache_free(&cache);
     manifest_map_free(&manifest);
     litepak_free_index_meta(&meta);
-    buffer_free(&index_plain);
+    buffer_free_sensitive(&index_plain);
     return result;
 }
 
@@ -1823,7 +2203,7 @@ int litepak_extract_by_name(const char* pak_path, const char* rel_name,
             goto cleanup;
         }
         result = write_file_bytes(output_path, plain.data, plain.len);
-        buffer_free(&plain);
+        buffer_free_sensitive(&plain);
         goto cleanup;
     }
 
@@ -1925,7 +2305,7 @@ cleanup:
     master_key_ctx_clear(&full_master_key);
     chunk_cache_free(&cache);
     litepak_free_index_meta(&meta);
-    buffer_free(&index_plain);
+    buffer_free_sensitive(&index_plain);
     return rc;
 }
 
@@ -1988,7 +2368,7 @@ int litepak_verify_ex(const char* pak_path, const char* verify_key_path) {
                                &pre_master_key, &full_master_key,
                                &cache, &plain) == 0) {
             files_ok++;
-            buffer_free(&plain);
+            buffer_free_sensitive(&plain);
         } else {
             fprintf(stderr, "verify file failed: entry=%u chunk_ref_start=%u chunk_count=%u\n",
                     i, meta.entries[i].chunk_ref_start, meta.entries[i].chunk_count);

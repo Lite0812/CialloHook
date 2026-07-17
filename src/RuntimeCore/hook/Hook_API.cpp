@@ -678,10 +678,10 @@ namespace Rut
 		void SetUIFontHookEnabled(bool) {}
 #define CIALLOHOOK_STUB_FONT_HOOK0(name) bool name() { return false; }
 #define CIALLOHOOK_STUB_FONT_HOOK1(name, t1) bool name(t1) { return false; }
-		bool HookCreateFontA(const uint32_t, bool, uint32_t, uint32_t, const char*, int, int, int, float, float, float, int, int, int, int, int, int) { return false; }
-		bool HookCreateFontIndirectA(const uint32_t, bool, uint32_t, uint32_t, const char*, int, int, int, float, float, float, int, int, int, int, int, int) { return false; }
-		bool HookCreateFontW(const uint32_t, bool, uint32_t, uint32_t, const wchar_t*, int, int, int, float, float, float, int, int, int, int, int, int) { return false; }
-		bool HookCreateFontIndirectW(const uint32_t, bool, uint32_t, uint32_t, const wchar_t*, int, int, int, float, float, float, int, int, int, int, int, int) { return false; }
+		bool HookCreateFontA(const uint32_t, bool, uint32_t, uint32_t, const char*, int, int, int, float, float, float, int, int, int, int, int, int, int, int, int) { return false; }
+		bool HookCreateFontIndirectA(const uint32_t, bool, uint32_t, uint32_t, const char*, int, int, int, float, float, float, int, int, int, int, int, int, int, int, int) { return false; }
+		bool HookCreateFontW(const uint32_t, bool, uint32_t, uint32_t, const wchar_t*, int, int, int, float, float, float, int, int, int, int, int, int, int, int, int) { return false; }
+		bool HookCreateFontIndirectW(const uint32_t, bool, uint32_t, uint32_t, const wchar_t*, int, int, int, float, float, float, int, int, int, int, int, int, int, int, int) { return false; }
 		CIALLOHOOK_STUB_FONT_HOOK1(HookEnumFontFamiliesExA, bool)
 		CIALLOHOOK_STUB_FONT_HOOK1(HookEnumFontFamiliesExW, bool)
 		CIALLOHOOK_STUB_FONT_HOOK0(HookCreateFontIndirectExA)
