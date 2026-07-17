@@ -58,7 +58,7 @@
     <ClCompile Include="..\LitePAK_tool\common\litepak_compress.c" Condition="'$(CialloHookFeatureCustomPakLpk)'!='false'" />
     <ClCompile Include="..\LitePAK_tool\common\litepak_utils.c" Condition="'$(CialloHookFeatureCustomPakLpk)'!='false'" />
     <ClCompile Include="..\LitePAK_tool\common\litepak_secure.c" Condition="'$(CialloHookFeatureCustomPakLpk)'!='false'" />
-    <ClCompile Include="..\LitePAK_tool\common\litepak_codecrypt.c" Condition="'$(CialloHookFeatureCustomPakLpk)'!='false'" />
+    <ClCompile Include="..\LitePAK_tool\common\litepak_codecrypt.c" Condition="'$(CialloHookFeatureCustomPakLpk)'!='false' or '$(CialloHookFeatureCodeCryptPatch)'!='false'" />
     <ClCompile Include="..\LitePAK_tool\common\litepak_data_protect.c" Condition="'$(CialloHookFeatureCustomPakLpk)'!='false'" />
     <ClCompile Include="..\LitePAK_tool\common\litepak_material_core.c" Condition="'$(CialloHookFeatureCustomPakLpk)'!='false'" />
     <ClCompile Include="..\LitePAK_tool\common\litepak_material_table_a.c" Condition="'$(CialloHookFeatureCustomPakLpk)'!='false'" />

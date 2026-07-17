@@ -18,8 +18,10 @@
 #include <unordered_set>
 #include <fstream>
 #include "../../../third/miniz/miniz.h"
+#if CIALLOHOOK_FEATURE_CUSTOM_PAK_CPK
 #include "../../../third/zstd/zstd.h"
 #include "../../../third/lzma/LzmaDec.h"
+#endif
 
 namespace Rut
 {
@@ -36,10 +38,12 @@ namespace Rut
 			static constexpr uint8_t kLitePakMagic[] = { 'L','i','t','e','P','A','K' };
 #endif
 			static constexpr uint16_t kVersion = 4;
+#if CIALLOHOOK_FEATURE_CUSTOM_PAK_CPK
 			static constexpr uint8_t kModeRaw = 0;
 			static constexpr uint8_t kModeZlib = 1;
 			static constexpr uint8_t kModeZstd = 2;
 			static constexpr uint8_t kModeLzma = 3;
+#endif
 			static constexpr uint8_t kXp3IndexEncodeRaw = 0;
 			static constexpr uint8_t kXp3IndexEncodeZlib = 1;
 			static constexpr uint8_t kXp3IndexEncodeMask = 0x07;
@@ -664,6 +668,7 @@ namespace Rut
 				return true;
 			}
 
+#if CIALLOHOOK_FEATURE_CUSTOM_PAK_CPK
 			static bool DecompressZstd(const std::vector<uint8_t>& payload, size_t expectedSize, std::vector<uint8_t>& output, std::string& errorMessage)
 			{
 				errorMessage.clear();
@@ -754,6 +759,7 @@ namespace Rut
 				}
 				return true;
 			}
+#endif
 
 			static std::wstring NormalizeXp3EntryPath(std::wstring value)
 			{
@@ -1763,6 +1769,7 @@ namespace Rut
 					return true;
 				}
 
+#if CIALLOHOOK_FEATURE_CUSTOM_PAK_CPK
 				if (!SeekTo(fs, entry.offset))
 				{
 					LogCustomPakWarn(L"Seek entry failed: archive=%s offset=%llu", archive.path.c_str(), (unsigned long long)entry.offset);
@@ -1836,6 +1843,9 @@ namespace Rut
 					return false;
 				}
 				return true;
+#else
+				return false;
+#endif
 			}
 
 			static bool ReadEntryRawFromMemory(const PakArchive& archive, const PakEntry& entry, const uint8_t* data, size_t size, std::vector<uint8_t>& raw)
@@ -1933,6 +1943,7 @@ namespace Rut
 					return true;
 				}
 
+#if CIALLOHOOK_FEATURE_CUSTOM_PAK_CPK
 				if (entry.offset > static_cast<uint64_t>(size) || entry.storedSize > static_cast<uint64_t>(size) - entry.offset)
 				{
 					LogCustomPakWarn(L"Memory entry range invalid: archive=%s offset=%llu size=%llu total=%llu", archive.path.c_str(), (unsigned long long)entry.offset, (unsigned long long)entry.storedSize, (unsigned long long)size);
@@ -1994,6 +2005,9 @@ namespace Rut
 					return false;
 				}
 				return true;
+#else
+				return false;
+#endif
 			}
 
 			static const PakEntry* FindArchiveEntry(const PakArchive& archive, const std::wstring& relativePath, const Hash16& hashKey)
