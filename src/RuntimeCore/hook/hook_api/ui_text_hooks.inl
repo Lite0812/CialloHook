@@ -34,6 +34,9 @@
 			bool translated = false;
 		};
 
+		static constexpr wchar_t kUiDialogProcContextProperty[] =
+			L"CialloHook.UiDialogProcContext.{A6EC9A96-85D8-4C9E-995F-D6E441C00C14}";
+
 		static bool TryBuildUiReplacementA(const char* text, int length, const wchar_t* apiName, std::string& replacedAnsi, std::wstring& replacedWide)
 		{
 			replacedAnsi.clear();
@@ -505,13 +508,14 @@
 
 		static INT_PTR CALLBACK UiDialogProcThunk(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 		{
-			UiDialogProcContext* context = reinterpret_cast<UiDialogProcContext*>(GetWindowLongPtrW(hWnd, DWLP_USER));
+			UiDialogProcContext* context = reinterpret_cast<UiDialogProcContext*>(
+				GetPropW(hWnd, kUiDialogProcContextProperty));
 			if (uMsg == WM_INITDIALOG)
 			{
 				context = reinterpret_cast<UiDialogProcContext*>(lParam);
 				if (context)
 				{
-					SetWindowLongPtrW(hWnd, DWLP_USER, reinterpret_cast<LONG_PTR>(context));
+					SetPropW(hWnd, kUiDialogProcContextProperty, reinterpret_cast<HANDLE>(context));
 				}
 			}
 
@@ -527,8 +531,9 @@
 			}
 			if (uMsg == WM_NCDESTROY && context)
 			{
-				SetWindowLongPtrW(hWnd, DWLP_USER, 0);
-				delete context;
+				UiDialogProcContext* removedContext = reinterpret_cast<UiDialogProcContext*>(
+					RemovePropW(hWnd, kUiDialogProcContextProperty));
+				delete removedContext;
 			}
 			return result;
 		}

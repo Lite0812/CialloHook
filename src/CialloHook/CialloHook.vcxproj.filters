@@ -16,6 +16,9 @@
     <Filter Include="entry">
       <UniqueIdentifier>{E7866E44-9A80-4CFD-8A1A-D1A4A8D3C05A}</UniqueIdentifier>
     </Filter>
+    <Filter Include="entry\proxy">
+      <UniqueIdentifier>{B91CFF54-47F7-4E34-A68C-17CBA6313B30}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="config\config_manager.cpp">
@@ -78,11 +81,11 @@
     <ClCompile Include="hooks\rio_shiina_hooks.cpp">
       <Filter>hooks</Filter>
     </ClCompile>
-    <ClCompile Include="entry\Proxy.cpp">
-      <Filter>entry</Filter>
+    <ClCompile Include="entry\proxy\version_proxy.cpp">
+      <Filter>entry\proxy</Filter>
     </ClCompile>
-    <ClCompile Include="entry\WinMMExports.cpp">
-      <Filter>entry</Filter>
+    <ClCompile Include="entry\proxy\winmm_proxy.cpp">
+      <Filter>entry\proxy</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -122,9 +125,14 @@
     <ClInclude Include="hooks\rio_shiina_hooks.h">
       <Filter>hooks</Filter>
     </ClInclude>
-    <ClInclude Include="entry\Proxy.h">
-      <Filter>entry</Filter>
+    <ClInclude Include="entry\proxy\version_proxy.h">
+      <Filter>entry\proxy</Filter>
     </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <MASM Include="entry\proxy\winmm_proxy_x64.asm">
+      <Filter>entry\proxy</Filter>
+    </MASM>
   </ItemGroup>
   <ItemGroup>
     <None Include="config\CialloHook.ini">
@@ -133,8 +141,11 @@
     <None Include="config\CialloHook_Example.ini">
       <Filter>config</Filter>
     </None>
-    <None Include="entry\version.def">
-      <Filter>entry</Filter>
+    <None Include="entry\proxy\exports_x86.def">
+      <Filter>entry\proxy</Filter>
+    </None>
+    <None Include="entry\proxy\exports_x64.def">
+      <Filter>entry\proxy</Filter>
     </None>
   </ItemGroup>
 </Project>

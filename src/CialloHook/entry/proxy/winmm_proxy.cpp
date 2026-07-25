@@ -1,6 +1,6 @@
 #include <Windows.h>
 #include <mmsystem.h>
-#include "../config/build_options.h"
+#include "../../config/build_options.h"
 
 #if defined(_MSC_VER) && defined(_WIN32) && CIALLOHOOK_FEATURE_CODECRYPT_PATCH
 #define CIALLOHOOK_WINMM_PROTECTED_BEGIN __pragma(code_seg(push, ".lpksc$m"))
@@ -9,8 +9,6 @@
 #define CIALLOHOOK_WINMM_PROTECTED_BEGIN
 #define CIALLOHOOK_WINMM_PROTECTED_END
 #endif
-
-extern "C" __declspec(dllexport) int CialloWinMMExportAnchor = 1;
 
 CIALLOHOOK_WINMM_PROTECTED_BEGIN
 
@@ -161,79 +159,6 @@ static Fn_waveOutSetVolume g_waveOutSetVolume = nullptr;
 static Fn_waveOutUnprepareHeader g_waveOutUnprepareHeader = nullptr;
 static Fn_waveOutWrite g_waveOutWrite = nullptr;
 #endif
-
-#define BASE_WINMM_EXPORTS(X) \
-	X(mciGetErrorStringA) \
-	X(mciGetErrorStringW) \
-	X(mciSendCommandA) \
-	X(mciSendCommandW) \
-	X(mciSendStringA) \
-	X(mciSendStringW) \
-	X(midiOutClose) \
-	X(midiOutGetNumDevs) \
-	X(midiOutLongMsg) \
-	X(midiOutMessage) \
-	X(midiOutOpen) \
-	X(midiOutPrepareHeader) \
-	X(midiOutReset) \
-	X(midiOutSetVolume) \
-	X(midiOutShortMsg) \
-	X(midiOutUnprepareHeader) \
-	X(midiInAddBuffer) \
-	X(midiInClose) \
-	X(midiInGetNumDevs) \
-	X(midiInMessage) \
-	X(midiInOpen) \
-	X(midiInPrepareHeader) \
-	X(midiInReset) \
-	X(midiInStart) \
-	X(midiInStop) \
-	X(midiInUnprepareHeader) \
-	X(mixerClose) \
-	X(mixerGetControlDetailsA) \
-	X(mixerGetControlDetailsW) \
-	X(mixerGetDevCapsA) \
-	X(mixerGetDevCapsW) \
-	X(mixerGetLineControlsA) \
-	X(mixerGetLineControlsW) \
-	X(mixerGetLineInfoA) \
-	X(mixerGetLineInfoW) \
-	X(mixerGetNumDevs) \
-	X(mixerMessage) \
-	X(mixerOpen) \
-	X(mixerSetControlDetails) \
-	X(timeBeginPeriod) \
-	X(timeEndPeriod) \
-	X(timeGetDevCaps) \
-	X(timeGetSystemTime) \
-	X(timeGetTime) \
-	X(timeKillEvent) \
-	X(timeSetEvent) \
-	X(waveInAddBuffer) \
-	X(waveInClose) \
-	X(waveInGetNumDevs) \
-	X(waveInGetPosition) \
-	X(waveInMessage) \
-	X(waveInOpen) \
-	X(waveInPrepareHeader) \
-	X(waveInReset) \
-	X(waveInStart) \
-	X(waveInStop) \
-	X(waveInUnprepareHeader) \
-	X(waveOutBreakLoop) \
-	X(waveOutClose) \
-	X(waveOutGetNumDevs) \
-	X(waveOutGetPosition) \
-	X(waveOutGetVolume) \
-	X(waveOutMessage) \
-	X(waveOutOpen) \
-	X(waveOutPause) \
-	X(waveOutPrepareHeader) \
-	X(waveOutReset) \
-	X(waveOutRestart) \
-	X(waveOutSetVolume) \
-	X(waveOutUnprepareHeader) \
-	X(waveOutWrite)
 
 #define FORWARDED_WINMM_EXPORTS(X) \
 	X(mciExecute) \
@@ -969,205 +894,66 @@ extern "C" MMRESULT WINAPI CialloWinMM_waveOutWrite(HWAVEOUT hwo, LPWAVEHDR pwh,
 CIALLOHOOK_WINMM_PROTECTED_END
 
 #ifdef _WIN64
-#define EXPORT_FORWARD_WINMM(fn) __pragma(comment(linker, "/EXPORT:" #fn "=winmm." #fn))
-FORWARDED_WINMM_EXPORTS(EXPORT_FORWARD_WINMM)
-BASE_WINMM_EXPORTS(EXPORT_FORWARD_WINMM)
-#undef EXPORT_FORWARD_WINMM
-#endif
+static INIT_ONCE g_winmmInitOnce = INIT_ONCE_STATIC_INIT;
+static HMODULE g_realWinmm = nullptr;
 
-#ifndef _WIN64
-#pragma comment(linker, "/EXPORT:Noname2=_CialloWinMM_Ordinal2,@2,NONAME")
-#pragma comment(linker, "/EXPORT:mciExecute=_CialloWinMM_mciExecute,@3")
-#pragma comment(linker, "/EXPORT:CloseDriver=_CialloWinMM_CloseDriver,@4")
-#pragma comment(linker, "/EXPORT:DefDriverProc=_CialloWinMM_DefDriverProc,@5")
-#pragma comment(linker, "/EXPORT:DriverCallback=_CialloWinMM_DriverCallback,@6")
-#pragma comment(linker, "/EXPORT:DrvGetModuleHandle=_CialloWinMM_DrvGetModuleHandle,@7")
-#pragma comment(linker, "/EXPORT:GetDriverModuleHandle=_CialloWinMM_GetDriverModuleHandle,@8")
-#pragma comment(linker, "/EXPORT:NotifyCallbackData=_CialloWinMM_NotifyCallbackData,@9")
-#pragma comment(linker, "/EXPORT:OpenDriver=_CialloWinMM_OpenDriver,@10")
-#pragma comment(linker, "/EXPORT:PlaySound=_CialloWinMM_PlaySound,@11")
-#pragma comment(linker, "/EXPORT:PlaySoundA=_CialloWinMM_PlaySoundA,@12")
-#pragma comment(linker, "/EXPORT:PlaySoundW=_CialloWinMM_PlaySoundW,@13")
-#pragma comment(linker, "/EXPORT:SendDriverMessage=_CialloWinMM_SendDriverMessage,@14")
-#pragma comment(linker, "/EXPORT:WOW32DriverCallback=_CialloWinMM_WOW32DriverCallback,@15")
-#pragma comment(linker, "/EXPORT:WOW32ResolveMultiMediaHandle=_CialloWinMM_WOW32ResolveMultiMediaHandle,@16")
-#pragma comment(linker, "/EXPORT:WOWAppExit=_CialloWinMM_WOWAppExit,@17")
-#pragma comment(linker, "/EXPORT:aux32Message=_CialloWinMM_aux32Message,@18")
-#pragma comment(linker, "/EXPORT:auxGetDevCapsA=_CialloWinMM_auxGetDevCapsA,@19")
-#pragma comment(linker, "/EXPORT:auxGetDevCapsW=_CialloWinMM_auxGetDevCapsW,@20")
-#pragma comment(linker, "/EXPORT:auxGetNumDevs=_CialloWinMM_auxGetNumDevs,@21")
-#pragma comment(linker, "/EXPORT:auxGetVolume=_CialloWinMM_auxGetVolume,@22")
-#pragma comment(linker, "/EXPORT:auxOutMessage=_CialloWinMM_auxOutMessage,@23")
-#pragma comment(linker, "/EXPORT:auxSetVolume=_CialloWinMM_auxSetVolume,@24")
-#pragma comment(linker, "/EXPORT:joy32Message=_CialloWinMM_joy32Message,@25")
-#pragma comment(linker, "/EXPORT:joyConfigChanged=_CialloWinMM_joyConfigChanged,@26")
-#pragma comment(linker, "/EXPORT:joyGetDevCapsA=_CialloWinMM_joyGetDevCapsA,@27")
-#pragma comment(linker, "/EXPORT:joyGetDevCapsW=_CialloWinMM_joyGetDevCapsW,@28")
-#pragma comment(linker, "/EXPORT:joyGetNumDevs=_CialloWinMM_joyGetNumDevs,@29")
-#pragma comment(linker, "/EXPORT:joyGetPos=_CialloWinMM_joyGetPos,@30")
-#pragma comment(linker, "/EXPORT:joyGetPosEx=_CialloWinMM_joyGetPosEx,@31")
-#pragma comment(linker, "/EXPORT:joyGetThreshold=_CialloWinMM_joyGetThreshold,@32")
-#pragma comment(linker, "/EXPORT:joyReleaseCapture=_CialloWinMM_joyReleaseCapture,@33")
-#pragma comment(linker, "/EXPORT:joySetCapture=_CialloWinMM_joySetCapture,@34")
-#pragma comment(linker, "/EXPORT:joySetThreshold=_CialloWinMM_joySetThreshold,@35")
-#pragma comment(linker, "/EXPORT:mci32Message=_CialloWinMM_mci32Message,@36")
-#pragma comment(linker, "/EXPORT:mciDriverNotify=_CialloWinMM_mciDriverNotify,@37")
-#pragma comment(linker, "/EXPORT:mciDriverYield=_CialloWinMM_mciDriverYield,@38")
-#pragma comment(linker, "/EXPORT:mciFreeCommandResource=_CialloWinMM_mciFreeCommandResource,@39")
-#pragma comment(linker, "/EXPORT:mciGetCreatorTask=_CialloWinMM_mciGetCreatorTask,@40")
-#pragma comment(linker, "/EXPORT:mciGetDeviceIDA=_CialloWinMM_mciGetDeviceIDA,@41")
-#pragma comment(linker, "/EXPORT:mciGetDeviceIDFromElementIDA=_CialloWinMM_mciGetDeviceIDFromElementIDA,@42")
-#pragma comment(linker, "/EXPORT:mciGetDeviceIDFromElementIDW=_CialloWinMM_mciGetDeviceIDFromElementIDW,@43")
-#pragma comment(linker, "/EXPORT:mciGetDeviceIDW=_CialloWinMM_mciGetDeviceIDW,@44")
-#pragma comment(linker, "/EXPORT:mciGetDriverData=_CialloWinMM_mciGetDriverData,@45")
-#pragma comment(linker, "/EXPORT:mciGetErrorStringA=_CialloWinMM_mciGetErrorStringA@12,@46")
-#pragma comment(linker, "/EXPORT:mciGetErrorStringW=_CialloWinMM_mciGetErrorStringW@12,@47")
-#pragma comment(linker, "/EXPORT:mciGetYieldProc=_CialloWinMM_mciGetYieldProc,@48")
-#pragma comment(linker, "/EXPORT:mciLoadCommandResource=_CialloWinMM_mciLoadCommandResource,@49")
-#pragma comment(linker, "/EXPORT:mciSendCommandA=_CialloWinMM_mciSendCommandA@16,@50")
-#pragma comment(linker, "/EXPORT:mciSendCommandW=_CialloWinMM_mciSendCommandW@16,@51")
-#pragma comment(linker, "/EXPORT:mciSendStringA=_CialloWinMM_mciSendStringA@16,@52")
-#pragma comment(linker, "/EXPORT:mciSendStringW=_CialloWinMM_mciSendStringW@16,@53")
-#pragma comment(linker, "/EXPORT:mciSetDriverData=_CialloWinMM_mciSetDriverData,@54")
-#pragma comment(linker, "/EXPORT:mciSetYieldProc=_CialloWinMM_mciSetYieldProc,@55")
-#pragma comment(linker, "/EXPORT:mid32Message=_CialloWinMM_mid32Message,@56")
-#pragma comment(linker, "/EXPORT:midiConnect=_CialloWinMM_midiConnect,@57")
-#pragma comment(linker, "/EXPORT:midiDisconnect=_CialloWinMM_midiDisconnect,@58")
-#pragma comment(linker, "/EXPORT:midiInAddBuffer=_CialloWinMM_midiInAddBuffer@12,@59")
-#pragma comment(linker, "/EXPORT:midiInClose=_CialloWinMM_midiInClose@4,@60")
-#pragma comment(linker, "/EXPORT:midiInGetDevCapsA=_CialloWinMM_midiInGetDevCapsA,@61")
-#pragma comment(linker, "/EXPORT:midiInGetDevCapsW=_CialloWinMM_midiInGetDevCapsW,@62")
-#pragma comment(linker, "/EXPORT:midiInGetErrorTextA=_CialloWinMM_midiInGetErrorTextA,@63")
-#pragma comment(linker, "/EXPORT:midiInGetErrorTextW=_CialloWinMM_midiInGetErrorTextW,@64")
-#pragma comment(linker, "/EXPORT:midiInGetID=_CialloWinMM_midiInGetID,@65")
-#pragma comment(linker, "/EXPORT:midiInGetNumDevs=_CialloWinMM_midiInGetNumDevs@0,@66")
-#pragma comment(linker, "/EXPORT:midiInMessage=_CialloWinMM_midiInMessage@16,@67")
-#pragma comment(linker, "/EXPORT:midiInOpen=_CialloWinMM_midiInOpen@20,@68")
-#pragma comment(linker, "/EXPORT:midiInPrepareHeader=_CialloWinMM_midiInPrepareHeader@12,@69")
-#pragma comment(linker, "/EXPORT:midiInReset=_CialloWinMM_midiInReset@4,@70")
-#pragma comment(linker, "/EXPORT:midiInStart=_CialloWinMM_midiInStart@4,@71")
-#pragma comment(linker, "/EXPORT:midiInStop=_CialloWinMM_midiInStop@4,@72")
-#pragma comment(linker, "/EXPORT:midiInUnprepareHeader=_CialloWinMM_midiInUnprepareHeader@12,@73")
-#pragma comment(linker, "/EXPORT:midiOutCacheDrumPatches=_CialloWinMM_midiOutCacheDrumPatches,@74")
-#pragma comment(linker, "/EXPORT:midiOutCachePatches=_CialloWinMM_midiOutCachePatches,@75")
-#pragma comment(linker, "/EXPORT:midiOutClose=_CialloWinMM_midiOutClose@4,@76")
-#pragma comment(linker, "/EXPORT:midiOutGetDevCapsA=_CialloWinMM_midiOutGetDevCapsA,@77")
-#pragma comment(linker, "/EXPORT:midiOutGetDevCapsW=_CialloWinMM_midiOutGetDevCapsW,@78")
-#pragma comment(linker, "/EXPORT:midiOutGetErrorTextA=_CialloWinMM_midiOutGetErrorTextA,@79")
-#pragma comment(linker, "/EXPORT:midiOutGetErrorTextW=_CialloWinMM_midiOutGetErrorTextW,@80")
-#pragma comment(linker, "/EXPORT:midiOutGetID=_CialloWinMM_midiOutGetID,@81")
-#pragma comment(linker, "/EXPORT:midiOutGetNumDevs=_CialloWinMM_midiOutGetNumDevs@0,@82")
-#pragma comment(linker, "/EXPORT:midiOutGetVolume=_CialloWinMM_midiOutGetVolume,@83")
-#pragma comment(linker, "/EXPORT:midiOutLongMsg=_CialloWinMM_midiOutLongMsg@12,@84")
-#pragma comment(linker, "/EXPORT:midiOutMessage=_CialloWinMM_midiOutMessage@16,@85")
-#pragma comment(linker, "/EXPORT:midiOutOpen=_CialloWinMM_midiOutOpen@20,@86")
-#pragma comment(linker, "/EXPORT:midiOutPrepareHeader=_CialloWinMM_midiOutPrepareHeader@12,@87")
-#pragma comment(linker, "/EXPORT:midiOutReset=_CialloWinMM_midiOutReset@4,@88")
-#pragma comment(linker, "/EXPORT:midiOutSetVolume=_CialloWinMM_midiOutSetVolume@8,@89")
-#pragma comment(linker, "/EXPORT:midiOutShortMsg=_CialloWinMM_midiOutShortMsg@8,@90")
-#pragma comment(linker, "/EXPORT:midiOutUnprepareHeader=_CialloWinMM_midiOutUnprepareHeader@12,@91")
-#pragma comment(linker, "/EXPORT:midiStreamClose=_CialloWinMM_midiStreamClose,@92")
-#pragma comment(linker, "/EXPORT:midiStreamOpen=_CialloWinMM_midiStreamOpen,@93")
-#pragma comment(linker, "/EXPORT:midiStreamOut=_CialloWinMM_midiStreamOut,@94")
-#pragma comment(linker, "/EXPORT:midiStreamPause=_CialloWinMM_midiStreamPause,@95")
-#pragma comment(linker, "/EXPORT:midiStreamPosition=_CialloWinMM_midiStreamPosition,@96")
-#pragma comment(linker, "/EXPORT:midiStreamProperty=_CialloWinMM_midiStreamProperty,@97")
-#pragma comment(linker, "/EXPORT:midiStreamRestart=_CialloWinMM_midiStreamRestart,@98")
-#pragma comment(linker, "/EXPORT:midiStreamStop=_CialloWinMM_midiStreamStop,@99")
-#pragma comment(linker, "/EXPORT:mixerClose=_CialloWinMM_mixerClose@4,@100")
-#pragma comment(linker, "/EXPORT:mixerGetControlDetailsA=_CialloWinMM_mixerGetControlDetailsA@12,@101")
-#pragma comment(linker, "/EXPORT:mixerGetControlDetailsW=_CialloWinMM_mixerGetControlDetailsW@12,@102")
-#pragma comment(linker, "/EXPORT:mixerGetDevCapsA=_CialloWinMM_mixerGetDevCapsA@12,@103")
-#pragma comment(linker, "/EXPORT:mixerGetDevCapsW=_CialloWinMM_mixerGetDevCapsW@12,@104")
-#pragma comment(linker, "/EXPORT:mixerGetID=_CialloWinMM_mixerGetID,@105")
-#pragma comment(linker, "/EXPORT:mixerGetLineControlsA=_CialloWinMM_mixerGetLineControlsA@12,@106")
-#pragma comment(linker, "/EXPORT:mixerGetLineControlsW=_CialloWinMM_mixerGetLineControlsW@12,@107")
-#pragma comment(linker, "/EXPORT:mixerGetLineInfoA=_CialloWinMM_mixerGetLineInfoA@12,@108")
-#pragma comment(linker, "/EXPORT:mixerGetLineInfoW=_CialloWinMM_mixerGetLineInfoW@12,@109")
-#pragma comment(linker, "/EXPORT:mixerGetNumDevs=_CialloWinMM_mixerGetNumDevs@0,@110")
-#pragma comment(linker, "/EXPORT:mixerMessage=_CialloWinMM_mixerMessage@16,@111")
-#pragma comment(linker, "/EXPORT:mixerOpen=_CialloWinMM_mixerOpen@20,@112")
-#pragma comment(linker, "/EXPORT:mixerSetControlDetails=_CialloWinMM_mixerSetControlDetails@12,@113")
-#pragma comment(linker, "/EXPORT:mmDrvInstall=_CialloWinMM_mmDrvInstall,@114")
-#pragma comment(linker, "/EXPORT:mmGetCurrentTask=_CialloWinMM_mmGetCurrentTask,@115")
-#pragma comment(linker, "/EXPORT:mmTaskBlock=_CialloWinMM_mmTaskBlock,@116")
-#pragma comment(linker, "/EXPORT:mmTaskCreate=_CialloWinMM_mmTaskCreate,@117")
-#pragma comment(linker, "/EXPORT:mmTaskSignal=_CialloWinMM_mmTaskSignal,@118")
-#pragma comment(linker, "/EXPORT:mmTaskYield=_CialloWinMM_mmTaskYield,@119")
-#pragma comment(linker, "/EXPORT:mmioAdvance=_CialloWinMM_mmioAdvance,@120")
-#pragma comment(linker, "/EXPORT:mmioAscend=_CialloWinMM_mmioAscend,@121")
-#pragma comment(linker, "/EXPORT:mmioClose=_CialloWinMM_mmioClose,@122")
-#pragma comment(linker, "/EXPORT:mmioCreateChunk=_CialloWinMM_mmioCreateChunk,@123")
-#pragma comment(linker, "/EXPORT:mmioDescend=_CialloWinMM_mmioDescend,@124")
-#pragma comment(linker, "/EXPORT:mmioFlush=_CialloWinMM_mmioFlush,@125")
-#pragma comment(linker, "/EXPORT:mmioGetInfo=_CialloWinMM_mmioGetInfo,@126")
-#pragma comment(linker, "/EXPORT:mmioInstallIOProcA=_CialloWinMM_mmioInstallIOProcA,@127")
-#pragma comment(linker, "/EXPORT:mmioInstallIOProcW=_CialloWinMM_mmioInstallIOProcW,@128")
-#pragma comment(linker, "/EXPORT:mmioOpenA=_CialloWinMM_mmioOpenA,@129")
-#pragma comment(linker, "/EXPORT:mmioOpenW=_CialloWinMM_mmioOpenW,@130")
-#pragma comment(linker, "/EXPORT:mmioRead=_CialloWinMM_mmioRead,@131")
-#pragma comment(linker, "/EXPORT:mmioRenameA=_CialloWinMM_mmioRenameA,@132")
-#pragma comment(linker, "/EXPORT:mmioRenameW=_CialloWinMM_mmioRenameW,@133")
-#pragma comment(linker, "/EXPORT:mmioSeek=_CialloWinMM_mmioSeek,@134")
-#pragma comment(linker, "/EXPORT:mmioSendMessage=_CialloWinMM_mmioSendMessage,@135")
-#pragma comment(linker, "/EXPORT:mmioSetBuffer=_CialloWinMM_mmioSetBuffer,@136")
-#pragma comment(linker, "/EXPORT:mmioSetInfo=_CialloWinMM_mmioSetInfo,@137")
-#pragma comment(linker, "/EXPORT:mmioStringToFOURCCA=_CialloWinMM_mmioStringToFOURCCA,@138")
-#pragma comment(linker, "/EXPORT:mmioStringToFOURCCW=_CialloWinMM_mmioStringToFOURCCW,@139")
-#pragma comment(linker, "/EXPORT:mmioWrite=_CialloWinMM_mmioWrite,@140")
-#pragma comment(linker, "/EXPORT:mmsystemGetVersion=_CialloWinMM_mmsystemGetVersion,@141")
-#pragma comment(linker, "/EXPORT:mod32Message=_CialloWinMM_mod32Message,@142")
-#pragma comment(linker, "/EXPORT:mxd32Message=_CialloWinMM_mxd32Message,@143")
-#pragma comment(linker, "/EXPORT:sndPlaySoundA=_CialloWinMM_sndPlaySoundA,@144")
-#pragma comment(linker, "/EXPORT:sndPlaySoundW=_CialloWinMM_sndPlaySoundW,@145")
-#pragma comment(linker, "/EXPORT:tid32Message=_CialloWinMM_tid32Message,@146")
-#pragma comment(linker, "/EXPORT:timeBeginPeriod=_CialloWinMM_timeBeginPeriod@4,@147")
-#pragma comment(linker, "/EXPORT:timeEndPeriod=_CialloWinMM_timeEndPeriod@4,@148")
-#pragma comment(linker, "/EXPORT:timeGetDevCaps=_CialloWinMM_timeGetDevCaps@8,@149")
-#pragma comment(linker, "/EXPORT:timeGetSystemTime=_CialloWinMM_timeGetSystemTime@8,@150")
-#pragma comment(linker, "/EXPORT:timeGetTime=_CialloWinMM_timeGetTime@0,@151")
-#pragma comment(linker, "/EXPORT:timeKillEvent=_CialloWinMM_timeKillEvent@4,@152")
-#pragma comment(linker, "/EXPORT:timeSetEvent=_CialloWinMM_timeSetEvent@20,@153")
-#pragma comment(linker, "/EXPORT:waveInAddBuffer=_CialloWinMM_waveInAddBuffer@12,@154")
-#pragma comment(linker, "/EXPORT:waveInClose=_CialloWinMM_waveInClose@4,@155")
-#pragma comment(linker, "/EXPORT:waveInGetDevCapsA=_CialloWinMM_waveInGetDevCapsA,@156")
-#pragma comment(linker, "/EXPORT:waveInGetDevCapsW=_CialloWinMM_waveInGetDevCapsW,@157")
-#pragma comment(linker, "/EXPORT:waveInGetErrorTextA=_CialloWinMM_waveInGetErrorTextA,@158")
-#pragma comment(linker, "/EXPORT:waveInGetErrorTextW=_CialloWinMM_waveInGetErrorTextW,@159")
-#pragma comment(linker, "/EXPORT:waveInGetID=_CialloWinMM_waveInGetID,@160")
-#pragma comment(linker, "/EXPORT:waveInGetNumDevs=_CialloWinMM_waveInGetNumDevs@0,@161")
-#pragma comment(linker, "/EXPORT:waveInGetPosition=_CialloWinMM_waveInGetPosition@12,@162")
-#pragma comment(linker, "/EXPORT:waveInMessage=_CialloWinMM_waveInMessage@16,@163")
-#pragma comment(linker, "/EXPORT:waveInOpen=_CialloWinMM_waveInOpen@24,@164")
-#pragma comment(linker, "/EXPORT:waveInPrepareHeader=_CialloWinMM_waveInPrepareHeader@12,@165")
-#pragma comment(linker, "/EXPORT:waveInReset=_CialloWinMM_waveInReset@4,@166")
-#pragma comment(linker, "/EXPORT:waveInStart=_CialloWinMM_waveInStart@4,@167")
-#pragma comment(linker, "/EXPORT:waveInStop=_CialloWinMM_waveInStop@4,@168")
-#pragma comment(linker, "/EXPORT:waveInUnprepareHeader=_CialloWinMM_waveInUnprepareHeader@12,@169")
-#pragma comment(linker, "/EXPORT:waveOutBreakLoop=_CialloWinMM_waveOutBreakLoop@4,@170")
-#pragma comment(linker, "/EXPORT:waveOutClose=_CialloWinMM_waveOutClose@4,@171")
-#pragma comment(linker, "/EXPORT:waveOutGetDevCapsA=_CialloWinMM_waveOutGetDevCapsA,@172")
-#pragma comment(linker, "/EXPORT:waveOutGetDevCapsW=_CialloWinMM_waveOutGetDevCapsW,@173")
-#pragma comment(linker, "/EXPORT:waveOutGetErrorTextA=_CialloWinMM_waveOutGetErrorTextA,@174")
-#pragma comment(linker, "/EXPORT:waveOutGetErrorTextW=_CialloWinMM_waveOutGetErrorTextW,@175")
-#pragma comment(linker, "/EXPORT:waveOutGetID=_CialloWinMM_waveOutGetID,@176")
-#pragma comment(linker, "/EXPORT:waveOutGetNumDevs=_CialloWinMM_waveOutGetNumDevs@0,@177")
-#pragma comment(linker, "/EXPORT:waveOutGetPitch=_CialloWinMM_waveOutGetPitch,@178")
-#pragma comment(linker, "/EXPORT:waveOutGetPlaybackRate=_CialloWinMM_waveOutGetPlaybackRate,@179")
-#pragma comment(linker, "/EXPORT:waveOutGetPosition=_CialloWinMM_waveOutGetPosition@12,@180")
-#pragma comment(linker, "/EXPORT:waveOutGetVolume=_CialloWinMM_waveOutGetVolume@8,@181")
-#pragma comment(linker, "/EXPORT:waveOutMessage=_CialloWinMM_waveOutMessage@16,@182")
-#pragma comment(linker, "/EXPORT:waveOutOpen=_CialloWinMM_waveOutOpen@24,@183")
-#pragma comment(linker, "/EXPORT:waveOutPause=_CialloWinMM_waveOutPause@4,@184")
-#pragma comment(linker, "/EXPORT:waveOutPrepareHeader=_CialloWinMM_waveOutPrepareHeader@12,@185")
-#pragma comment(linker, "/EXPORT:waveOutReset=_CialloWinMM_waveOutReset@4,@186")
-#pragma comment(linker, "/EXPORT:waveOutRestart=_CialloWinMM_waveOutRestart@4,@187")
-#pragma comment(linker, "/EXPORT:waveOutSetPitch=_CialloWinMM_waveOutSetPitch,@188")
-#pragma comment(linker, "/EXPORT:waveOutSetPlaybackRate=_CialloWinMM_waveOutSetPlaybackRate,@189")
-#pragma comment(linker, "/EXPORT:waveOutSetVolume=_CialloWinMM_waveOutSetVolume@8,@190")
-#pragma comment(linker, "/EXPORT:waveOutUnprepareHeader=_CialloWinMM_waveOutUnprepareHeader@12,@191")
-#pragma comment(linker, "/EXPORT:waveOutWrite=_CialloWinMM_waveOutWrite@12,@192")
-#pragma comment(linker, "/EXPORT:wid32Message=_CialloWinMM_wid32Message,@193")
-#pragma comment(linker, "/EXPORT:wod32Message=_CialloWinMM_wod32Message,@194")
-#endif
+extern "C"
+{
+	// x64 MASM stubs index this table directly by the native winmm ordinal.
+	// The largest current x64 winmm ordinal is 182; slot zero and slot one are unused.
+	PVOID g_cialloWinmmX64Targets[183] = {};
+}
 
+static BOOL CALLBACK InitRealWinmm(PINIT_ONCE, PVOID, PVOID*)
+{
+	wchar_t realDllPath[MAX_PATH] = {};
+	if (GetSystemDirectoryW(realDllPath, MAX_PATH) == 0)
+	{
+		return FALSE;
+	}
+	wcscat_s(realDllPath, L"\\winmm.dll");
+
+	g_realWinmm = LoadLibraryW(realDllPath);
+	return g_realWinmm != nullptr;
+}
+
+static bool EnsureRealWinmm()
+{
+	return InitOnceExecuteOnce(&g_winmmInitOnce, InitRealWinmm, nullptr, nullptr) != FALSE && g_realWinmm != nullptr;
+}
+
+extern "C" bool CialloHook_EnsureRealWinmm()
+{
+	return EnsureRealWinmm();
+}
+
+extern "C" FARPROC CialloHook_ResolveWinmmX64(UINT ordinal)
+{
+	if (ordinal < 2 || ordinal >= _countof(g_cialloWinmmX64Targets))
+	{
+		return nullptr;
+	}
+
+	PVOID volatile* targetSlot = &g_cialloWinmmX64Targets[ordinal];
+	PVOID cached = InterlockedCompareExchangePointer(targetSlot, nullptr, nullptr);
+	if (cached != nullptr)
+	{
+		return reinterpret_cast<FARPROC>(cached);
+	}
+
+	if (!EnsureRealWinmm())
+	{
+		return nullptr;
+	}
+
+	FARPROC resolved = GetProcAddress(g_realWinmm, MAKEINTRESOURCEA(ordinal));
+	if (resolved == nullptr)
+	{
+		return nullptr;
+	}
+
+	PVOID resolvedPointer = reinterpret_cast<PVOID>(resolved);
+	PVOID previous = InterlockedCompareExchangePointer(targetSlot, resolvedPointer, nullptr);
+	return reinterpret_cast<FARPROC>(previous != nullptr ? previous : resolvedPointer);
+}
+#endif

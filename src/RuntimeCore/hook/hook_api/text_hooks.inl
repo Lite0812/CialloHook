@@ -93,7 +93,19 @@
 		static std::map<std::string, bool> sg_mapTextReplaceHitLogA;
 		static std::map<std::wstring, bool> sg_mapTextReplaceHitLogW;
 		static std::map<std::wstring, bool> sg_mapTextReplaceApiHitLog;
-		static std::map<std::wstring, bool> sg_mapTextReplaceVerboseLog;
+		struct TextReplaceVerboseEntry
+		{
+			uint64_t count = 0;
+			ULONGLONG lastLoggedTick = 0;
+		};
+		static std::map<std::wstring, TextReplaceVerboseEntry> sg_mapTextReplaceVerboseLog;
+		static SRWLOCK sg_textReplaceVerboseLogLock = SRWLOCK_INIT;
+		static bool sg_textReplaceVerboseLimitLogged = false;
+		static constexpr size_t kTextReplaceVerboseLogLimit = 256;
+		static constexpr size_t kTextReplaceVerbosePreviewLimit = 160;
+		static constexpr ULONGLONG kTextReplaceVerboseRefreshIntervalMs = 1000;
+		static thread_local const wchar_t* sg_textReplaceVerboseApiName = nullptr;
+		static thread_local HDC sg_textReplaceVerboseHdc = nullptr;
 		static std::map<std::string, bool> sg_mapTextReplaceSkipSingleCharLogA;
 		static std::map<std::wstring, bool> sg_mapTextReplaceSkipSingleCharLogW;
 		static bool sg_enableCnJpMap = false;
@@ -106,6 +118,27 @@
 		static pGetGlyphIndicesW rawGetGlyphIndicesW = GetGlyphIndicesW;
 		static int ApplyGlyphOffsetX(int x);
 		static int ApplyGlyphOffsetY(int y);
+
+		struct ScopedTextReplaceVerboseApi
+		{
+			const wchar_t* previousApiName = nullptr;
+			HDC previousHdc = nullptr;
+
+			ScopedTextReplaceVerboseApi(const wchar_t* apiName, HDC hdc)
+				: previousApiName(sg_textReplaceVerboseApiName),
+				previousHdc(sg_textReplaceVerboseHdc)
+			{
+				sg_textReplaceVerboseApiName = apiName;
+				sg_textReplaceVerboseHdc = hdc;
+				LogFontHookHit(apiName, hdc);
+			}
+
+			~ScopedTextReplaceVerboseApi()
+			{
+				sg_textReplaceVerboseApiName = previousApiName;
+				sg_textReplaceVerboseHdc = previousHdc;
+			}
+		};
 
 		static std::wstring MultiByteToWideWithCodePage(const std::string& text, UINT codePage)
 		{
@@ -534,9 +567,11 @@
 		static std::wstring EscapeTextReplaceLogText(const std::wstring& text)
 		{
 			std::wstring escaped;
-			escaped.reserve(text.size());
-			for (wchar_t ch : text)
+			const size_t previewLength = (std::min)(text.size(), kTextReplaceVerbosePreviewLimit);
+			escaped.reserve(previewLength + 3);
+			for (size_t i = 0; i < previewLength; ++i)
 			{
+				const wchar_t ch = text[i];
 				switch (ch)
 				{
 				case L'\r':
@@ -553,58 +588,195 @@
 					break;
 				}
 			}
+			if (previewLength < text.size())
+			{
+				escaped += L"...";
+			}
 			return escaped;
 		}
-
-		static bool ShouldLogTextReplaceVerboseKey(const std::wstring& key)
+		static uint64_t RegisterTextReplaceVerboseEntry(
+			const std::wstring& key,
+			bool& shouldLog)
 		{
+			shouldLog = false;
 			if (!sg_enableTextReplaceVerboseLog)
 			{
-				return false;
+				return 0;
 			}
-			if (sg_mapTextReplaceVerboseLog.find(key) != sg_mapTextReplaceVerboseLog.end())
+
+			bool logLimitReached = false;
+			const ULONGLONG now = GetTickCount64();
+			AcquireSRWLockExclusive(&sg_textReplaceVerboseLogLock);
+			auto existing = sg_mapTextReplaceVerboseLog.find(key);
+			if (existing != sg_mapTextReplaceVerboseLog.end())
 			{
-				return false;
+				const uint64_t count = ++existing->second.count;
+				shouldLog = now - existing->second.lastLoggedTick >= kTextReplaceVerboseRefreshIntervalMs;
+				if (shouldLog)
+				{
+					existing->second.lastLoggedTick = now;
+				}
+				ReleaseSRWLockExclusive(&sg_textReplaceVerboseLogLock);
+				return count;
 			}
-			sg_mapTextReplaceVerboseLog[key] = true;
-			return true;
+			if (sg_mapTextReplaceVerboseLog.size() >= kTextReplaceVerboseLogLimit)
+			{
+				logLimitReached = !sg_textReplaceVerboseLimitLogged;
+				sg_textReplaceVerboseLimitLogged = true;
+				ReleaseSRWLockExclusive(&sg_textReplaceVerboseLogLock);
+				if (logLimitReached)
+				{
+					LogMessage(LogLevel::Warn, L"TextReplace verbose: unique entry limit reached (%u), suppressing further observations",
+						(UINT)kTextReplaceVerboseLogLimit);
+				}
+				return 0;
+			}
+			TextReplaceVerboseEntry storedEntry = {};
+			storedEntry.count = 1;
+			storedEntry.lastLoggedTick = now;
+			sg_mapTextReplaceVerboseLog.emplace(key, std::move(storedEntry));
+			shouldLog = true;
+			ReleaseSRWLockExclusive(&sg_textReplaceVerboseLogLock);
+			return 1;
+		}
+		struct TextReplaceVerboseFontContext
+		{
+			LOGFONTW logFont = {};
+			bool hasFont = false;
+			const wchar_t* targetKind = L"n/a";
+			std::wstring key;
+		};
+
+		static TextReplaceVerboseFontContext CaptureTextReplaceVerboseFontContext()
+		{
+			TextReplaceVerboseFontContext context;
+			HDC hdc = sg_textReplaceVerboseHdc;
+			context.targetKind = GetFontLogTargetKind(hdc);
+			if (hdc && rawGetCurrentObject && rawGetObjectW)
+			{
+				HFONT hFont = (HFONT)rawGetCurrentObject(hdc, OBJ_FONT);
+				if (hFont && hFont != (HFONT)HGDI_ERROR && ShouldApplyUIFontOverrideForHdc(hdc))
+				{
+					HFONT replacementFont = GetOrCreateReplacementFont(hFont, false);
+					if (replacementFont)
+					{
+						hFont = replacementFont;
+					}
+				}
+				if (hFont && hFont != (HFONT)HGDI_ERROR
+					&& rawGetObjectW(hFont, sizeof(context.logFont), &context.logFont) >= (int)sizeof(context.logFont))
+				{
+					context.hasFont = true;
+				}
+			}
+			context.key = context.targetKind;
+			context.key.push_back(L'\x1f');
+			if (context.hasFont)
+			{
+				context.key.append(context.logFont.lfFaceName);
+				context.key.push_back(L'\x1f');
+				context.key.append(std::to_wstring(context.logFont.lfHeight));
+				context.key.push_back(L'\x1f');
+				context.key.append(std::to_wstring(context.logFont.lfWeight));
+				context.key.push_back(L'\x1f');
+				context.key.append(std::to_wstring(context.logFont.lfCharSet));
+			}
+			return context;
 		}
 
 		static void LogTextReplaceVerboseObserveW(const std::wstring& text)
 		{
-			if (!ShouldLogTextReplaceVerboseKey(std::wstring(L"W|") + text))
+			const wchar_t* apiName = sg_textReplaceVerboseApiName;
+			if (!apiName)
 			{
 				return;
 			}
-			std::wstring escaped = EscapeTextReplaceLogText(text);
-			LogMessage(LogLevel::Info, L"TextReplace verbose: observe kind=W len=%d text=\"%s\"",
-				(int)text.size(), escaped.c_str());
+			std::wstring preview = EscapeTextReplaceLogText(text);
+			TextReplaceVerboseFontContext fontContext = CaptureTextReplaceVerboseFontContext();
+			bool shouldLog = false;
+			const uint64_t count = RegisterTextReplaceVerboseEntry(
+				std::wstring(L"W\x1f") + apiName + L"\x1f" + fontContext.key + L"\x1f" + text, shouldLog);
+			if (!shouldLog)
+			{
+				return;
+			}
+			if (fontContext.hasFont)
+			{
+				LogMessage(LogLevel::Info,
+					L"TextReplace verbose: api=%s font=\"%s\" height=%d weight=%d charset=0x%02X target=%s kind=W count=%llu len=%d text=\"%s\"",
+					apiName,
+					fontContext.logFont.lfFaceName[0] ? fontContext.logFont.lfFaceName : L"(default)",
+					(int)fontContext.logFont.lfHeight,
+					(int)fontContext.logFont.lfWeight,
+					(UINT)fontContext.logFont.lfCharSet,
+					fontContext.targetKind,
+					(unsigned long long)count,
+					(int)text.size(),
+					preview.c_str());
+			}
+			else
+			{
+				LogMessage(LogLevel::Info, L"TextReplace verbose: api=%s font=(n/a) target=%s kind=W count=%llu len=%d text=\"%s\"",
+					apiName, fontContext.targetKind, (unsigned long long)count, (int)text.size(), preview.c_str());
+			}
 		}
-
 		static void LogTextReplaceVerboseObserveA(const std::string& text)
 		{
+			const wchar_t* apiName = sg_textReplaceVerboseApiName;
+			if (!apiName)
+			{
+				return;
+			}
+			TextReplaceVerboseFontContext fontContext = CaptureTextReplaceVerboseFontContext();
 			std::wstring decoded = MultiByteToWideWithCodePage(text, sg_textReadCodePage);
 			if (decoded.empty() && !text.empty())
 			{
 				std::wstring bytesPreview = BuildAnsiByteHexPreview(text);
-				std::wstring key = std::wstring(L"A|decode_failed|") + bytesPreview;
-				if (!ShouldLogTextReplaceVerboseKey(key))
+				bool shouldLog = false;
+				const uint64_t count = RegisterTextReplaceVerboseEntry(
+					std::wstring(L"A\x1f") + apiName + L"\x1f" + fontContext.key + L"\x1f" + L"decode_failed\x1f" + bytesPreview, shouldLog);
+				if (!shouldLog)
 				{
 					return;
 				}
-				LogMessage(LogLevel::Info, L"TextReplace verbose: observe kind=A readCp=%u decode=failed bytes=%s",
-					sg_textReadCodePage, bytesPreview.c_str());
+				LogMessage(LogLevel::Info, L"TextReplace verbose: api=%s font=\"%s\" target=%s kind=A count=%llu readCp=%u decode=failed bytes=%s",
+					apiName,
+					fontContext.hasFont && fontContext.logFont.lfFaceName[0] ? fontContext.logFont.lfFaceName : L"(n/a)",
+					fontContext.targetKind,
+					(unsigned long long)count,
+					sg_textReadCodePage,
+					bytesPreview.c_str());
 				return;
 			}
 
-			std::wstring key = std::wstring(L"A|") + decoded;
-			if (!ShouldLogTextReplaceVerboseKey(key))
+			std::wstring preview = EscapeTextReplaceLogText(decoded);
+			bool shouldLog = false;
+			const uint64_t count = RegisterTextReplaceVerboseEntry(
+				std::wstring(L"A\x1f") + apiName + L"\x1f" + fontContext.key + L"\x1f" + decoded, shouldLog);
+			if (!shouldLog)
 			{
 				return;
 			}
-			std::wstring escaped = EscapeTextReplaceLogText(decoded);
-			LogMessage(LogLevel::Info, L"TextReplace verbose: observe kind=A readCp=%u len=%d text=\"%s\"",
-				sg_textReadCodePage, (int)decoded.size(), escaped.c_str());
+			if (fontContext.hasFont)
+			{
+				LogMessage(LogLevel::Info,
+					L"TextReplace verbose: api=%s font=\"%s\" height=%d weight=%d charset=0x%02X target=%s kind=A count=%llu readCp=%u len=%d text=\"%s\"",
+					apiName,
+					fontContext.logFont.lfFaceName[0] ? fontContext.logFont.lfFaceName : L"(default)",
+					(int)fontContext.logFont.lfHeight,
+					(int)fontContext.logFont.lfWeight,
+					(UINT)fontContext.logFont.lfCharSet,
+					fontContext.targetKind,
+					(unsigned long long)count,
+					sg_textReadCodePage,
+					(int)decoded.size(),
+					preview.c_str());
+			}
+			else
+			{
+				LogMessage(LogLevel::Info, L"TextReplace verbose: api=%s font=(n/a) target=%s kind=A count=%llu readCp=%u len=%d text=\"%s\"",
+					apiName, fontContext.targetKind, (unsigned long long)count, sg_textReadCodePage, (int)decoded.size(), preview.c_str());
+			}
 		}
 
 		static bool ShouldLogCnJpVerboseKey(const std::wstring& key)
@@ -1126,11 +1298,11 @@
 
 		void EnableTextReplaceVerboseLog(bool enable)
 		{
+			AcquireSRWLockExclusive(&sg_textReplaceVerboseLogLock);
 			sg_enableTextReplaceVerboseLog = enable;
-			if (!enable)
-			{
-				sg_mapTextReplaceVerboseLog.clear();
-			}
+			sg_mapTextReplaceVerboseLog.clear();
+			sg_textReplaceVerboseLimitLogged = false;
+			ReleaseSRWLockExclusive(&sg_textReplaceVerboseLogLock);
 			LogMessage(LogLevel::Info, L"EnableTextReplaceVerboseLog: %s", enable ? L"true" : L"false");
 		}
 
@@ -1297,7 +1469,7 @@
 
 		static int ComputeSpacingExtra(HDC hdc)
 		{
-			if (hdc == nullptr || sg_fFontSpacingScale == 1.0f)
+			if (!ShouldApplyUIFontOverrideForHdc(hdc) || hdc == nullptr || sg_fFontSpacingScale == 1.0f)
 			{
 				return 0;
 			}
@@ -1489,6 +1661,7 @@
 
 		BOOL WINAPI newTextOutA_SehImpl(HDC hdc, int x, int y, LPCSTR lpString, int c)
 {
+			ScopedTextReplaceVerboseApi verboseApi(L"TextOutA", hdc);
 			int previousExtra = ApplySpacingExtra(hdc);
 			ScopedDrawHdcFontOverride fontOverride(hdc);
 			int length = c < 0 ? (lpString ? (int)strlen(lpString) : 0) : c;
@@ -1553,6 +1726,7 @@
 
 		BOOL WINAPI newTextOutW_SehImpl(HDC hdc, int x, int y, LPCWSTR lpString, int c)
 {
+			ScopedTextReplaceVerboseApi verboseApi(L"TextOutW", hdc);
 			int previousExtra = ApplySpacingExtra(hdc);
 			int length = c < 0 ? (lpString ? (int)wcslen(lpString) : 0) : c;
 			std::wstring replaced = ProcessGlyphStageW(lpString, length);
@@ -1598,6 +1772,7 @@
 
 		BOOL WINAPI newExtTextOutA_SehImpl(HDC hdc, int x, int y, UINT options, CONST RECT* lprect, LPCSTR lpString, UINT c, CONST INT* lpDx)
 {
+			ScopedTextReplaceVerboseApi verboseApi(L"ExtTextOutA", hdc);
 			int previousExtra = lpDx == nullptr ? ApplySpacingExtra(hdc) : kSpacingExtraNotApplied;
 			int dxExtra = lpDx == nullptr ? 0 : ComputeSpacingExtra(hdc);
 			std::vector<INT> adjustedDx;
@@ -1689,6 +1864,7 @@
 
 		BOOL WINAPI newExtTextOutW_SehImpl(HDC hdc, int x, int y, UINT options, CONST RECT* lprect, LPCWSTR lpString, UINT c, CONST INT* lpDx)
 {
+			ScopedTextReplaceVerboseApi verboseApi(L"ExtTextOutW", hdc);
 			int previousExtra = lpDx == nullptr ? ApplySpacingExtra(hdc) : kSpacingExtraNotApplied;
 			int dxExtra = lpDx == nullptr ? 0 : ComputeSpacingExtra(hdc);
 			std::vector<INT> adjustedDx;
@@ -1758,6 +1934,7 @@
 
 		int WINAPI newDrawTextA_SehImpl(HDC hdc, LPCSTR lpchText, int cchText, LPRECT lprc, UINT format)
 {
+			ScopedTextReplaceVerboseApi verboseApi(L"DrawTextA", hdc);
 			int previousExtra = ApplySpacingExtra(hdc);
 			int length = cchText == -1 ? (int)strlen(lpchText) : cchText;
 			std::string replaced = ProcessGlyphStageA(lpchText, length);
@@ -1829,6 +2006,7 @@
 
 		int WINAPI newDrawTextW_SehImpl(HDC hdc, LPCWSTR lpchText, int cchText, LPRECT lprc, UINT format)
 {
+			ScopedTextReplaceVerboseApi verboseApi(L"DrawTextW", hdc);
 			int previousExtra = ApplySpacingExtra(hdc);
 			int length = cchText == -1 ? (int)wcslen(lpchText) : cchText;
 			std::wstring replaced = ProcessGlyphStageW(lpchText, length);
@@ -1872,6 +2050,7 @@
 
 		int WINAPI newDrawTextExA_SehImpl(HDC hdc, LPSTR lpchText, int cchText, LPRECT lprc, UINT format, LPDRAWTEXTPARAMS lpdtp)
 {
+			ScopedTextReplaceVerboseApi verboseApi(L"DrawTextExA", hdc);
 			int previousExtra = ApplySpacingExtra(hdc);
 			int length = cchText == -1 ? (int)strlen(lpchText) : cchText;
 			std::string replaced = ProcessGlyphStageA(lpchText, length);
@@ -1947,6 +2126,7 @@
 
 		int WINAPI newDrawTextExW_SehImpl(HDC hdc, LPWSTR lpchText, int cchText, LPRECT lprc, UINT format, LPDRAWTEXTPARAMS lpdtp)
 {
+			ScopedTextReplaceVerboseApi verboseApi(L"DrawTextExW", hdc);
 			int previousExtra = ApplySpacingExtra(hdc);
 			int length = cchText == -1 ? (int)wcslen(lpchText) : cchText;
 			std::wstring replaced = ProcessGlyphStageW(lpchText, length);
@@ -1991,6 +2171,7 @@
 
 		BOOL WINAPI newPolyTextOutA_SehImpl(HDC hdc, const POLYTEXTA* ppt, int nStrings)
 {
+			ScopedTextReplaceVerboseApi verboseApi(L"PolyTextOutA", hdc);
 			if (!ppt || nStrings <= 0)
 			{
 				return rawPolyTextOutA(hdc, ppt, nStrings);
@@ -2035,6 +2216,7 @@
 
 		BOOL WINAPI newPolyTextOutW_SehImpl(HDC hdc, const POLYTEXTW* ppt, int nStrings)
 {
+			ScopedTextReplaceVerboseApi verboseApi(L"PolyTextOutW", hdc);
 			if (!ppt || nStrings <= 0)
 			{
 				return rawPolyTextOutW(hdc, ppt, nStrings);
@@ -2079,6 +2261,7 @@
 
 		LONG WINAPI newTabbedTextOutA_SehImpl(HDC hdc, int x, int y, LPCSTR lpString, int chCount, int nTabPositions, const INT* lpnTabStopPositions, int nTabOrigin)
 {
+			ScopedTextReplaceVerboseApi verboseApi(L"TabbedTextOutA", hdc);
 			int length = chCount == -1 ? (lpString ? (int)strlen(lpString) : 0) : chCount;
 			std::string replaced = ProcessGlyphStageA(lpString, length);
 			ScopedDrawHdcFontOverride fontOverride(hdc);
@@ -2105,6 +2288,7 @@
 
 		LONG WINAPI newTabbedTextOutW_SehImpl(HDC hdc, int x, int y, LPCWSTR lpString, int chCount, int nTabPositions, const INT* lpnTabStopPositions, int nTabOrigin)
 {
+			ScopedTextReplaceVerboseApi verboseApi(L"TabbedTextOutW", hdc);
 			int length = chCount == -1 ? (lpString ? (int)wcslen(lpString) : 0) : chCount;
 			std::wstring replaced = ProcessGlyphStageW(lpString, length);
 			ScopedDrawHdcFontOverride fontOverride(hdc);
@@ -2131,9 +2315,11 @@
 
 		DWORD WINAPI newGetTabbedTextExtentA_SehImpl(HDC hdc, LPCSTR lpString, int chCount, int nTabPositions, const INT* lpnTabStopPositions)
 {
+			ScopedTextReplaceVerboseApi verboseApi(L"GetTabbedTextExtentA", hdc);
 			int previousExtra = ApplySpacingExtra(hdc);
 			int length = chCount == -1 ? (lpString ? (int)strlen(lpString) : 0) : chCount;
 			std::string replaced = ProcessGlyphStageA(lpString, length);
+			ScopedDrawHdcFontOverride fontOverride(hdc);
 			DWORD ret = 0;
 			if (length > 0 && !replaced.empty() && replaced != std::string(lpString, length))
 			{
@@ -2163,9 +2349,11 @@
 
 		DWORD WINAPI newGetTabbedTextExtentW_SehImpl(HDC hdc, LPCWSTR lpString, int chCount, int nTabPositions, const INT* lpnTabStopPositions)
 {
+			ScopedTextReplaceVerboseApi verboseApi(L"GetTabbedTextExtentW", hdc);
 			int previousExtra = ApplySpacingExtra(hdc);
 			int length = chCount == -1 ? (lpString ? (int)wcslen(lpString) : 0) : chCount;
 			std::wstring replaced = ProcessGlyphStageW(lpString, length);
+			ScopedDrawHdcFontOverride fontOverride(hdc);
 			DWORD ret = 0;
 			if (length > 0 && !replaced.empty() && replaced != std::wstring(lpString, length))
 			{
@@ -2195,6 +2383,7 @@
 
 		BOOL WINAPI newGetTextExtentPoint32A_SehImpl(HDC hdc, LPCSTR lpString, int c, LPSIZE psizl)
 {
+			ScopedTextReplaceVerboseApi verboseApi(L"GetTextExtentPoint32A", hdc);
 			int previousExtra = ApplySpacingExtra(hdc);
 			LPCSTR safeString = lpString;
 			int safeCount = c;
@@ -2261,6 +2450,7 @@
 
 		BOOL WINAPI newGetTextExtentPoint32W_SehImpl(HDC hdc, LPCWSTR lpString, int c, LPSIZE psizl)
 {
+			ScopedTextReplaceVerboseApi verboseApi(L"GetTextExtentPoint32W", hdc);
 			int previousExtra = ApplySpacingExtra(hdc);
 			int length = c == -1 ? (lpString ? (int)wcslen(lpString) : 0) : c;
 			std::wstring replaced = ProcessGlyphStageW(lpString, length);
@@ -2294,6 +2484,7 @@
 
 		BOOL WINAPI newGetTextExtentExPointA_SehImpl(HDC hdc, LPCSTR lpszStr, int cchString, int nMaxExtent, LPINT lpnFit, LPINT lpnDx, LPSIZE lpSize)
 {
+			ScopedTextReplaceVerboseApi verboseApi(L"GetTextExtentExPointA", hdc);
 			int previousExtra = ApplySpacingExtra(hdc);
 			int length = cchString == -1 ? (lpszStr ? (int)strlen(lpszStr) : 0) : cchString;
 			BOOL handled = FALSE;
@@ -2404,6 +2595,7 @@
 
 		BOOL WINAPI newGetTextExtentExPointW_SehImpl(HDC hdc, LPCWSTR lpszStr, int cchString, int nMaxExtent, LPINT lpnFit, LPINT lpnDx, LPSIZE lpSize)
 {
+			ScopedTextReplaceVerboseApi verboseApi(L"GetTextExtentExPointW", hdc);
 			int previousExtra = ApplySpacingExtra(hdc);
 			int length = cchString == -1 ? (lpszStr ? (int)wcslen(lpszStr) : 0) : cchString;
 			std::wstring replaced = ProcessGlyphStageW(lpszStr, length);
@@ -2437,6 +2629,7 @@
 
 		BOOL WINAPI newGetTextExtentPointA_SehImpl(HDC hdc, LPCSTR lpString, int c, LPSIZE lpsz)
 {
+			ScopedTextReplaceVerboseApi verboseApi(L"GetTextExtentPointA", hdc);
 			int previousExtra = ApplySpacingExtra(hdc);
 			int length = c == -1 ? (lpString ? (int)strlen(lpString) : 0) : c;
 			BOOL handled = FALSE;
@@ -2492,6 +2685,7 @@
 
 		BOOL WINAPI newGetTextExtentPointW_SehImpl(HDC hdc, LPCWSTR lpString, int c, LPSIZE lpsz)
 {
+			ScopedTextReplaceVerboseApi verboseApi(L"GetTextExtentPointW", hdc);
 			int previousExtra = ApplySpacingExtra(hdc);
 			int length = c == -1 ? (lpString ? (int)wcslen(lpString) : 0) : c;
 			std::wstring replaced = ProcessGlyphStageW(lpString, length);
@@ -2525,6 +2719,7 @@
 
 		DWORD WINAPI newGetCharacterPlacementA_SehImpl(HDC hdc, LPCSTR lpString, int nCount, int nMaxExtent, LPGCP_RESULTSA lpResults, DWORD dwFlags)
 {
+			ScopedTextReplaceVerboseApi verboseApi(L"GetCharacterPlacementA", hdc);
 			int length = nCount == -1 ? (lpString ? (int)strlen(lpString) : 0) : nCount;
 			std::string replaced = ProcessGlyphStageA(lpString, length);
 			ScopedDrawHdcFontOverride fontOverride(hdc);
@@ -2551,6 +2746,7 @@
 
 		DWORD WINAPI newGetCharacterPlacementW_SehImpl(HDC hdc, LPCWSTR lpString, int nCount, int nMaxExtent, LPGCP_RESULTSW lpResults, DWORD dwFlags)
 {
+			ScopedTextReplaceVerboseApi verboseApi(L"GetCharacterPlacementW", hdc);
 			int length = nCount == -1 ? (lpString ? (int)wcslen(lpString) : 0) : nCount;
 			std::wstring replaced = ProcessGlyphStageW(lpString, length);
 			ScopedDrawHdcFontOverride fontOverride(hdc);
@@ -2577,6 +2773,7 @@
 
 		DWORD WINAPI newGetGlyphIndicesA_SehImpl(HDC hdc, LPCSTR lpstr, int c, LPWORD pgi, DWORD fl)
 {
+			ScopedTextReplaceVerboseApi verboseApi(L"GetGlyphIndicesA", hdc);
 			int length = c == -1 ? (lpstr ? (int)strlen(lpstr) : 0) : c;
 			std::string replaced = ProcessGlyphStageA(lpstr, length);
 			ScopedDrawHdcFontOverride fontOverride(hdc);
@@ -2612,6 +2809,7 @@
 
 		DWORD WINAPI newGetGlyphIndicesW_SehImpl(HDC hdc, LPCWSTR lpstr, int c, LPWORD pgi, DWORD fl)
 {
+			ScopedTextReplaceVerboseApi verboseApi(L"GetGlyphIndicesW", hdc);
 			int length = c == -1 ? (lpstr ? (int)wcslen(lpstr) : 0) : c;
 			std::wstring replaced = ProcessGlyphStageW(lpstr, length);
 			ScopedDrawHdcFontOverride fontOverride(hdc);
@@ -2652,13 +2850,14 @@
 
 		DWORD WINAPI newGetGlyphOutlineA_SehImpl(HDC hdc, UINT uChar, UINT fuFormat, LPGLYPHMETRICS lpgm, DWORD cjBuffer, LPVOID pvBuffer, const MAT2* lpmat2)
 {
+			ScopedTextReplaceVerboseApi verboseApi(L"GetGlyphOutlineA", hdc);
 			HFONT hOld = nullptr;
 			HFONT hNew = ReplaceHdcFont(hdc, &hOld);
 			DWORD ret = 0;
 			if ((fuFormat & GGO_GLYPH_INDEX) != 0)
 			{
 				ret = rawGetGlyphOutlineA(hdc, TranslateSingleVirtualGlyphIndexForHdc(hdc, (WORD)uChar), fuFormat, lpgm, cjBuffer, pvBuffer, lpmat2);
-				if (ret != GDI_ERROR && lpgm)
+				if (ShouldApplyUIFontOverrideForHdc(hdc) && ret != GDI_ERROR && lpgm)
 				{
 					lpgm->gmptGlyphOrigin.x += sg_iGlyphOffsetX;
 					lpgm->gmptGlyphOrigin.y += sg_iGlyphOffsetY;
@@ -2670,7 +2869,7 @@
 			ret = TryGetGlyphOutlineAUnicodeFallback(hdc, uChar, fuFormat, lpgm, cjBuffer, pvBuffer, lpmat2, handled);
 			if (handled)
 			{
-				if (ret != GDI_ERROR && lpgm)
+				if (ShouldApplyUIFontOverrideForHdc(hdc) && ret != GDI_ERROR && lpgm)
 				{
 					lpgm->gmptGlyphOrigin.x += sg_iGlyphOffsetX;
 					lpgm->gmptGlyphOrigin.y += sg_iGlyphOffsetY;
@@ -2722,7 +2921,7 @@
 					{
 						// 替换结果无效，使用原字符
 						ret = rawGetGlyphOutlineA(hdc, uChar, fuFormat, lpgm, cjBuffer, pvBuffer, lpmat2);
-						if (ret != GDI_ERROR && lpgm)
+						if (ShouldApplyUIFontOverrideForHdc(hdc) && ret != GDI_ERROR && lpgm)
 						{
 							lpgm->gmptGlyphOrigin.x += sg_iGlyphOffsetX;
 							lpgm->gmptGlyphOrigin.y += sg_iGlyphOffsetY;
@@ -2732,7 +2931,7 @@
 					}
 					
 					ret = rawGetGlyphOutlineA(hdc, newChar, fuFormat, lpgm, cjBuffer, pvBuffer, lpmat2);
-					if (ret != GDI_ERROR && lpgm)
+					if (ShouldApplyUIFontOverrideForHdc(hdc) && ret != GDI_ERROR && lpgm)
 					{
 						lpgm->gmptGlyphOrigin.x += sg_iGlyphOffsetX;
 						lpgm->gmptGlyphOrigin.y += sg_iGlyphOffsetY;
@@ -2743,7 +2942,7 @@
 			}
 			
 			ret = rawGetGlyphOutlineA(hdc, uChar, fuFormat, lpgm, cjBuffer, pvBuffer, lpmat2);
-			if (ret != GDI_ERROR && lpgm)
+			if (ShouldApplyUIFontOverrideForHdc(hdc) && ret != GDI_ERROR && lpgm)
 			{
 				lpgm->gmptGlyphOrigin.x += sg_iGlyphOffsetX;
 				lpgm->gmptGlyphOrigin.y += sg_iGlyphOffsetY;
@@ -2801,13 +3000,14 @@
 
 		DWORD WINAPI newGetGlyphOutlineW_SehImpl(HDC hdc, UINT uChar, UINT fuFormat, LPGLYPHMETRICS lpgm, DWORD cjBuffer, LPVOID pvBuffer, const MAT2* lpmat2)
 {
+			ScopedTextReplaceVerboseApi verboseApi(L"GetGlyphOutlineW", hdc);
 			HFONT hOld = nullptr;
 			HFONT hNew = ReplaceHdcFont(hdc, &hOld);
 			DWORD ret = 0;
 			if ((fuFormat & GGO_GLYPH_INDEX) != 0)
 			{
 				ret = rawGetGlyphOutlineW(hdc, TranslateSingleVirtualGlyphIndexForHdc(hdc, (WORD)uChar), fuFormat, lpgm, cjBuffer, pvBuffer, lpmat2);
-				if (ret != GDI_ERROR && lpgm)
+				if (ShouldApplyUIFontOverrideForHdc(hdc) && ret != GDI_ERROR && lpgm)
 				{
 					lpgm->gmptGlyphOrigin.x += sg_iGlyphOffsetX;
 					lpgm->gmptGlyphOrigin.y += sg_iGlyphOffsetY;
@@ -2833,7 +3033,7 @@
 					{
 						UINT newChar = (UINT)replaced[0];
 						ret = rawGetGlyphOutlineW(hdc, newChar, fuFormat, lpgm, cjBuffer, pvBuffer, lpmat2);
-						if (ret != GDI_ERROR && lpgm)
+						if (ShouldApplyUIFontOverrideForHdc(hdc) && ret != GDI_ERROR && lpgm)
 						{
 							lpgm->gmptGlyphOrigin.x += sg_iGlyphOffsetX;
 							lpgm->gmptGlyphOrigin.y += sg_iGlyphOffsetY;
@@ -2845,7 +3045,7 @@
 			}
 			
 			ret = rawGetGlyphOutlineW(hdc, uChar, fuFormat, lpgm, cjBuffer, pvBuffer, lpmat2);
-			if (ret != GDI_ERROR && lpgm)
+			if (ShouldApplyUIFontOverrideForHdc(hdc) && ret != GDI_ERROR && lpgm)
 			{
 				lpgm->gmptGlyphOrigin.x += sg_iGlyphOffsetX;
 				lpgm->gmptGlyphOrigin.y += sg_iGlyphOffsetY;

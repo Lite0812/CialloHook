@@ -28,17 +28,10 @@ extern "C" int litepak_codecrypt_ensure_decrypted(void);
 #define CIALLOHOOK_FEATURE_PROXY_EXPORTS 1
 #endif
 
-#ifndef CIALLOHOOK_VERSION_PROXY_EXPORTS
-#define CIALLOHOOK_VERSION_PROXY_EXPORTS 1
-#endif
-
 #ifndef CIALLOHOOK_DETOURS_HELPER_EXPORT
 #define CIALLOHOOK_DETOURS_HELPER_EXPORT 1
 #endif
 
-#if CIALLOHOOK_FEATURE_PROXY_EXPORTS && CIALLOHOOK_VERSION_PROXY_EXPORTS
-#include "Proxy.h"
-#endif
 #include "../core/hook_manager.h"
 #include "../hooks/hook_modules.h"
 
@@ -407,24 +400,6 @@ static bool IsVersionProxyModule(HMODULE module)
 	return IsProxyModule(module, L"version.dll");
 }
 
-#if CIALLOHOOK_FEATURE_PROXY_EXPORTS && CIALLOHOOK_VERSION_PROXY_EXPORTS
-static void InitializeProxyExportsForAttach(HMODULE module)
-{
-	const bool isWinmmProxy = IsWinmmProxyModule(module);
-	const bool isVersionProxy = IsVersionProxyModule(module);
-	BootstrapLog(L"DLL_PROCESS_ATTACH: winmmComponent=%d versionComponent=%d", isWinmmProxy ? 1 : 0, isVersionProxy ? 1 : 0);
-	if (isWinmmProxy)
-	{
-		BootstrapLog(L"DllMain: winmm mode, component init deferred");
-		return;
-	}
-
-	BootstrapLog(L"DllMain: component init begin");
-	Proxy::Init();
-	BootstrapLog(L"DllMain: component init success");
-}
-#endif
-
 CIALLOHOOK_PROTECTED_END
 
 static void RunHookInitialization(HookInitContext* initContext)
@@ -596,18 +571,14 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
 		}
 #endif
 		{
-#if CIALLOHOOK_FEATURE_PROXY_EXPORTS && CIALLOHOOK_VERSION_PROXY_EXPORTS
+#if CIALLOHOOK_FEATURE_PROXY_EXPORTS
 			const bool isWinmmProxy = IsWinmmProxyModule(hModule);
-			BootstrapLog(L"DLL_PROCESS_ATTACH: winmmComponent=%d", isWinmmProxy ? 1 : 0);
-			if (isWinmmProxy)
+			const bool isVersionProxy = IsVersionProxyModule(hModule);
+			BootstrapLog(L"DLL_PROCESS_ATTACH: winmmComponent=%d versionComponent=%d",
+				isWinmmProxy ? 1 : 0, isVersionProxy ? 1 : 0);
+			if (isWinmmProxy || isVersionProxy)
 			{
-				BootstrapLog(L"DllMain: winmm mode, component init deferred");
-			}
-			else
-			{
-				BootstrapLog(L"DllMain: component init begin");
-				Proxy::Init();
-				BootstrapLog(L"DllMain: component init success");
+				BootstrapLog(L"DllMain: proxy component init deferred");
 			}
 #else
 			BootstrapLog(L"DllMain: component exports disabled");

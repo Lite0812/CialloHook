@@ -128,7 +128,7 @@ namespace CialloHook
 		settings.font.fontDescentPermille = 0;
 		settings.font.fontLineSpacing = 0;
 
-		// UI 字体 Hook：控制 DWrite / D2D / GDI+ / ChooseFont / late-load 等 UI/现代字体链路；关闭后保留普通 GDI 字体 Hook。
+		// 窗口 UI 字体开关；关闭时保留窗口 DC 字体，但游戏内存/离屏 DC 字体仍替换。
 		settings.font.enableUIFontHook = true;
 
 		// 字体 Hook 风险与引擎兼容策略：默认允许高命中率 API，由策略层按引擎特征自动降级。

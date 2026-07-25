@@ -61,6 +61,7 @@
     <CialloHookFeatureProxyExports Condition="'$(CialloHookFeatureProxyExports)'==''">true</CialloHookFeatureProxyExports>
   </PropertyGroup>
   <ImportGroup Label="ExtensionSettings">
+    <Import Project="$(VCTargetsPath)\BuildCustomizations\masm.props" />
   </ImportGroup>
   <ImportGroup Label="Shared">
   </ImportGroup>
@@ -100,7 +101,7 @@
       <AdditionalLibraryDirectories>..\..\third\detours\lib.X86;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>detours.lib;bcrypt.lib;psapi.lib;shlwapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <ImageHasSafeExceptionHandlers Condition="'$(Platform)'=='Win32'">false</ImageHasSafeExceptionHandlers>
-      <ModuleDefinitionFile Condition="'$(CialloHookFeatureProxyExports)'!='false'">entry\version.def</ModuleDefinitionFile>
+      <ModuleDefinitionFile Condition="'$(CialloHookFeatureProxyExports)'!='false'">entry\proxy\exports_x86.def</ModuleDefinitionFile>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -112,7 +113,7 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <StringPooling>true</StringPooling>
       <RuntimeTypeInfo>false</RuntimeTypeInfo>
-      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
@@ -133,7 +134,7 @@
       <AdditionalLibraryDirectories>..\..\third\detours\lib.X86;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>detours.lib;bcrypt.lib;psapi.lib;shlwapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <ImageHasSafeExceptionHandlers Condition="'$(Platform)'=='Win32'">false</ImageHasSafeExceptionHandlers>
-      <ModuleDefinitionFile Condition="'$(CialloHookFeatureProxyExports)'!='false'">entry\version.def</ModuleDefinitionFile>
+      <ModuleDefinitionFile Condition="'$(CialloHookFeatureProxyExports)'!='false'">entry\proxy\exports_x86.def</ModuleDefinitionFile>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
@@ -152,7 +153,7 @@
       <AdditionalLibraryDirectories>..\..\third\detours\lib.X64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>detours.lib;bcrypt.lib;psapi.lib;shlwapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <ImageHasSafeExceptionHandlers Condition="'$(Platform)'=='Win32'">false</ImageHasSafeExceptionHandlers>
-      <ModuleDefinitionFile Condition="'$(CialloHookFeatureProxyExports)'!='false'">entry\version.def</ModuleDefinitionFile>
+      <ModuleDefinitionFile Condition="'$(CialloHookFeatureProxyExports)'!='false'">entry\proxy\exports_x64.def</ModuleDefinitionFile>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -164,7 +165,7 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <StringPooling>true</StringPooling>
       <RuntimeTypeInfo>false</RuntimeTypeInfo>
-      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
@@ -185,9 +186,12 @@
       <AdditionalLibraryDirectories>..\..\third\detours\lib.X64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>detours.lib;bcrypt.lib;psapi.lib;shlwapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <ImageHasSafeExceptionHandlers Condition="'$(Platform)'=='Win32'">false</ImageHasSafeExceptionHandlers>
-      <ModuleDefinitionFile Condition="'$(CialloHookFeatureProxyExports)'!='false'">entry\version.def</ModuleDefinitionFile>
+      <ModuleDefinitionFile Condition="'$(CialloHookFeatureProxyExports)'!='false'">entry\proxy\exports_x64.def</ModuleDefinitionFile>
     </Link>
   </ItemDefinitionGroup>
+  <ItemGroup>
+    <MASM Include="entry\proxy\winmm_proxy_x64.asm" Condition="'$(Platform)'=='x64' and '$(CialloHookFeatureProxyExports)'!='false'" />
+  </ItemGroup>
   <ItemGroup>
     <ClCompile Include="config\config_manager.cpp" />
     <ClCompile Include="core\hook_manager.cpp" />
@@ -209,8 +213,8 @@
     <ClCompile Include="hooks\alice_system3x_hooks.cpp" Condition="'$(CialloHookFeatureAliceSystem3x)'!='false'" />
     <ClCompile Include="hooks\krkr_plugin_bridge.cpp" Condition="'$(CialloHookFeatureKrkrPatch)'!='false'" />
     <ClCompile Include="hooks\rio_shiina_hooks.cpp" Condition="'$(CialloHookFeatureRioShiina)'!='false'" />
-    <ClCompile Include="entry\Proxy.cpp" Condition="'$(CialloHookFeatureProxyExports)'!='false'" />
-    <ClCompile Include="entry\WinMMExports.cpp" Condition="'$(CialloHookFeatureProxyExports)'!='false'">
+    <ClCompile Include="entry\proxy\version_proxy.cpp" Condition="'$(CialloHookFeatureProxyExports)'!='false'" />
+    <ClCompile Include="entry\proxy\winmm_proxy.cpp" Condition="'$(CialloHookFeatureProxyExports)'!='false'">
       <WholeProgramOptimization>false</WholeProgramOptimization>
     </ClCompile>
     <ClCompile Include="..\..\third\krkrplugin\CompilerHelper.cpp" Condition="'$(CialloHookFeatureKrkrPatch)'!='false'" />
@@ -233,7 +237,7 @@
     <ClInclude Include="hooks\alice_system3x_hooks.h" />
     <ClInclude Include="hooks\krkr_plugin_bridge.h" />
     <ClInclude Include="hooks\rio_shiina_hooks.h" />
-    <ClInclude Include="entry\Proxy.h" />
+    <ClInclude Include="entry\proxy\version_proxy.h" />
     <ClInclude Include="..\..\third\krkrplugin\CompilerHelper.h" />
     <ClInclude Include="..\..\third\krkrplugin\CompilerType.h" />
     <ClInclude Include="..\..\third\krkrplugin\KrkrPatchStream.h" />
@@ -253,7 +257,8 @@
     <None Include="config\build_options.props" />
     <None Include="config\CialloHook.ini" />
     <None Include="config\CialloHook_Example.ini" />
-    <None Include="entry\version.def" />
+    <None Include="entry\proxy\exports_x86.def" />
+    <None Include="entry\proxy\exports_x64.def" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\RuntimeCore\RuntimeCore.vcxproj">
@@ -280,6 +285,7 @@
     <Exec Command="&quot;$(CialloHookSignToolResolved)&quot; sign /fd SHA256 /sha1 &quot;$(CialloHookSignThumbprint)&quot;$(CialloHookSignTimestampArg) &quot;$(TargetPath)&quot;" Condition="'$(CialloHookSignThumbprint)'!=''" />
   </Target>
   <ImportGroup Label="ExtensionTargets">
+    <Import Project="$(VCTargetsPath)\BuildCustomizations\masm.targets" />
   </ImportGroup>
 </Project>
 

@@ -1719,7 +1719,7 @@ namespace CialloHook
 				logHookAttach(L"HookEnumFontFamiliesW", HookEnumFontFamiliesW(settings.unlockFontSelection));
 			}
 
-			if (settings.enableUIFontHook && settings.unlockFontSelection)
+			if (settings.unlockFontSelection)
 			{
 				HookChooseFontA();
 				HookChooseFontW();
@@ -1930,72 +1930,72 @@ namespace CialloHook
 				logHookAttach(L"HookGetFontUnicodeRanges", HookGetFontUnicodeRanges());
 			}
 
-			if (settings.enableUIFontHook && settings.hookLoadLibraryW)
+			if (settings.hookLoadLibraryW)
 			{
 				logHookAttach(L"HookLoadLibraryW", HookLoadLibraryW());
 			}
 
-			if (settings.enableUIFontHook && settings.hookLoadLibraryExW)
+			if (settings.hookLoadLibraryExW)
 			{
 				logHookAttach(L"HookLoadLibraryExW", HookLoadLibraryExW());
 			}
 
-			if (settings.enableUIFontHook && settings.hookDWriteCreateFactory)
+			if (settings.hookDWriteCreateFactory)
 			{
 				logHookAttach(L"HookDWriteCreateFactory", HookDWriteCreateFactory());
 			}
 
-			if (settings.enableUIFontHook && settings.hookGdipCreateFontFamilyFromName)
+			if (settings.hookGdipCreateFontFamilyFromName)
 			{
 				logHookAttach(L"HookGdipCreateFontFamilyFromName", HookGdipCreateFontFamilyFromName());
 			}
 
-			if (settings.enableUIFontHook && settings.hookGdipCreateFontFromLogfontW)
+			if (settings.hookGdipCreateFontFromLogfontW)
 			{
 				logHookAttach(L"HookGdipCreateFontFromLogfontW", HookGdipCreateFontFromLogfontW());
 			}
 
-			if (settings.enableUIFontHook && settings.hookGdipCreateFontFromLogfontA)
+			if (settings.hookGdipCreateFontFromLogfontA)
 			{
 				logHookAttach(L"HookGdipCreateFontFromLogfontA", HookGdipCreateFontFromLogfontA());
 			}
 
-			if (settings.enableUIFontHook && settings.hookGdipCreateFontFromHFONT)
+			if (settings.hookGdipCreateFontFromHFONT)
 			{
 				logHookAttach(L"HookGdipCreateFontFromHFONT", HookGdipCreateFontFromHFONT());
 			}
 
-			if (settings.enableUIFontHook && settings.hookGdipCreateFontFromDC)
+			if (settings.hookGdipCreateFontFromDC)
 			{
 				logHookAttach(L"HookGdipCreateFontFromDC", HookGdipCreateFontFromDC());
 			}
 
-			if (settings.enableUIFontHook && settings.hookGdipCreateFont)
+			if (settings.hookGdipCreateFont)
 			{
 				logHookAttach(L"HookGdipCreateFont", HookGdipCreateFont());
 			}
 
-			if (settings.enableUIFontHook && settings.hookGdipDrawString)
+			if (settings.hookGdipDrawString)
 			{
 				logHookAttach(L"HookGdipDrawString", HookGdipDrawString());
 			}
 
-			if (settings.enableUIFontHook && settings.hookGdipDrawDriverString)
+			if (settings.hookGdipDrawDriverString)
 			{
 				logHookAttach(L"HookGdipDrawDriverString", HookGdipDrawDriverString());
 			}
 
-			if (settings.enableUIFontHook && settings.hookGdipMeasureString)
+			if (settings.hookGdipMeasureString)
 			{
 				logHookAttach(L"HookGdipMeasureString", HookGdipMeasureString());
 			}
 
-			if (settings.enableUIFontHook && settings.hookGdipMeasureCharacterRanges)
+			if (settings.hookGdipMeasureCharacterRanges)
 			{
 				logHookAttach(L"HookGdipMeasureCharacterRanges", HookGdipMeasureCharacterRanges());
 			}
 
-			if (settings.enableUIFontHook && settings.hookGdipMeasureDriverString)
+			if (settings.hookGdipMeasureDriverString)
 			{
 				logHookAttach(L"HookGdipMeasureDriverString", HookGdipMeasureDriverString());
 			}
